@@ -1364,19 +1364,39 @@ and it looks like one.
 560 and centred on desktop, full-bleed and bottom-anchored on a phone. Drawing two of
 each would invite them to drift apart.
 
-**What changes between d and m**, and nothing else does: the 264px rail becomes the
-three-tab bottom bar on `glass-raised`; two columns become one; Display drops 44 → 34;
-the inset drops 48 → 20; tables become stacked rows (2.6, 1.4); and the send screen
-splits into two steps with a fixed summary bar. Content, copy and component vocabulary
-are identical — if a mobile screen says something its desktop twin does not, one of
-them is wrong.
+**What changes between d and m structurally**: the 264px rail becomes the three-tab
+bottom bar on `glass-raised`; two columns become one; Display drops 44 → 34; the inset
+drops 48 → 20; tables become stacked rows (2.6, 1.4); and the send screen splits into
+two steps with a fixed summary bar. The component vocabulary is identical throughout.
 
-**One screen is allowed to break that rule, and only because the platform does.**
+**Copy is abridged on mobile, deliberately, on almost every screen.** An earlier version
+of this section claimed copy was identical and that any divergence was a bug. It was
+measured on 2026-09-12 and it is not true: of eleven d/m pairs, **ten differ**. Only 3.4
+*After it ends* matches exactly, and it is the shortest screen in the file at six
+strings. 2.3 shares 11 strings of 60; 1.4 shares 19 of 50.
+
+The abridgement is editing, not drift — *"It still has your panel. There was never a
+moment where that access was supposed to end, so it did not."* becomes *"It still has
+your panel. Nobody built a moment where that access ends."* Same claim, fewer words, on
+a surface with less room.
+
+So: **build each frame from its own strings.** Read the desktop and mobile `content`
+fields separately; never paste desktop copy into a mobile layout and never assume they
+match.
+
+**The one thing abridgement may not do is weaken a claim about personal data.** Two
+places in the file currently break this and should be fixed rather than blessed: 1.1's
+mobile Problem section drops *"and date of birth"* from the de-identification promise,
+and its Final section drops *"Signing in takes one tap and creates nothing we can read"*
+entirely. Shortening prose is fine. A shorter promise is a different promise, and a
+mobile reader is not owed less of one.
+
+**One screen diverges structurally, and only because the platform does.**
 4.2m cannot show what 4.2d shows: installing the app is something a laptop does, and
 telling a phone user to double-click a file in their Downloads folder is an
 instruction they cannot follow. So the phone hands the job to the computer and says
-why. Any other d/m difference is a bug, not a decision — and this one is written down
-precisely so it stays the only one.
+why. It remains the only place where a mobile screen *does something* its desktop twin
+does not — which is a different matter from saying it in fewer words.
 
 The three assistant screens divide cleanly and must not re-merge: **4.1** decides
 *whether and what*, **4.2** handles *getting it running*, **4.3** shows *the live state*.
