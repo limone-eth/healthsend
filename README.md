@@ -200,6 +200,53 @@ scripts/          doctor (preflight), verify:crypto, verify:expiry
 e2e/              Playwright recipient tests, run in a clean browser context
 ```
 
+## How a user's keys are made
+
+No key in this app is stored anywhere. There are two families, and they are
+different on purpose.
+
+**Identity keys — derived, stable, reproducible.** Everything hangs off the Swarm
+ID the user signed in with:
+
+```ts
+const arkivSeed = await deriveAppSecret("healthsend/arkiv/v1")
+const blindKey  = await deriveAppSecret("healthsend/blind/v1")
+
+const privateKey = keccak256(arkivSeed)          // a valid secp256k1 scalar
+const address    = privateKeyToAccount(privateKey).address
+```
+
+`deriveAppSecret` computes `HMAC(appSecret, label)` **inside the Swarm ID
+iframe**, where `appSecret` never leaves the trusted context. It is deterministic
+for a given identity, origin and label, so the same passkey on a second device
+reproduces the same Arkiv key and finds the same sends waiting. That is what lets
+this app have no user database at all: there is nothing to look up, because the
+key is a function of the identity.
+
+**Per-send keys — random, never derived.** One fresh pair per send:
+
+```ts
+const contentKey = randomBytes(32)   // encrypts the bundle
+const linkSecret = randomBytes(32)   // lives only in the URL fragment
+const kek        = HKDF(linkSecret, salt = swarmRef, info = "healthsend/grant/v1")
+const wrapped    = seal(kek, contentKey)   // this is what the grant stores
+```
+
+These are deliberately *not* derived from the identity. If they were, a
+compromised identity would retroactively open every send ever made. Fresh
+randomness makes each send independent of the user's identity and of every other
+send.
+
+> ⚠️ **App secrets are scoped to identity *and origin*.** `http://localhost:3000`
+> and `https://healthsend.vercel.app` derive **different** Arkiv keys from the
+> same passkey. Sends made on one origin do not appear in the other's dashboard,
+> and each origin's key needs funding separately. This is good isolation and a
+> bad demo surprise — pick one origin and rehearse on it.
+>
+> Connecting on a new origin also adds a one-time **"Check storage"** step in the
+> Swarm ID consent screen, which grants the iframe first-party storage access. Do
+> it once before you present rather than discovering it on stage.
+
 ## Why there is a server at all
 
 The app has exactly one server route, `/api/fund`, and it exists for a single
