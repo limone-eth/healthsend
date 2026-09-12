@@ -224,7 +224,9 @@ test("a sender picks two PDFs in one go and reads both after reload", async ({ p
 
   await expect(page).toHaveURL(/\/$/)
   const today = isoDayMonth.format(new Date())
-  await expect(page.getByText(`2 documents · latest ${today}`)).toBeVisible()
+  // Documents renders in both the mobile row list and the desktop card grid, one
+  // hidden by CSS (R3-020), so this meta text exists twice — assert the visible one.
+  await expect(page.getByText(`2 documents · latest ${today}`).filter({ visible: true })).toBeVisible()
   await expect(page.getByText("Blood test, March.pdf")).toBeVisible()
   await expect(page.getByText("Thyroid panel, June.pdf")).toBeVisible()
 
