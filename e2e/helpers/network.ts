@@ -10,7 +10,7 @@
  * These helpers stub Playwright routes; the application never learns it is under
  * test.
  */
-import type { BrowserContext, Route } from "@playwright/test"
+import { expect, type BrowserContext, type Request, type Route } from "@playwright/test"
 
 /** Default Arkiv RPC endpoint — see .env.example, NEXT_PUBLIC_ARKIV_RPC. */
 export const ARKIV_RPC_PATTERN = /rpc\.tiramisu\.db-chain\.testnet\.arkiv\.network/
@@ -71,6 +71,18 @@ export async function mockArkiv(
     }
 
     if (method === "arkiv_query") {
+      // The query text carries the entity key as a literal, lowercase hex
+      // value (`$key = key(0x…)`) — see @arkiv-network/sdk's `getEntity`. A
+      // caller that asked for the wrong entity would otherwise still receive
+      // this scenario's fixture data and the test would not notice.
+      if (scenario.kind === "found" || scenario.kind === "malformed") {
+        const [query] = readJsonRpc(route).params as [string, unknown]
+        expect(
+          query.toLowerCase(),
+          "the recipient must query Arkiv for the entity key the grant actually names",
+        ).toContain(scenario.entityKeyHex.toLowerCase().replace(/^0x/, ""))
+      }
+
       if (scenario.kind === "missing") {
         await route.fulfill({
           json: jsonRpcResult(id, { data: [], blockNumber: String(scenario.currentBlock), cursor: null }),
@@ -123,13 +135,29 @@ export async function mockArkiv(
   })
 }
 
-/** What `/api/holder/unlock` answers, for the one call the recipient path makes to our server. */
+/**
+ * What `/api/holder/unlock` answers, for the one call the recipient path makes
+ * to our server.
+ *
+ * `entityKeyHex` is the entity the caller is expected to name. Asserting it
+ * here means a request for the wrong entity fails the test outright, rather
+ * than silently receiving this scenario's fixture data — the same fixture
+ * would otherwise answer for any entity key at all. `respond` still gets the
+ * full body, so a test that needs to check `authKey` too (a wrong-fragment
+ * request must carry a *different* key, not just get an unconditional 403)
+ * can do that itself.
+ */
 export async function mockHolderUnlock(
   context: BrowserContext,
+  entityKeyHex: string,
   respond: (body: { entityKey: string; authKey: string }) => { status: number; body: unknown },
 ) {
   await context.route("**/api/holder/unlock", async (route) => {
     const body = route.request().postDataJSON() as { entityKey: string; authKey: string }
+    expect(
+      body.entityKey?.toLowerCase(),
+      "the recipient must ask the holder for the entity key the grant actually names",
+    ).toBe(entityKeyHex.toLowerCase())
     const { status, body: json } = respond(body)
     await route.fulfill({ status, json })
   })
@@ -146,28 +174,68 @@ export async function mockHolderUnreachable(context: BrowserContext) {
   })
 }
 
-/** The Swarm gateway read: `GET /bytes/:reference` returning the sealed blob. */
-export async function mockSwarmGateway(context: BrowserContext, blob: Uint8Array) {
+/**
+ * The Swarm gateway read: `GET /bytes/:reference` returning the sealed blob.
+ *
+ * Asserts the requested reference is the one the grant actually points at —
+ * without it, this stub answers the same blob for any reference, so a client
+ * that fetched the wrong content hash would still see the right file.
+ */
+export async function mockSwarmGateway(context: BrowserContext, reference: string, blob: Uint8Array) {
   await context.route(SWARM_GATEWAY_PATTERN, async (route) => {
+    const requested = route.request().url().match(/\/bytes\/([0-9a-fA-F]+)/)?.[1]
+    expect(requested?.toLowerCase(), "the recipient must fetch the reference the grant points at").toBe(
+      reference.toLowerCase(),
+    )
     await route.fulfill({ status: 200, contentType: "application/octet-stream", body: Buffer.from(blob) })
   })
 }
 
 /**
- * Fail anything that is not the app's own origin and was not given an explicit
- * stub above. This is what makes "offline" a tested claim rather than a hope —
- * a change that made the recipient path reach a new service would fail the
- * suite instead of quietly passing over a real network call.
+ * The only two things the offline lane may reach: this origin's own page
+ * assets (the document, its scripts, styles, fonts — never an API call), and
+ * the one API route the recipient path calls, `/api/holder/unlock`, which
+ * `mockHolderUnlock` (or `mockHolderUnreachable`) stubs separately. Arkiv and
+ * Swarm are both third-party origins and are never allowed through here —
+ * `mockArkiv` and `mockSwarmGateway` register their own, more specific routes
+ * on top of this one.
+ */
+function isAllowedOffline(request: Request, baseURL: string): boolean {
+  const url = request.url()
+  if (!url.startsWith(baseURL)) return false
+  if (url.startsWith(`${baseURL}/api/holder/unlock`)) return true
+  // A page asset — document, script, stylesheet, font, image — never a
+  // same-origin API call. This is deliberately narrower than "every
+  // same-origin route": a bug that made the recipient path call some other
+  // route on our own server must fail here too, not pass silently because it
+  // happened to share an origin with the page.
+  return !["fetch", "xhr", "websocket"].includes(request.resourceType())
+}
+
+/**
+ * Fail anything that is not a page asset or the mocked holder route. This is
+ * what makes "offline" a tested claim rather than a hope: `route.abort()`
+ * alone is not an assertion — a rejection the app catches or ignores could
+ * leave every UI assertion green while a real network call went out. The
+ * `expect()` below turns that into a hard test failure, and it reports through
+ * to the test even though it runs inside a route handler, because Playwright
+ * associates route-handler assertions with the test that registered the
+ * route.
  *
  * Register this first: Playwright matches routes last-registered-first, so the
  * specific stubs registered after this one win for the URLs they cover.
  */
 export async function blockUnstubbedNetwork(context: BrowserContext, baseURL: string) {
   await context.route("**/*", async (route) => {
-    if (route.request().url().startsWith(baseURL)) {
+    const request = route.request()
+    if (isAllowedOffline(request, baseURL)) {
       await route.continue()
       return
     }
+    expect(
+      request.url(),
+      `the offline recipient path must never reach an unstubbed route (resourceType: ${request.resourceType()})`,
+    ).toBe("<no unstubbed network in the offline lane>")
     await route.abort("failed")
   })
 }

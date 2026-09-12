@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict"
 import { webcrypto } from "node:crypto"
+import { lauxlib, lua, lualib, to_jsstring, to_luastring } from "fengari"
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 
 const { resolveUnlock } = await import("../lib/unlock.ts")
@@ -29,8 +30,6 @@ const {
   getAccessLogWith,
   tombstoneShareWith,
   putShareWith,
-  RECORD_ACCESS_SCRIPT,
-  TOMBSTONE_SCRIPT,
   PUT_SHARE_SCRIPT,
 } = await import("../lib/holder-store.ts")
 
@@ -56,19 +55,69 @@ async function validAuthKey() {
   return { authKey: toBase64Url(bytes), commitment: await commitmentFor(bytes) }
 }
 
+async function runLua(script, keys, args, redisCall) {
+  const state = lauxlib.luaL_newstate()
+  lualib.luaL_openlibs(state)
+
+  const setArray = (name, values) => {
+    lua.lua_newtable(state)
+    values.forEach((value, index) => {
+      lua.lua_pushinteger(state, index + 1)
+      lua.lua_pushstring(state, to_luastring(String(value)))
+      lua.lua_settable(state, -3)
+    })
+    lua.lua_setglobal(state, to_luastring(name))
+  }
+
+  setArray("KEYS", keys)
+  setArray("ARGV", args)
+
+  lua.lua_newtable(state)
+  lua.lua_pushcfunction(state, (luaState) => {
+    const count = lua.lua_gettop(luaState)
+    const command = to_jsstring(lua.lua_tostring(luaState, 1))
+    const commandArgs = []
+    for (let index = 2; index <= count; index++) {
+      commandArgs.push(to_jsstring(lua.lua_tostring(luaState, index)))
+    }
+
+    const result = redisCall(command, commandArgs)
+    if (result === false || result === null || result === undefined) {
+      lua.lua_pushboolean(luaState, false)
+    } else if (typeof result === "number") {
+      lua.lua_pushinteger(luaState, result)
+    } else {
+      lua.lua_pushstring(luaState, to_luastring(String(result)))
+    }
+    return 1
+  })
+  lua.lua_setfield(state, -2, to_luastring("call"))
+  lua.lua_setglobal(state, to_luastring("redis"))
+
+  const loadStatus = lauxlib.luaL_loadstring(state, to_luastring(script))
+  if (loadStatus !== lua.LUA_OK) {
+    throw new Error(`Lua load failed: ${to_jsstring(lua.lua_tostring(state, -1))}`)
+  }
+  const runStatus = lua.lua_pcall(state, 0, 1, 0)
+  if (runStatus !== lua.LUA_OK) {
+    throw new Error(`Lua execution failed: ${to_jsstring(lua.lua_tostring(state, -1))}`)
+  }
+
+  const resultType = lua.lua_type(state, -1)
+  if (resultType === lua.LUA_TNUMBER) return lua.lua_tonumber(state, -1)
+  if (resultType === lua.LUA_TBOOLEAN) return lua.lua_toboolean(state, -1)
+  if (resultType === lua.LUA_TSTRING) return to_jsstring(lua.lua_tostring(state, -1))
+  return null
+}
+
 /**
- * A minimal in-memory stand-in for Redis, just enough to run the three Lua
- * scripts `lib/holder-store.ts` sends via `eval()`. Matching on the exact
- * script string (imported from the module under test, not retyped here)
- * means this fake exercises the very same atomic bundles production sends —
- * there is no separate, possibly-drifted description of what each script
- * does.
+ * A minimal in-memory Redis command surface. Fengari executes the exact Lua
+ * source passed to `eval()`, and `redis.call` reaches the command handler here.
+ * The fake supplies storage only; it does not reimplement either script's
+ * branches or command order in JavaScript.
  *
- * `failNextEval()` simulates the one realistic way a multi-command write used
- * to land half-applied: the request never reaches the server at all. Because
- * every write here is a single `eval()` call, that failure mode now aborts
- * the whole bundle — nothing in this fake is mutated before the failure, the
- * same guarantee a real atomic Lua script gives.
+ * `failNextEval()` models an HTTP request that never reaches Redis. The call
+ * fails before Fengari runs the script, so no command can mutate the store.
  */
 function fakeRedis() {
   const strings = new Map() // key -> value (TTL bookkeeping omitted; not what these tests check)
@@ -77,42 +126,56 @@ function fakeRedis() {
   const listTtls = new Map() // key -> ex seconds
   let evalShouldFail = false
 
+  const keyExists = (key) => strings.has(key) || lists.has(key)
+
+  const call = (rawCommand, args) => {
+    const command = rawCommand.toUpperCase()
+    if (command === "RPUSH") {
+      const [key, ...values] = args
+      const list = lists.get(key) ?? []
+      list.push(...values.map(Number))
+      lists.set(key, list)
+      return list.length
+    }
+    if (command === "EXPIRE") {
+      const [key, ttl] = args
+      if (!keyExists(key)) return 0
+      if (strings.has(key)) stringTtls.set(key, Number(ttl))
+      if (lists.has(key)) listTtls.set(key, Number(ttl))
+      return 1
+    }
+    if (command === "DEL") {
+      let deleted = 0
+      for (const key of args) {
+        if (strings.delete(key)) deleted++
+        if (lists.delete(key)) deleted++
+        stringTtls.delete(key)
+        listTtls.delete(key)
+      }
+      return deleted
+    }
+    if (command === "SET") {
+      const [key, value, ...options] = args
+      const nx = options.some((option) => option.toUpperCase() === "NX")
+      if (nx && keyExists(key)) return false
+      strings.set(key, value)
+      const exIndex = options.findIndex((option) => option.toUpperCase() === "EX")
+      if (exIndex >= 0) stringTtls.set(key, Number(options[exIndex + 1]))
+      return "OK"
+    }
+    if (command === "EXISTS") {
+      return args.reduce((count, key) => count + Number(keyExists(key)), 0)
+    }
+    throw new Error(`fakeRedis: unsupported command ${rawCommand}`)
+  }
+
   return {
     async eval(script, keys, args) {
       if (evalShouldFail) {
         evalShouldFail = false
         throw new Error("simulated: the request never reached Redis")
       }
-      if (script === RECORD_ACCESS_SCRIPT) {
-        const [logKey] = keys
-        const [at, ttl] = args
-        const values = lists.get(logKey) ?? []
-        values.push(Number(at))
-        lists.set(logKey, values)
-        listTtls.set(logKey, Number(ttl))
-        return 1
-      }
-      if (script === TOMBSTONE_SCRIPT) {
-        const [shareKey, logKey, tombKey] = keys
-        const [value, ttl] = args
-        strings.delete(shareKey)
-        stringTtls.delete(shareKey)
-        lists.delete(logKey)
-        listTtls.delete(logKey)
-        strings.set(tombKey, value)
-        stringTtls.set(tombKey, Number(ttl))
-        return "OK"
-      }
-      if (script === PUT_SHARE_SCRIPT) {
-        const [shareKey, tombKey] = keys
-        const [value, ttl] = args
-        if (strings.has(tombKey)) return 0
-        if (strings.has(shareKey)) return 0
-        strings.set(shareKey, value)
-        stringTtls.set(shareKey, Number(ttl))
-        return 1
-      }
-      throw new Error("fakeRedis: unrecognised script")
+      return runLua(script, keys, args, call)
     },
     async set(key, value, opts) {
       strings.set(key, value)

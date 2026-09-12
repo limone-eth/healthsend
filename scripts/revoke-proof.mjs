@@ -377,4 +377,48 @@ function fakeHolder() {
   console.log("PASS  a signature made for another action does not authorise a revoke")
 }
 
+// --- a signature captured for one entity key cannot end another --------------
+{
+  const now = Math.floor(Date.now() / 1000)
+  const ENTITY_A = ENTITY_KEY
+  const ENTITY_B = "0x" + "33".repeat(32)
+
+  // Two live grants, same sender — the realistic case: a sender who legitimately
+  // controls both entities, so a message-format bug (not a wrong-key bug) is the
+  // only thing that could let one signature reach the other's storage.
+  const grants = {
+    [ENTITY_A]: { sender: sender.address, authCommitment: AUTH_COMMITMENT, expiresAt: now + 3600 },
+    [ENTITY_B]: { sender: sender.address, authCommitment: AUTH_COMMITMENT, expiresAt: now + 3600 },
+  }
+  const tombstoned = []
+  const deps = {
+    getGrant: async (entityKey) => grants[entityKey.toLowerCase()] ?? null,
+    tombstoneShare: async (entityKey) => { tombstoned.push(entityKey.toLowerCase()) },
+  }
+
+  // A real signature the sender made for entity A's revoke message...
+  const signatureForA = await sender.signMessage({ message: revokeMessage(ENTITY_A, now) })
+
+  // ...replayed against entity B, the sender's other live grant. The entity key
+  // is baked into the signed message specifically to stop this.
+  const crossed = await performRevoke({ entityKey: ENTITY_B, signature: signatureForA, timestamp: now }, deps)
+  assert.equal(crossed.ok, false, "a signature captured for one entity must not end a different one")
+  assert.equal(tombstoned.length, 0, "no entity's share may be deleted by another entity's signature")
+
+  // The legitimate signature for A still only ever reaches A's storage — this
+  // is what would catch `getGrant`/`tombstoneShare` being called with the wrong
+  // key even while the authorisation check itself stayed correct.
+  const legitimate = await performRevoke(
+    { entityKey: ENTITY_A, signature: await sender.signMessage({ message: revokeMessage(ENTITY_A, now) }), timestamp: now },
+    deps,
+  )
+  assert.equal(legitimate.ok, true)
+  assert.deepEqual(
+    tombstoned,
+    [ENTITY_A.toLowerCase()],
+    "the storage call must carry the entity key the caller actually authorised, not any other",
+  )
+  console.log("PASS  a signature captured for one entity key cannot end another")
+}
+
 console.log("\nAll checks passed.")

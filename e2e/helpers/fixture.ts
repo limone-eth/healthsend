@@ -34,6 +34,8 @@ export type ShareFixture = {
   heldShare: string
   /** SHA-256 of the auth key — what the grant's `authCommitment` carries. */
   commitment: string
+  /** The auth key this fragment actually derives, base64url — what a correct unlock request carries. */
+  authKeyB64: string
   currentBlock: number
   expiresBlock: number
   files: ShareFile[]
@@ -61,7 +63,7 @@ export async function buildShareFixture(): Promise<ShareFixture> {
   blob.set(sealed.ciphertext, sealed.iv.length)
 
   const linkSecret = generateLinkSecret()
-  const { heldShare, commitment } = await splitContentKey(contentKey, linkSecret)
+  const { heldShare, authKey, commitment } = await splitContentKey(contentKey, linkSecret)
 
   const entityKeyHex = "0x" + "7a".repeat(32)
   const currentBlock = 1_000_000
@@ -74,6 +76,7 @@ export async function buildShareFixture(): Promise<ShareFixture> {
     blob,
     heldShare: toBase64Url(heldShare),
     commitment,
+    authKeyB64: toBase64Url(authKey),
     currentBlock,
     expiresBlock: currentBlock + 500, // ~1000s out at the nominal 2s block time
     files,
