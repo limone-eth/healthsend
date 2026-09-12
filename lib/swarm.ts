@@ -85,6 +85,12 @@ export function getSwarmClient(): Promise<SwarmIdClient> {
           connectText: "Continue with Swarm ID",
           disconnectText: "Sign out",
           loadingText: "Opening…",
+          // The iframe paints the button, so our stylesheet cannot reach it —
+          // these are the only knobs. Kept close to our own Button so it does
+          // not read as a third-party widget dropped into the page.
+          backgroundColor: "#ece9e3",
+          color: "#1a1815",
+          borderRadius: "8px",
         },
         // A sized popup rather than a full browser tab. Passkey creation cannot
         // happen inside the embedded iframe — WebAuthn in a cross-origin frame

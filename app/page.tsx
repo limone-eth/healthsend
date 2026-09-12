@@ -122,7 +122,7 @@ function ConnectionPanel({
         </p>
         {/* The button is rendered by the Swarm ID iframe itself — see
             CONNECT_CONTAINER_ID for why that is not a cosmetic choice. */}
-        <div id={CONNECT_CONTAINER_ID} className="min-h-10" />
+        <div id={CONNECT_CONTAINER_ID} className="h-11 w-full max-w-[260px] overflow-hidden" />
       </Card>
     )
   }
