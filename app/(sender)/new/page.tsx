@@ -66,12 +66,15 @@ import { isExpiryValid, resolveCustomSeconds, resolveTtlSeconds } from "./expiry
  * `AccessModeRow` above rather than inventing a new one.
  *
  * The shared `(sender)` layout gives every route's content a wide column
- * (`layout.tsx`, off-limits to this story). At `md` and up this screen
- * restores the frame's split: the scope accordion beside the fixed-width
- * summary panel, matching `HMa4U`'s `iYhlT`/`B6zXII` adjacency. The
- * desktop/mobile divergence the frame actually calls for — one continuous
- * scroll versus two steps behind a fixed bar — is independent of column
- * count and is built as designed.
+ * (`layout.tsx`, off-limits to this story). Per DESIGN.md's Layout table,
+ * the two-column split is a `≥1280` (`xl`) behaviour only — 768–1279 is one
+ * column at the tablet inset, same continuous scroll, no step gate. At `xl`
+ * this screen restores the frame's split: the scope accordion beside the
+ * fixed-width, sticky summary panel, matching `HMa4U`'s `iYhlT`/`B6zXII`
+ * adjacency and its 640+400-at-a-40px-gutter measure. The desktop/mobile
+ * divergence the frame actually calls for — one continuous scroll versus two
+ * steps behind a fixed bar — is independent of column count and is built as
+ * designed; only the column threshold moved from `md` to `xl`.
  */
 
 type FileKindGuess = "pdf" | "csv" | "text"
@@ -254,7 +257,10 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         lede="Choose what to include and when it should end. Nothing is included until you tick it."
       />
 
-      {/* Mobile — two steps behind a fixed summary bar (the sanctioned d/m divergence, drawn in `ammIs`). */}
+      {/* Below `md` (phone only, <768) — two steps behind a fixed summary bar (the
+          sanctioned d/m divergence, drawn in `ammIs`). Tablet (768–1279) gets the
+          continuous-scroll block below instead, per DESIGN.md's Layout table — it is
+          still one column there, just not this step-gated one. */}
       <div className="md:hidden">
         {mobileStep === 1 ? (
           <ScopeSection
@@ -321,11 +327,13 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         </div>
       </div>
 
-      {/* Desktop/tablet — one continuous scroll, no step gate. The scope
-          accordion (`iYhlT`) sits beside the fixed-width summary panel
-          (`B6zXII`), the frame's own adjacency — not a decorative split. */}
-      <div className="hidden md:flex md:items-start md:gap-10">
-        <div className="min-w-0 md:flex-1">
+      {/* Tablet (768–1279) — one continuous scroll, no step gate, but still one column
+          per DESIGN.md's Layout table. Desktop (`xl`, ≥1280) restores the frame's split:
+          the scope accordion (`iYhlT`) beside the fixed-width, sticky summary panel
+          (`B6zXII`) at the frame's own 640+400-at-40px-gutter measure — not a decorative
+          split, and not the same breakpoint tablet gets. */}
+      <div className="hidden md:flex md:flex-col md:gap-10 xl:flex-row xl:items-start">
+        <div className="min-w-0 xl:flex-1">
           <ScopeSection
             files={files}
             selected={selected}
@@ -337,7 +345,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             onToggleFile={toggleFile}
           />
         </div>
-        <div className="flex flex-col gap-6 md:w-[400px] md:shrink-0">
+        <div className="flex flex-col gap-6 xl:sticky xl:top-11 xl:w-[400px] xl:shrink-0">
           <SettingsSection
             recipient={recipient}
             onRecipient={setRecipient}
