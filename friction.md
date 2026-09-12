@@ -280,3 +280,56 @@ type, and is easy to miss because `fromDays(30)` reads like a deadline. Say it
 where the `from*` helpers are introduced too, or name them in a way that marks
 them as floors (`atLeastDays`). For anyone whose expiry is a *promise* rather
 than a hint, `atBlock` should be the advertised default.
+
+---
+
+## 12. Sign-up cannot be embedded, so every new user leaves the app — `@snaha/swarm-id`
+
+**Severity:** medium as a bug, high as a product problem. This is the single
+biggest source of friction in our funnel.
+
+The SDK's pitch is that Swarm ID replaces wallets and seed phrases, and it does.
+But the first-run flow still sends the user off-site:
+
+1. Click connect in our app.
+2. A Swarm ID tab opens for consent.
+3. On a fresh origin, a **"⚠ Check storage"** step opens *a third tab* on
+   `swarm-id.snaha.net` to establish first-party storage.
+4. Approve the account.
+5. Return to our app.
+
+Three tabs and two context switches before a user has done anything. For a
+product whose whole claim is "no wallet, no seed phrase, just a passkey", the
+onboarding still feels like a wallet connect.
+
+**Why it cannot be fixed on our side.** We checked whether the consent UI could
+be embedded. The proxy iframe the SDK creates carries **no Permissions Policy
+`allow` attribute** — no `publickey-credentials-create`, no
+`publickey-credentials-get`. WebAuthn in a cross-origin iframe requires both the
+embedder to delegate the permission *and* the frame to be allowed it, so passkey
+creation inside the embedded frame is impossible as shipped. `ConnectOptions`
+offers only `popupMode: "popup" | "window"` — a sized popup or a full tab. There
+is no in-page option.
+
+**What we did:** switched to `popupMode: "popup"`, which at least reads as a
+dialog rather than a redirect. The storage step still opens its own tab.
+
+**Suggestion, in order of value:**
+
+1. Set `allow="publickey-credentials-create *; publickey-credentials-get *"` on
+   the proxy iframe and offer an in-frame consent UI. This is the difference
+   between "sign in with a passkey" and "connect a wallet", and it is a one-line
+   attribute plus a UI mode.
+2. Use the **Storage Access API** (`document.requestStorageAccess()`) for the
+   partitioning problem instead of a first-party tab visit. It exists for exactly
+   this, it is a permission prompt rather than a navigation, and it would remove
+   the third tab.
+3. Failing both, detect the fresh-origin case *before* the consent screen and do
+   the storage step first, so the user crosses one boundary rather than two.
+
+**Related observation, unresolved.** On `https://healthsend.vercel.app` we could
+not complete the connect at all: the storage check kept re-presenting after the
+first-party visit, where the identical flow succeeds on `http://localhost:3000`.
+We suspect `vercel.app` being on the Public Suffix List interacts with storage
+partitioning, but we have not proven it and are not reporting it as fact. Next
+test is a non-PSL custom domain.

@@ -128,18 +128,23 @@ function ConnectionPanel({
         <div className="min-w-0">
           <h2 className="text-sm font-medium">{info.identity.name}</h2>
           <p className="mt-0.5 text-xs text-muted">Swarm ID · {info.identity.address}</p>
-          <p className="mt-2 text-xs">
-            {booting ? (
-              <span className="text-muted">Deriving grant key…</span>
-            ) : address ? (
-              <>
+          {/* Keys are derived silently from the passkey. They are shown only on
+              request: a user who never opens this never learns a key exists,
+              which is the point — the ownership is real whether or not they
+              look at it. */}
+          {!booting && address && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-muted">Advanced</summary>
+              <p className="mt-1.5 text-xs">
                 <span className="text-muted">Arkiv grant key </span>
                 <Mono>{address}</Mono>
-              </>
-            ) : (
-              <span className="text-muted">Grant key unavailable</span>
-            )}
-          </p>
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Derived from your passkey, held by nobody else. Sign in on another device and the
+                same key comes back.
+              </p>
+            </details>
+          )}
           {!info.canUpload && (
             <p className="mt-2 text-xs text-muted">
               No postage batch on this identity yet, so uploads are unavailable. Get one at the

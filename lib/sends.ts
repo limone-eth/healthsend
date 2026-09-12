@@ -98,7 +98,8 @@ export async function createSend(params: {
   const linkSecret = generateLinkSecret()
   const wrapped = await wrapContentKey(contentKey, linkSecret, reference)
 
-  progress("Funding grant key")
+  // Topping up the user's own key is bookkeeping, not a step they took. It is
+  // deliberately not narrated: the previous stage label stays on screen.
   await ensureFunded(identity.address)
 
   progress("Writing grant to Arkiv")

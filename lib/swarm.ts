@@ -67,6 +67,12 @@ export function getSwarmClient(): Promise<SwarmIdClient> {
           description: "Share health data that expires on its own.",
         },
         ...(SUBSIDISED_GATEWAY ? { subsidisedGatewayUrl: SUBSIDISED_GATEWAY } : {}),
+        // A sized popup rather than a full browser tab. Passkey creation cannot
+        // happen inside the embedded iframe — WebAuthn in a cross-origin frame
+        // needs a `publickey-credentials-create` Permissions Policy that the SDK
+        // does not set — so authentication has to leave the page. A popup keeps
+        // it feeling like a dialog instead of a redirect off the site.
+        popupMode: "popup",
         onConnectionChange: (info) => {
           lastInfo = info
           for (const listener of listeners) listener(info)
