@@ -254,7 +254,10 @@ function Claim() {
           <p className="text-[11px] font-semibold tracking-[1.3px] text-haze-strong md:text-[12px] md:tracking-[1.4px]">
             WHAT MAKES IT DIFFERENT
           </p>
-          <h2 className="text-[24px] font-bold leading-[1.25] tracking-[-0.55px] text-surface md:w-[820px] md:text-[34px] md:leading-[1.2] md:tracking-[-0.8px]">
+          {/* text-white, not text-surface: this sits on the permanent dark gradient,
+              which does not flip with the theme, while `surface` correctly does. Same
+              fix H-27 applied inside FocusCard. */}
+          <h2 className="text-[24px] font-bold leading-[1.25] tracking-[-0.55px] text-white md:w-[820px] md:text-[34px] md:leading-[1.2] md:tracking-[-0.8px]">
             Most tools let you revoke access. That means asking a company to stop showing your
             data.
           </h2>
