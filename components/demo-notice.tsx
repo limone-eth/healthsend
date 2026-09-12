@@ -19,6 +19,13 @@
  * deleted from Swarm, health data stays sensitive for a lifetime, and expiry
  * ends access rather than erasing anything. See README.md, "What expiry does
  * and does not do".
+ *
+ * A third pass corrected "only you and whoever you send the link to can open
+ * them" — true only if the link cannot change hands, and it can: it is a
+ * bearer capability with no identity check and no device binding, so anyone
+ * the recipient forwards the whole URL to opens it exactly as they would. A
+ * one-time code sent apart from the link, claimed on first open, would close
+ * that gap (H-7) — it is not built, so the notice says what is true today.
  */
 export function DemoNotice() {
   return (
@@ -28,12 +35,13 @@ export function DemoNotice() {
     >
       <p className="font-medium">This is a hackathon demo.</p>
       <p className="mt-1">
-        Your files are encrypted in this browser before they leave it, so only you and whoever you
-        send the link to can open them. But the encrypted copy goes to a public network and stays
-        there permanently &mdash; expiry ends access, it does not erase anything &mdash; and a name
-        or date of birth we don&apos;t recognize can still slip through before a file is shared.
-        Please use the sample files in <code className="font-mono">fixtures/</code> instead of your
-        own health records.
+        Your files are encrypted in this browser before they leave it, and the encrypted copy alone
+        opens nothing. But anyone with the link can open it &mdash; including anyone your recipient
+        forwards it to. There is no separate code and no device check to confirm it&apos;s still
+        them. The encrypted copy also goes to a public network and stays there permanently &mdash;
+        expiry ends access, it does not erase anything &mdash; and a name or date of birth we
+        don&apos;t recognize can still slip through before a file is shared. Please use the sample
+        files in <code className="font-mono">fixtures/</code> instead of your own health records.
       </p>
     </div>
   )

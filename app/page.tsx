@@ -75,10 +75,16 @@ export default function Home() {
             overreach the README retracted and the landing page was corrected for: the
             document stays on Swarm, and a reader who opened it keeps what they read.
             What actually happens is narrower, and saying the narrower thing costs
-            nothing. See README.md, "What expiry does and does not do". */}
+            nothing. See README.md, "What expiry does and does not do".
+
+            "the half of the key we hold is deleted" stood here next, stated as though
+            it happens at the instant the window closes. It does not: `putShare` adds a
+            one-hour grace period on purpose, so the holder's own TTL never undercuts
+            the window a sender was promised. Deletion is real; the exact moment is not
+            one the storage can promise. */}
         <p className="mt-1 text-sm text-muted">
           Share a document with someone for exactly as long as you mean to. When the window closes,
-          the half of the key we hold is deleted.
+          we delete our half within the hour.
         </p>
       </header>
 
@@ -101,8 +107,8 @@ export default function Home() {
             key. It no longer does — that was the whole point of the rewrite, and
             a grant now carries a reference and a commitment and nothing else. */}
         Documents are encrypted in this browser and stored on Swarm. The key that opens them is
-        split in two: half is in the link, half is held for the length of the window and then
-        deleted. An Arkiv grant decides when that window ends, and nothing has to run for it to.
+        split in two: half is in the link, half is held for the length of the window and deleted
+        soon after. An Arkiv grant decides when that window ends, and nothing has to run for it to.
       </footer>
     </main>
   )

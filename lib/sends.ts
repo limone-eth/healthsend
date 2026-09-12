@@ -174,6 +174,8 @@ export type OpenedSend = {
 
 export type OpenFailure =
   | { status: "expired" }
+  /** The sender ended this share early. Distinct from a lapsed grant — see H-29/H-35. */
+  | { status: "revoked" }
   | { status: "no-key" }
   /** The holder is unreachable. Distinct from expiry, and must stay distinct. */
   | { status: "unavailable"; message: string }
@@ -246,7 +248,12 @@ export async function openSend(
         body: JSON.stringify({ entityKey, authKey: toBase64Url(authKey) }),
       })
 
-      if (response.status === 410) return { status: "expired" }
+      if (response.status === 410) {
+        // The holder tells the two apart (`lib/unlock.ts`); this is the one place
+        // that flag is read back out, so the page can too.
+        const detail = await response.json().catch(() => ({}))
+        return detail?.revoked ? { status: "revoked" } : { status: "expired" }
+      }
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}))
         // A holder we cannot reach is not an expiry. Saying so would tell the
