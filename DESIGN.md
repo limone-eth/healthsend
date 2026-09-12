@@ -369,7 +369,7 @@ of them changes a component.
 
 | Width | Layout | Navigation |
 |---|---|---|
-| ≥ 1280 | Rail + a 1080px content column. The send screen runs two columns: groups left, a sticky summary panel right | Left rail, 264px, opaque `surface` on a hairline |
+| ≥ 1280 | Rail + a 1176px content region, padded 44/48 to a 1080px measure. The send screen runs two columns: groups left, a sticky summary panel right | Left rail, 264px, opaque `surface` on a hairline |
 | 768–1279 | Rail collapses to a 72px icon rail; content becomes one column at a 32px inset | Icon rail, labels as tooltips |
 | < 768 | One column at a 20px inset. Display drops to 34px | Floating bottom bar, `glass-raised`, 72px |
 
@@ -378,6 +378,13 @@ of them changes a component.
 - Screen inset: **48px** desktop, 32px tablet, 20px mobile.
 - Content measure: **1080px** max. Body at 15px wants a 60–75 character line; 1080
   with a two-column split keeps every measure inside that.
+- **The region and the measure are two numbers, and both matter.** `ACUf3`, `hCcwO` and
+  `HMa4U` all draw the same shape: a 1440 frame, the 264px rail, and a Content region at
+  `x=264 w=1176` with `padding: [44, 48]`. 1176 is the region; 1080 is what is left inside
+  it. Cap the container at 1080 *and then* apply the 48px inset and the measure comes out
+  at 984 — which is what shipped until 2026-09-12, because H-41 widened an inner wrapper
+  that a 1080px `main` was already clamping. The 1176 belongs on the element that carries
+  the padding.
 - Rail: **264px**, `surface`, 1px `hairline` on its right edge, 28/20 padding.
 - Two-column split on the send screen: **640px + 400px** at a 40px gutter.
 - Spacing scale: **4 / 8 / 12 / 16 / 20 / 24 / 28**, then a 40px gutter.

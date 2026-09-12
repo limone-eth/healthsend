@@ -39,7 +39,8 @@ export default function SenderLayout({ children }: { children: ReactNode }) {
       onNewShare={() => router.push("/new")}
       onSignOut={() => void disconnect()}
     >
-      <div className="mx-auto w-full max-w-[1176px]">
+      {/* Width is `SenderChrome`'s `main` (1176, padded to a 1080 measure). */}
+      <div className="w-full">
         <header className="mb-10">
           <h1 className="text-2xl font-semibold tracking-tight">HealthSend</h1>
           {/* "Then the key is gone" stood here until it was checked. It was the same

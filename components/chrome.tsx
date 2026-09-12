@@ -139,7 +139,15 @@ export function SenderChrome({
           (112px) cleared that with only 20px to spare, too tight to hold once
           any page's last control sits close to the fold. `pb-44` reserves a
           full spare tab-bar height above that 92px floor. */}
-      <main className="mx-auto w-full max-w-[1080px] flex-1 px-5 py-11 pb-44 md:px-8 md:pb-11 xl:px-12">
+      {/* 1176, not 1080. Measured off ACUf3 / hCcwO / HMa4U, which all draw
+          the same shape: a 1440 frame, a 264px rail, and a Content region at
+          x=264 w=1176 with padding [44, 48] — so the *readable measure*
+          inside it is 1080. DESIGN.md's "content measure: 1080px" is that
+          inner number and this is the outer one; capping `main` at 1080 and
+          then padding it charged the 48px twice and left 984.
+          H-41 widened `app/(sender)/layout.tsx` to 1176 but nested it inside
+          this element, so it was clamped here and never took effect. */}
+      <main className="mx-auto w-full max-w-[1176px] flex-1 px-5 py-11 pb-44 md:px-8 md:pb-11 xl:px-12">
         {children}
       </main>
 
