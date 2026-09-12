@@ -46,6 +46,7 @@ function redis(): Redis {
 }
 
 const key = (entityKey: string) => `healthsend:share:${entityKey.toLowerCase()}`
+const accessLogKey = (entityKey: string) => `healthsend:access:${entityKey.toLowerCase()}`
 
 export type StoredShare = {
   /** The holder's half of the content key, base64url. */
@@ -80,5 +81,30 @@ export async function getShare(entityKey: string): Promise<StoredShare | null> {
 
 /** Used when a sender ends a send early. Expiry does not need this. */
 export async function deleteShare(entityKey: string): Promise<void> {
-  await redis().del(key(entityKey))
+  // The access log is part of the same arrangement as the share, not a
+  // separate record of the recipient's reading habits — see lib/access-log.ts.
+  // Ending the share early ends it too.
+  await Promise.all([redis().del(key(entityKey)), redis().del(accessLogKey(entityKey))])
+}
+
+/**
+ * Record one served unlock. Called only after the holder has actually handed
+ * back the share — see `resolveUnlock` in lib/unlock.ts, which swallows any
+ * error this throws so a bookkeeping failure can never turn a served share
+ * into a failed one.
+ *
+ * The log's TTL is pinned to the grant's own expiry, the same way the share's
+ * TTL is: the record lives only as long as the arrangement it describes.
+ */
+export async function recordAccess(entityKey: string, at: number, expiresAt: number): Promise<void> {
+  const k = accessLogKey(entityKey)
+  const ttlSeconds = Math.max(60, Math.ceil(expiresAt - at) + TTL_GRACE_SECONDS)
+  await redis().rpush(k, at)
+  await redis().expire(k, ttlSeconds)
+}
+
+/** Every timestamp the holder has recorded for this entity key, oldest first. */
+export async function getAccessLog(entityKey: string): Promise<number[]> {
+  const raw = await redis().lrange<number>(accessLogKey(entityKey), 0, -1)
+  return raw.map(Number)
 }

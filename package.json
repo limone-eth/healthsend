@@ -10,6 +10,7 @@
     "doctor": "node scripts/doctor.mjs",
     "verify:crypto": "node --experimental-strip-types scripts/crypto-roundtrip.mjs",
     "verify:revoke": "node --experimental-strip-types scripts/revoke-proof.mjs",
+    "verify:log": "node --experimental-strip-types scripts/access-log-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test"
   },

@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from "next/server"
-import { holderConfigured, getShare } from "@/lib/holder-store"
+import { holderConfigured, getShare, recordAccess } from "@/lib/holder-store"
 import { getGrant } from "@/lib/arkiv"
 import { resolveUnlock } from "@/lib/unlock"
 
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid unlock request" }, { status: 400 })
   }
 
-  const result = await resolveUnlock(entityKey, authKey, { getGrant, getShare })
+  const result = await resolveUnlock(entityKey, authKey, { getGrant, getShare, recordAccess })
   if (!result.ok) {
     const payload: Record<string, unknown> = { error: result.error }
     if (result.retryable) payload.retryable = true

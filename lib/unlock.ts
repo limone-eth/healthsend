@@ -22,6 +22,11 @@
  * out of the same `!stored` branch that an expired share does — 410, not a
  * 5xx. There is no separate "revoked" status, because from here the two are
  * the same fact: nothing left to serve.
+ *
+ * Every unlock actually served is recorded — see `lib/access-log.ts` for who
+ * gets to read that record back. The recording happens after every check
+ * above has passed, once and only once, and its own failure is swallowed:
+ * bookkeeping must never be able to turn a served share into a failed one.
  */
 
 import type { Grant } from "./arkiv"
@@ -52,6 +57,7 @@ function equal(a: string, b: string): boolean {
 export type UnlockDeps = {
   getGrant: (entityKey: string) => Promise<Grant | null>
   getShare: (entityKey: string) => Promise<StoredShare | null>
+  recordAccess: (entityKey: string, at: number, expiresAt: number) => Promise<void>
 }
 
 export type UnlockResult =
@@ -94,6 +100,13 @@ export async function resolveUnlock(
   }
   if (!equal(presented, stored.commitment) || !equal(stored.commitment, grant.authCommitment)) {
     return { ok: false, status: 403, error: "Not authorised for this grant" }
+  }
+
+  // 4. Served. Record it — never allowed to fail the unlock itself.
+  try {
+    await deps.recordAccess(entityKey, Math.floor(Date.now() / 1000), grant.expiresAt)
+  } catch {
+    // Swallow: the reader's access does not depend on our bookkeeping.
   }
 
   return { ok: true, share: stored.share, expiresAt: grant.expiresAt }
