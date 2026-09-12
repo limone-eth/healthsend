@@ -68,7 +68,14 @@ const TTL_GRACE_SECONDS = 60 * 60
 let client: Redis | null = null
 
 export function holderConfigured(): boolean {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+  if (!process.env.KV_REST_API_TOKEN) return false
+
+  try {
+    const url = new URL(process.env.KV_REST_API_URL ?? "")
+    return url.protocol === "http:" || url.protocol === "https:"
+  } catch {
+    return false
+  }
 }
 
 function redis(): Redis {
