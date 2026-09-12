@@ -39,8 +39,9 @@ export function DemoNotice() {
         opens nothing. But anyone with the link can open it &mdash; including anyone your recipient
         forwards it to. There is no separate code and no device check to confirm it&apos;s still
         them. The encrypted copy also goes to a public network and stays there permanently &mdash;
-        expiry ends access, it does not erase anything &mdash; and a name or date of birth we
-        don&apos;t recognize can still slip through before a file is shared. Please use the sample
+        expiry ends access, it does not erase anything. And nothing strips your name or date of
+        birth from a file today: that code exists and is tested, but the upload path does not call
+        it yet (story H-36), so whatever is in the document goes in as it is. Please use the sample
         files in <code className="font-mono">fixtures/</code> instead of your own health records.
       </p>
     </div>
