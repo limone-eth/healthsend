@@ -24,7 +24,14 @@ FLEET_START_CMD=pnpm start
 # "unproven". The failure mode is a rejected handshake, which the patched build
 # retries internally.
 FLEET_ANTHROPIC_MAX_CONCURRENT=4
-FLEET_CODEX_MAX_CONCURRENT=4
+FLEET_CODEX_MAX_CONCURRENT=5
+
+# Raised to 5 for one adversarial review lane alongside four builders. Note
+# run-worker.sh's own warning: every session shares one proxy on
+# 127.0.0.1:18765 and four concurrent is already documented as "unproven".
+# Five is further out. The failure mode is a rejected handshake, which the
+# patched build retries internally; if reviews start stalling, this is the
+# first number to put back.
 
 # Verification ORDER matters here: `tsc --noEmit` fails with TS2304 on
 # LayoutProps in a fresh worktree until `next build` has populated .next/types,
