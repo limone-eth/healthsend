@@ -191,22 +191,47 @@ export async function createGrant(params: {
 }
 
 /**
+ * A runaway-loop guard on the page walk below, not a product limit: at the
+ * node's own page maximum (200) this is 20,000 entities. A real sender's
+ * dashboard should never approach it — if one does, something upstream is
+ * wrong (pruning stalled, a cursor loop), and the honest answer is to say so
+ * rather than silently report a partial, wrong list.
+ */
+const MAX_LIST_PAGES = 100
+
+type ListGrantsDependencies = {
+  getPublicClient: typeof getPublicClient
+  getCurrentBlock: typeof getCurrentBlock
+}
+
+const defaultListGrantsDependencies: ListGrantsDependencies = { getPublicClient, getCurrentBlock }
+
+/**
  * The sender's dashboard query.
  *
  * A compound filter over four typed attributes, not a lookup by id: ownership
  * plus namespace plus kind, optionally narrowed by file type and by a creation
  * time range. Expired grants are absent by construction — there is no "where
  * active = true" here because nothing has to maintain such a flag.
+ *
+ * A single capped page used to be the whole of this query, and a sender past
+ * that cap saw their oldest *live* grants reported as ended — the one
+ * direction this product cannot afford to get wrong. This walks every page
+ * the cursor offers instead of stopping at the first one.
  */
-export async function listGrants(params: {
-  owner: string
-  fileKind?: FileKind
-  createdAfter?: number
-  /** Only sends carrying at least this many documents. */
-  minFiles?: number
-  limit?: number
-}): Promise<Grant[]> {
-  const client = getPublicClient()
+export async function listGrants(
+  params: {
+    owner: string
+    fileKind?: FileKind
+    createdAfter?: number
+    /** Only sends carrying at least this many documents. */
+    minFiles?: number
+    limit?: number
+  },
+  dependencies: Partial<ListGrantsDependencies> = {},
+): Promise<Grant[]> {
+  const deps = { ...defaultListGrantsDependencies, ...dependencies }
+  const client = deps.getPublicClient()
 
   // Every predicate carries the same tagged type the attribute was written with.
   // A bare string would assert `str` and a bare bigint `u256`, and a type
@@ -220,18 +245,32 @@ export async function listGrants(params: {
   if (params.createdAfter) predicates.push(gte("created_at", u64(BigInt(params.createdAfter))))
   if (params.minFiles) predicates.push(gte("file_count", u64(BigInt(params.minFiles))))
 
-  const [result, head] = await Promise.all([
+  const [firstPage, head] = await Promise.all([
     client
       .select({ key: true, attributes: true, payload: true })
       .where(and(...predicates))
       .ownedBy(params.owner as Hex)
-      .limit(params.limit ?? 50)
+      .limit(params.limit ?? 200)
       .fetch(),
-    getCurrentBlock(),
+    deps.getCurrentBlock(),
   ])
 
+  const entities = [...firstPage.entities]
+  let page = firstPage
+  let pages = 1
+  while (page.hasNextPage()) {
+    if (pages >= MAX_LIST_PAGES) {
+      throw new Error(
+        `Grant list for ${params.owner} did not end after ${pages} pages (${entities.length} entities) — refusing to guess which are still live`,
+      )
+    }
+    page = await page.next()
+    entities.push(...page.entities)
+    pages++
+  }
+
   const grants: Grant[] = []
-  for (const entity of result.entities) {
+  for (const entity of entities) {
     try {
       grants.push(toGrant(entity, head))
     } catch {

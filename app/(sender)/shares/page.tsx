@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { CheckCircle, LockSimple, UserCircle, XCircle } from "@phosphor-icons/react"
-import { endSend, listMySends } from "@/lib/sends"
+import { listMySends } from "@/lib/sends"
 import type { FileKind } from "@/lib/arkiv"
 import { Action, Chip, Countdown, InsetNote, ScreenHeader, type ChipState } from "@/components/ui"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { fetchAccessLog, type AccessLogFetch } from "./access-log-client"
+import { performConfirmEnd } from "./confirm-end"
 import { markEndedByYou, reconcileKnownShares, type KnownShare } from "./local-history"
 
 /** Re-polled on the same tick as the grant list, never a client timer against a stored date. */
@@ -110,10 +111,13 @@ function SharesList({ address }: { address: string }) {
     if (!confirmTarget) return
     setEnding(true)
     setEndError(null)
-    const result = await endSend(confirmTarget)
+    // performConfirmEnd always resolves — a refused connection reports the
+    // same way as an explicit error, rather than leaving `ending` stuck and
+    // every control on the sheet disabled. See confirm-end.ts.
+    const outcome = await performConfirmEnd(confirmTarget)
     setEnding(false)
-    if (result.status === "error") {
-      setEndError(result.message)
+    if (outcome.outcome === "refused") {
+      setEndError(outcome.message)
       return
     }
     markEndedByYou(address, confirmTarget)
