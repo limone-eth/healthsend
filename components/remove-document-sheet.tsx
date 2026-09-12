@@ -117,15 +117,21 @@ export function RemoveDocumentSheet({
                 shares.map((share) => (
                   <div
                     key={share.entityKey}
-                    className="flex h-12 w-full items-center gap-2.5 rounded-control bg-surface px-[13px]"
+                    className="flex min-h-12 w-full items-center gap-2.5 rounded-control bg-surface px-[13px] py-2.5"
                   >
                     <LinkSimple size={15} weight="light" className="shrink-0 text-secondary" />
-                    <span className="flex-1 truncate text-[14px] font-medium text-ink">
-                      {shareLabel(share.documentIds)}
-                    </span>
-                    <span className="shrink-0 text-[12.5px] text-muted">
-                      {endsLabel(share.expiresAt, now)}
-                    </span>
+                    {/* Side by side at the 560px width `i90sl` draws; stacked below that —
+                        a real phone's usable width is well under 560 even full-bleed, and
+                        the single-line layout truncated "Share of 2 documents" mid-word
+                        once the ends-date shared the line with it. See `## Choices`. */}
+                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-2.5 gap-y-0.5">
+                      <span className="truncate text-[14px] font-medium text-ink">
+                        {shareLabel(share.documentIds)}
+                      </span>
+                      <span className="shrink-0 text-[12.5px] text-muted">
+                        {endsLabel(share.expiresAt, now)}
+                      </span>
+                    </div>
                   </div>
                 ))}
 
