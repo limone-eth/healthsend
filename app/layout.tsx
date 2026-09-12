@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Figtree, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+/**
+ * Switzer ships no self-hostable distribution in this repo, so the CSS stack
+ * (`app/globals.css` --font-ui) names it first and falls through to a real
+ * face rather than silently landing on the platform default. Figtree is that
+ * face — it is also the exact stand-in `healthsend.pen` renders in, because
+ * the canvas only serves its own font catalogue (see DESIGN.md Typography).
+ */
+const figtree = Figtree({
+  variable: "--font-figtree",
   subsets: ["latin"],
 });
 
@@ -21,7 +28,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${figtree.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

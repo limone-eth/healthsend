@@ -1,38 +1,255 @@
 @import "tailwindcss";
 
+/*
+  Token source: DESIGN.md frontmatter, cross-checked against healthsend.pen's
+  own variables (GetVariables) and its Sheet 0 "Design System" documentation
+  frames. Names follow the pen file's roles, not Sheet 1's editorial names.
+*/
 :root {
-  --background: #fbfaf8;
-  --foreground: #1a1815;
-  --muted: #6b665e;
-  --line: #e5e1d9;
-  --surface: #ffffff;
-  --accent: #1a1815;
+  /* Colors — neutral ramp */
+  --color-canvas: #FBFBFB;
+  --color-surface: #FFFFFF;
+  --color-grouped: #F3F4F6;
+  --color-hairline: #E6E7E9;
+  --color-silver: #DADADA;
+  --color-disabled: #ECEDEF;
+  --color-ink: #15161A;
+  --color-secondary: #686B72;
+  --color-muted: #8A8D95;
+
+  /* Colors — cool, informational */
+  --color-navy: #1F2A44;
+  --color-haze: #E9EEF2;
+  --color-haze-strong: #DCE6EE;
+
+  /* Colors — warm, small marks only */
+  --color-chalk: #F7F5F2;
+  --color-umber: #4A423A;
+  --color-sand: #D9CBBE;
+
+  /* Colors — confirmed and destructive */
+  --color-sage: #A8B7AB;
+  --color-moss: #657563;
+  --color-error: #B84332;
+
+  /* Colors — the one gradient, and glass over it */
+  --color-grad-focus-from: #28344F;
+  --color-grad-focus-to: #14151A;
+  --color-panel-on-dark: #FFFFFF14;
+  --color-hairline-on-dark: #FFFFFF33;
+  --color-glass-raised: #FFFFFFBF;
+
+  /* Legacy roles consumed directly by app/page.tsx and app/s/[key]/page.tsx.
+     Aliased onto the token map rather than left as their own hardcoded hex,
+     so the two shipped screens inherit the real palette without an edit.
+     `muted` and `surface` already exist above under their DESIGN.md names,
+     so only the three names DESIGN.md doesn't use need an alias here. */
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+  --color-line: var(--color-hairline);
+  --color-accent: var(--color-ink);
+
+  /* Typography roles: family, size, weight, line-height, letter-spacing */
+  --font-ui: "Switzer", var(--font-figtree), -apple-system, Helvetica, Arial, sans-serif;
+
+  --text-display-size: 44px;
+  --text-display-leading: 1.09;
+  --text-display-tracking: -0.9px;
+  --text-display-weight: 700;
+
+  --text-display-mobile-size: 34px;
+  --text-display-mobile-leading: 1.12;
+  --text-display-mobile-tracking: -0.7px;
+  --text-display-mobile-weight: 700;
+
+  --text-headline-size: 28px;
+  --text-headline-leading: 1.21;
+  --text-headline-tracking: -0.5px;
+  --text-headline-weight: 600;
+
+  --text-title-size: 17px;
+  --text-title-leading: 1.47;
+  --text-title-tracking: -0.25px;
+  --text-title-weight: 600;
+
+  --text-body-size: 15px;
+  --text-body-leading: 1.47;
+  --text-body-tracking: normal;
+  --text-body-weight: 400;
+
+  --text-label-size: 13px;
+  --text-label-leading: 1.38;
+  --text-label-tracking: normal;
+  --text-label-weight: 500;
+
+  --text-eyebrow-size: 12px;
+  --text-eyebrow-leading: 1.3;
+  --text-eyebrow-tracking: 1.2px;
+  --text-eyebrow-weight: 600;
+
+  /* Space steps */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-xxl: 24px;
+  --space-xxxl: 28px;
+  --space-gutter: 40px;
+  --space-screen-inset: 48px;
+
+  /* Radius steps */
+  --radius-select: 7px;
+  --radius-glyph: 10px;
+  --radius-control: 14px;
+  --radius-inset: 16px;
+  --radius-card: 22px;
+  --radius-sheet: 28px;
+  --radius-capsule: 999px;
+
+  /* Elevation & depth — a surface carries one of these, never two */
+  --shadow-card: 0 0 0 1px rgba(0, 0, 0, .05), 0 2px 5px rgba(27, 35, 42, .035),
+    0 16px 38px rgba(33, 45, 54, .075);
+  --shadow-focus: 0 0 0 1px rgba(255, 255, 255, .10), 0 2px 6px rgba(27, 35, 42, .06),
+    0 18px 42px rgba(33, 45, 54, .12);
+  --shadow-control: 0 0 0 1px rgba(0, 0, 0, .045), 0 5px 14px rgba(33, 45, 54, .055);
+  --shadow-glass: inset 0 1px 0 rgba(0, 0, 0, .06);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-line: var(--line);
-  --color-surface: var(--surface);
-  --color-accent: var(--accent);
-  --font-sans: var(--font-geist-sans);
+  --color-canvas: var(--color-canvas);
+  --color-surface: var(--color-surface);
+  --color-grouped: var(--color-grouped);
+  --color-hairline: var(--color-hairline);
+  --color-silver: var(--color-silver);
+  --color-disabled: var(--color-disabled);
+  --color-ink: var(--color-ink);
+  --color-secondary: var(--color-secondary);
+  --color-muted: var(--color-muted);
+  --color-navy: var(--color-navy);
+  --color-haze: var(--color-haze);
+  --color-haze-strong: var(--color-haze-strong);
+  --color-chalk: var(--color-chalk);
+  --color-umber: var(--color-umber);
+  --color-sand: var(--color-sand);
+  --color-sage: var(--color-sage);
+  --color-moss: var(--color-moss);
+  --color-error: var(--color-error);
+  --color-grad-focus-from: var(--color-grad-focus-from);
+  --color-grad-focus-to: var(--color-grad-focus-to);
+  --color-panel-on-dark: var(--color-panel-on-dark);
+  --color-hairline-on-dark: var(--color-hairline-on-dark);
+  --color-glass-raised: var(--color-glass-raised);
+
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-foreground);
+  --color-line: var(--color-line);
+  --color-accent: var(--color-accent);
+
+  --font-sans: var(--font-ui);
   --font-mono: var(--font-geist-mono);
+
+  --text-display: var(--text-display-size);
+  --text-display--line-height: var(--text-display-leading);
+  --text-display--letter-spacing: var(--text-display-tracking);
+  --text-display--font-weight: var(--text-display-weight);
+
+  --text-display-mobile: var(--text-display-mobile-size);
+  --text-display-mobile--line-height: var(--text-display-mobile-leading);
+  --text-display-mobile--letter-spacing: var(--text-display-mobile-tracking);
+  --text-display-mobile--font-weight: var(--text-display-mobile-weight);
+
+  --text-headline: var(--text-headline-size);
+  --text-headline--line-height: var(--text-headline-leading);
+  --text-headline--letter-spacing: var(--text-headline-tracking);
+  --text-headline--font-weight: var(--text-headline-weight);
+
+  --text-title: var(--text-title-size);
+  --text-title--line-height: var(--text-title-leading);
+  --text-title--letter-spacing: var(--text-title-tracking);
+  --text-title--font-weight: var(--text-title-weight);
+
+  --text-body: var(--text-body-size);
+  --text-body--line-height: var(--text-body-leading);
+  --text-body--font-weight: var(--text-body-weight);
+
+  --text-label: var(--text-label-size);
+  --text-label--line-height: var(--text-label-leading);
+  --text-label--font-weight: var(--text-label-weight);
+
+  --text-eyebrow: var(--text-eyebrow-size);
+  --text-eyebrow--line-height: var(--text-eyebrow-leading);
+  --text-eyebrow--letter-spacing: var(--text-eyebrow-tracking);
+  --text-eyebrow--font-weight: var(--text-eyebrow-weight);
+
+  /*
+    Namespaced `hs-*` rather than DESIGN.md's bare `xs`/`sm`/`md`/`lg`/`xl`:
+    Tailwind's own sizing scale (consumed by max-w-*, w-*, size-*, ...) already
+    reserves those exact names. Registering `--spacing-md` etc. directly here
+    silently redefined `max-w-md` from Tailwind's 28rem to this token's 12px
+    everywhere in the app, including screens this story must not touch.
+  */
+  --spacing-hs-xs: var(--space-xs);
+  --spacing-hs-sm: var(--space-sm);
+  --spacing-hs-md: var(--space-md);
+  --spacing-hs-lg: var(--space-lg);
+  --spacing-hs-xl: var(--space-xl);
+  --spacing-hs-xxl: var(--space-xxl);
+  --spacing-hs-xxxl: var(--space-xxxl);
+  --spacing-hs-gutter: var(--space-gutter);
+  --spacing-hs-screen-inset: var(--space-screen-inset);
+
+  --radius-select: var(--radius-select);
+  --radius-glyph: var(--radius-glyph);
+  --radius-control: var(--radius-control);
+  --radius-inset: var(--radius-inset);
+  --radius-card: var(--radius-card);
+  --radius-sheet: var(--radius-sheet);
+  --radius-capsule: var(--radius-capsule);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-focus: var(--shadow-focus);
+  --shadow-control: var(--shadow-control);
+  --shadow-glass: var(--shadow-glass);
 }
 
+/*
+  HealthSend is light-only by design (see DESIGN.md "North star": dark is a
+  property of the Ended surface's Focus Card, not a system theme). This block
+  only restores the exact overrides the pre-existing dark block already had,
+  so the two shipped screens keep rendering the way they did before this
+  story — `surface` included, since un-classed text inherits `foreground`
+  and goes unreadable on a white card the moment `foreground` flips light.
+  Every other HealthSend-named token (ink, haze, sage, chalk, ...) stays
+  single-valued: DESIGN.md defines no dark variant for them, and the new
+  primitive kit is not a themed surface.
+*/
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #12110f;
-    --foreground: #ece9e3;
-    --muted: #8d877d;
-    --line: #2a2724;
-    --surface: #1a1816;
-    --accent: #ece9e3;
+    --color-background: #12110f;
+    --color-foreground: #ece9e3;
+    --color-line: #2a2724;
+    --color-accent: #ece9e3;
+    --color-surface: #1a1816;
   }
 }
 
+/*
+  `--color-surface` is now shared by the legacy alias above and by every new
+  primitive (Card, Field, List Row, ...), which paints fixed `ink`-on-`surface`
+  text with no dark variant of its own. Flipping `surface` dark for the two
+  shipped screens therefore makes that fixed-ink text unreadable wherever the
+  kit is put on display for review. `/kitchen-sink` is exactly that display
+  case, not a shipped screen, so it opts back out of the flip entirely.
+*/
+.kitchen-sink-scope {
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+  --color-surface: #FFFFFF;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
 }
