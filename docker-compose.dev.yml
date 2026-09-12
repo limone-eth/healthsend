@@ -1,0 +1,33 @@
+# Local key-share holder.
+#
+# `@upstash/redis` speaks Upstash's REST protocol, not the Redis wire protocol,
+# so a bare redis-server is not enough on its own. serverless-redis-http puts
+# that REST surface in front of a real Redis, which means local development runs
+# the same client, the same Lua scripts and the same atomicity guarantees as
+# production rather than a mock with different behaviour.
+#
+#   pnpm holder:up     start it
+#   pnpm holder:down   stop and remove it
+#
+# Then set, in .env.local:
+#   KV_REST_API_URL=http://localhost:8079
+#   KV_REST_API_TOKEN=healthsend-local-dev-token
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: healthsend-redis
+    ports:
+      - "6380:6379"
+
+  holder:
+    image: hiett/serverless-redis-http:latest
+    container_name: healthsend-srh
+    depends_on:
+      - redis
+    ports:
+      - "8079:80"
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: healthsend-local-dev-token
+      SRH_CONNECTION_STRING: "redis://redis:6379"

@@ -15,7 +15,9 @@
     "verify:deident": "node --experimental-strip-types scripts/deident-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test",
-    "test": "pnpm verify:crypto && pnpm e2e"
+    "test": "pnpm verify:crypto && pnpm e2e",
+    "holder:up": "docker compose -f docker-compose.dev.yml up -d",
+    "holder:down": "docker compose -f docker-compose.dev.yml down"
   },
   "dependencies": {
     "@arkiv-network/sdk": "0.8.1",
