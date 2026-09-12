@@ -39,6 +39,8 @@ import {
   type Grant,
 } from "./arkiv"
 import { getIdentity, ensureFunded } from "./identity"
+import { revokeMessage } from "./revoke"
+import { privateKeyToAccount } from "viem/accounts"
 
 const IV_BYTES = 12
 
@@ -261,6 +263,40 @@ export async function openSend(
   } catch (error) {
     return { status: "error", message: (error as Error).message }
   }
+}
+
+export type EndSendResult = { status: "ended" } | { status: "error"; message: string }
+
+/**
+ * End a share before its date.
+ *
+ * This deletes the holder's half of the content key, which is what makes the
+ * link unjoinable — the Arkiv grant is left alone; this ends access, not
+ * history. Proof of ownership is a signature from the sender's own derived
+ * Arkiv key over the entity key, not a secret returned at create time: a
+ * bearer secret would leak into logs and browser history, and anyone holding
+ * it could end someone else's share.
+ *
+ * No UI calls this yet — the confirm sheet is separate work — but the send
+ * primitives all live here, so this does too.
+ */
+export async function endSend(entityKey: string): Promise<EndSendResult> {
+  const identity = await getIdentity()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const account = privateKeyToAccount(identity.privateKey)
+  const signature = await account.signMessage({ message: revokeMessage(entityKey, timestamp) })
+
+  const response = await fetch("/api/holder/revoke", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ entityKey, signature, timestamp }),
+  })
+
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}))
+    return { status: "error", message: detail?.error ?? `HTTP ${response.status}` }
+  }
+  return { status: "ended" }
 }
 
 /** The sender's dashboard. Compound filter, owner-scoped. */
