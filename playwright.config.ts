@@ -5,6 +5,13 @@ import { defineConfig, devices } from "@playwright/test"
  * testing about the recipient is that they arrive with *nothing*: no Swarm ID,
  * no wallet, no stored session. Playwright gives each test a fresh context by
  * default, which is a guest window that can be re-run.
+ *
+ * Two projects split the two lanes. `offline` is route-stubbed — no real Swarm
+ * ID, no funded Arkiv key, no network — and runs by default. `live`, tagged
+ * `@live` in the spec, needs a real share link; it still runs by default too,
+ * but every test in it calls `test.skip` when `SHARE_URL` is unset, so a plain
+ * `pnpm e2e` exercises it not at all. Select it on purpose with
+ * `SHARE_URL=... pnpm exec playwright test --project=live`.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -21,4 +28,8 @@ export default defineConfig({
     reuseExistingServer: true,
     timeout: 60_000,
   },
+  projects: [
+    { name: "offline", grepInvert: /@live/ },
+    { name: "live", grep: /@live/ },
+  ],
 })

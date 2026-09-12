@@ -10,7 +10,8 @@
     "doctor": "node scripts/doctor.mjs",
     "verify:crypto": "node --experimental-strip-types scripts/crypto-roundtrip.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "test": "pnpm verify:crypto && pnpm e2e"
   },
   "dependencies": {
     "@arkiv-network/sdk": "0.8.1",
