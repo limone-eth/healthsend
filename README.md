@@ -1,653 +1,335 @@
 # HealthSend
 
-**Share health data through a link with a verifiable expiry.**
+**Share your health documents through a link that stops opening on the date you choose.**
 
-A first scaffold, focused on the two integrations that carry the idea: **Swarm**
-for storage and identity, **Arkiv** for grants that expire on their own.
-
-**Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · Built at ETHRome 2026.
-
-### See it without installing anything
-
-**[Open a live send →](https://healthsend.vercel.app/s/0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3#ugjTYmA8gV5bdy6hLXNGxc3g3_bRQEy-0a2tA_3XPww)**
-
-Three synthetic health documents — a lab panel, a consult note, a sleep export —
-shared for seven days from 12 September 2026. No account, no wallet, no
-extension. Open it in a private window and you are the recipient.
-
-Two things to notice: the countdown comes from a real block height rather than
-being invented in the page, and there is no download button anywhere. When the
-window closes the same URL shows an expired state and nobody will have done
+Upload your blood-test PDFs once. Pick which ones a coach, nutritionist or doctor should see, and
+set how long they can see them. Then send the link over WhatsApp or email. They need no account and
+no wallet. When the time is up, the link stops opening on its own. Nobody has to remember to revoke
 anything.
 
-> It dies earlier if the postage batch behind it lapses first — which is the
-> layered decay described in [§9 of the brief](./healthsend-brief.md), visible in
-> the wild. Sending needs a Swarm ID with a batch; *the recipient needs no account
-> or wallet*.
+**Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · Built at ETHRome 2026 · MIT licence
+· Bounties: **Swarm**, **Arkiv** (Mission 02, Built to expire, and Best Use)
+
+- [Try it in two minutes](#try-it-in-two-minutes)
+- [How it works, in three pictures](#how-it-works-in-three-pictures)
+- [Why Swarm, and where it is in the code](#why-swarm-and-where-it-is-in-the-code)
+- [Why Arkiv, and where it is in the code](#why-arkiv-and-where-it-is-in-the-code)
+- [What expiry does and does not do](#what-expiry-does-and-does-not-do)
+- [Running it](#running-it) · [Verifying the claims](#verifying-the-claims)
+- [Provenance and third-party components](#provenance-and-third-party-components)
+- [Where it goes next](#where-it-goes-next)
 
 ---
 
-## The one-paragraph version
+## The problem
 
-You sign in with a Swarm ID passkey. You pick one or more documents — a lab PDF,
-a sleep export, the consult note — and a window — two minutes, twelve weeks,
-whatever matches the real relationship. The file is encrypted in your browser and
-the ciphertext goes straight to Swarm. A fresh content key is split into two
-shares: one is derived from the secret in the link's URL fragment, and the other
-is stored under a TTL by HealthSend's key-share holder. The Arkiv grant carries
-the Swarm reference, a SHA-256 commitment and the expiry, but no key material.
-The recipient opens the link with no account and no wallet. Their browser reads
-the live grant, proves possession of the fragment to the holder, and reconstructs
-the content key locally. When the window closes, the grant lapses and the holder
-refuses its share, so the ordinary reader — the one who opens the link a month
-later — finds nothing to open.
+Health data sharing today is permanent access for a temporary relationship. A nutritionist you
+see for twelve weeks keeps your lab results in their inbox forever. The usual fix is a company
+that promises to stop serving the file. That is a promise, it makes the company a gatekeeper, and
+someone can compel the company to break it.
 
-Nobody has to revoke anything. No cleanup job runs. The access window runs out.
+HealthSend makes the time limit part of how the link works. Anyone can check whether a link has
+ended; it's not something we decide.
 
-That last sentence is the honest one. The stronger version we believed for most
-of a day — that expiry of an Arkiv grant *destroys* the key — is **false**, and
-[we prove it is false below](#what-expiry-does-and-does-not-do).
+## Try it in two minutes
 
-## Why this shape
+**As a recipient (no setup at all):**
+**[open a live send →](https://healthsend.vercel.app/s/0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3#ugjTYmA8gV5bdy6hLXNGxc3g3_bRQEy-0a2tA_3XPww)**
+in a private window. It holds three synthetic health documents, shared for seven days from
+12 September 2026.
+- No sign-in is offered, and there is no download button.
+- The countdown comes from a real block height, not a timer in the page.
+- After the window closes, the same URL shows "This link has expired", and nobody will have done
+  anything.
 
-Health data sharing today is permanent access for a temporary relationship. A
-nutritionist you work with for twelve weeks has your labs in their inbox forever.
-The usual fix is a company that promises to stop serving the file — which is a
-promise, and a gatekeeper, and something that can be compelled.
+**As a sender:**
 
-So the constraint that ships is narrower: **we never hold the documents, and no
-one component has both the key and the expiry authority.** There is a server of
-ours in the read path. It is the key-share holder, and it keeps one share under a
-TTL. The other share is derived from the URL fragment, so the holder cannot
-open the document by itself. The holder checks Arkiv before every unlock; Arkiv
-sets the public lifetime but holds no secret.
+1. Sign in at [healthsend.vercel.app](https://healthsend.vercel.app) with a Swarm ID passkey.
+2. **Add blood tests:** pick one or several PDFs. They are encrypted on your device and stored on
+   Swarm.
+3. **New share:** tick the PDFs this person should see, choose **2 min**, and create the link.
+4. Open the link in a private window: the PDFs render. Wait two minutes and reload: it has
+   expired. Nothing was deleted in between.
 
-That trade is deliberate and [stated plainly below](#the-cost-stated-plainly): the
-holder can fail or be compelled to serve, and its deletion guarantee is only as
-good as its storage provider. Neither its refusal nor its later TTL deletion can
-erase a copy that a recipient already made. That difference matters enough to
-have [its own section](#what-expiry-does-and-does-not-do).
+> Sending needs a Swarm ID with a storage drive (gift codes from the Swarm desk at ETHRome).
+> Receiving needs nothing.
 
-## Who this is for, and how it reaches its first 100 users
+## How it works, in three pictures
 
-Two concrete situations, not a persona sheet:
+There are two kinds of key, on purpose:
+- **Key A** locks your archive and never leaves your device.
+- **Key B** is made fresh for each link and locks only what that person gets. It is the only key
+  that is ever split.
 
-- **A bounded engagement.** Someone starting a twelve-week block with a nutritionist or
-  coach sends sleep, training and lab data through a link set to twelve weeks. The
-  retrieval window matches the plan instead of a revocation nobody remembers to do.
-- **A one-off consult.** Someone getting a second opinion sends a lab panel to a
-  specialist they don't have an ongoing relationship with, for a short window. Afterward,
-  the ordinary share link cannot retrieve the panel again. The specialist can still keep
-  anything they received while the link was open. A de-identified version of this send —
-  so the specialist sees the panel without the name on it — is designed but **not built**;
-  today's send shares the document as uploaded.
+### 1 · Upload once
 
-**The distribution path.** The link needs no app and no account to open, so it travels
-over whatever channel the two people already use to talk — WhatsApp, email, a patient
-portal message. That is the entire install step, and it is exactly what the demo link at
-the top of this README exercises: open it, no sign-in offered, and the same link stops
-retrieving the documents after expiry. It does not erase a screenshot or any other copy
-made while the link was live. There is no separate app to distribute.
-
-The first 100 users are expected to come from the recipient side, not from outbound
-marketing. Sending needs only a Swarm ID passkey — no wallet, no seed phrase (see
-[Running it](#running-it)) — so a nutritionist or specialist who receives one send from one
-client is one passkey sign-in away from becoming a sender to their own client list. A
-practitioner who typically holds 15-30 concurrent clients is worth more, as a channel,
-than any single acquisition tactic available to a weekend hackathon project. The plan is
-therefore to onboard a handful of independent coaches and specialists directly and let
-each practitioner's own roster be the multiplier — a mechanism that can be checked against
-the running app today, rather than a projection that has to be taken on faith.
-
-**What this is not, yet.** This is a hackathon build on a testnet. Sending still needs a
-Swarm storage drive and a funded Arkiv key, both handled today by hackathon-specific paths
-— gift codes at the Swarm desk, a faucet claim, and the `/api/fund` route described in
-[Why there is a server at all](#why-there-is-a-server-at-all) — none of which is a
-production onboarding flow. Turning "the first 100 users" from a hackathon plan into a
-claim about real people needs the funding story already flagged in
-[Where this is going](#where-this-is-going), and the de-identification step named above
-shipped rather than designed.
-
-## How it works
-
-```
-  Browser (sender)
-    │  encrypt envelope under a fresh content key (AES-256-GCM)
-    ├──────────────► Swarm          ciphertext, via the Swarm ID iframe's own
-    │                               browser-signed postage stamp
-    │
-    │  split content key; keep the link secret in the URL fragment
-    ├──────────────► Arkiv          grant: Swarm ref + SHA-256 commitment
-    │                               + typed attributes + `expires`; no key material
-    └──────────────► holder         held share + commitment, stored under a TTL
-
-  Link:  https://…/s/<entityKey>#<linkSecret>
-                                   └── the fragment itself never reaches a server
-
-  Browser (recipient, no account)
-    ◄───── Arkiv    read live grant and its commitment
-    ◄───── holder   prove link possession → held share (only while grant is live)
-    ◄───── Swarm    read ciphertext by hash (public gateway)
-           derive the link share, join the two shares, decrypt locally
+```mermaid
+flowchart TD
+  P([Your passkey]) --> A["KEY A: your archive key<br/>worked out from your passkey<br/>never leaves your device, never shared"]
+  D1[Blood test A] --> L
+  D2[Blood test B] --> L
+  D3[Whoop data] --> L
+  D4[Meal plan] --> L
+  A --> L["Lock all of them together with KEY A,<br/>on your own device"]
+  L --> S[("Swarm: your archive<br/>all documents, locked with KEY A<br/>only you can open it")]
 ```
 
-**Both shares are required.** The URL fragment derives one; the holder stores the
-other. The Arkiv grant contains neither share: its commitment lets the holder
-check a derived proof, and its lifetime determines whether the holder serves.
-The holder cannot decrypt with the values it sees, and the link alone cannot
-decrypt without the holder.
+### 2 · Share a slice, any day later
 
-By default, possession of the link is the recipient's only credential. A sender
-can add a separate four-digit code: someone holding only the link then gets five
-attempts before the share locks. That is all it does. It does **not** protect
-against someone who holds both the link and the holder's share — four digits is
-10,000 candidates, searchable offline in under a second. A claim-on-first-open
-lock to one device is designed but **not built**.
+```mermaid
+flowchart TD
+  S[("Swarm: your archive")] --> F[Fetch your archive back]
+  F --> U["Unlock it with KEY A<br/>in your browser, nowhere else"]
+  U --> PICK["Pick what this person gets<br/>Blood test A and Whoop data<br/>the other two are simply not taken"]
+  PICK --> B["KEY B: a brand-new share key<br/>random, made for this one person<br/>nothing to do with KEY A"]
+  B --> RL["Re-lock just those documents<br/>with KEY B"]
+  RL --> SS[("Swarm: their share<br/>your archive is untouched")]
+  B --> CUT{"Cut KEY B in two<br/>KEY A is never cut or sent"}
+  CUT -- piece 1 --> LINK["Goes in their link,<br/>after the #"]
+  CUT -- piece 2 --> KEEP["Kept by a key release:<br/>Lit's sealed enclave, or our holder"]
+  KEEP --> ARK[("Arkiv: a public note<br/>this link ends at this block")]
+```
+
+### 3 · They open the link
+
+```mermaid
+flowchart TD
+  O[They open the link] --> ASK["Their browser asks the key release<br/>for piece 2"]
+  ASK --> CHK{"It checks Arkiv:<br/>has the deadline passed?"}
+  CHK -- not yet --> GIVE[Piece 2 handed over]
+  CHK -- "yes, or unsure" --> NO(["Refused.<br/>Half a key opens nothing."])
+  GIVE --> JOIN["Piece 1 from the link + piece 2 = KEY B"]
+  JOIN --> VIEW["They see Blood test A and Whoop data,<br/>in their browser. Nothing else."]
+```
+
+**Who keeps piece 2.**
+- **Lit Chipotle,** for a share made from your archive without a code. It is a sealed enclave run
+  by Lit, and it releases piece 2 through a registered action that checks Arkiv itself.
+- **Our key-share holder,** for a share with a four-digit code. Only the holder counts wrong
+  guesses and locks after five.
+
+Either way, the Arkiv entity carries no key material. It holds only the Swarm reference, a
+commitment and the deadline.
+
+## Why Swarm, and where it is in the code
+
+**Swarm earns its place because we never hold anyone's documents.** With S3 we would be the
+custodian of a store of encrypted health documents, which could be breached, subpoenaed or
+acquired. On Swarm:
+
+- **Your archive is yours.** It is sealed under a key only your passkey can make, and located by
+  a private feed derived from the same identity. Sign in on a second device and it is there.
+- **It outlives us.** Shut HealthSend down and the encrypted files are still retrievable by hash.
+- **Reading a file doesn't touch our servers.** Recipients fetch the encrypted file from a public
+  gateway.
+- **Swarm ID, no Bee node.** Senders sign in with a passkey and sign their own postage stamps in
+  the browser.
+
+| Where | What it does with Swarm |
+|---|---|
+| [`lib/swarm.ts`](./lib/swarm.ts) | Swarm ID client (`@snaha/swarm-id`): connect, `deriveAppSecret`, upload ciphertext, read from the public gateway |
+| [`lib/identity.ts`](./lib/identity.ts) | Derives the archive key, the archive feed topic, the Arkiv signing key and the blinding key from the Swarm ID identity |
+| [`lib/archive-store.ts`](./lib/archive-store.ts) | Upload once: reseal the archive, upload it, move the private feed |
+| [`lib/assets.ts`](./lib/assets.ts) | Pack the chosen documents, seal them under a fresh share key, upload once |
+| [`app/s/[key]/page.tsx`](./app/s/%5Bkey%5D/page.tsx) | Recipient: fetch ciphertext by hash, decrypt and render in place |
+
+**What we deliberately don't use.** Neither of these can end access, and ending access is the
+product:
+- Swarm's encrypted references make the reference itself the key.
+- Swarm's access control (ACT) keeps historical access for people who were once granted it.
+
+## Why Arkiv, and where it is in the code
+
+**Arkiv holds the one thing that must not be ours: the authority over when access ends.**
+
+With an `expires_at` column in our own database, we would answer "has this ended?". We could extend
+it, be compelled to, or get it wrong, and nobody outside could tell. On Arkiv:
+
+- **Expiry is public.** The key release queries Arkiv. So can the recipient, the sender, or anyone
+  else.
+- **We can't extend it.** Every grant is `ownedBy` the sender's own key, derived from their Swarm
+  ID. The expiry is pinned with `ExpirationTime.atBlock`, so it can't drift later.
+- **Absence is the signal.** When the block passes, the entity stops matching queries on its own,
+  and the key release refuses. No job runs and no delete call is made. That is Mission 02.
+- **The sender checks their own history** through a compound query, not an API of ours.
+- **Nothing sensitive goes in.** Recipient and label attributes are HMAC-blinded under a key the
+  sender holds. File contents never go near Arkiv.
+
+| Where | What it does with Arkiv |
+|---|---|
+| [`lib/arkiv.ts`](./lib/arkiv.ts) | Writes grants with typed attributes (`app`, `kind`, `sender`, `filetype`, `file_count`, `recipient`, `label`, `expires_block`) and `atBlock` expiry. Also the dashboard's compound query, and the binding query (`$owner`, `$expiresAt`) a key release uses |
+| [`lib/key-release/chipotle-action.js`](./lib/key-release/chipotle-action.js) | The Lit action: re-checks the grant's commitment, then queries Arkiv directly before releasing piece 2 |
+| [`app/api/holder/unlock/route.ts`](./app/api/holder/unlock/route.ts) | The holder's check that the grant is still live before it serves anything |
+| [`app/(sender)/shares/page.tsx`](./app/(sender)/shares/page.tsx) | Your shares: live grants, their countdowns, ending one early |
+| [`arkiv/schema.md`](./arkiv/schema.md) · [`friction.md`](./friction.md) | The schema, and what broke along the way |
+| [`arkiv/evidence/mission-02-expiry.txt`](./arkiv/evidence/mission-02-expiry.txt) | Mission 02: the same query before and after the boundary, no delete call |
+
+### Every combination, scored the same way
+
+Three properties decide whether the product is honest:
+- **Custody:** we never hold the documents.
+- **Authority:** we don't decide whether access is still valid.
+- **Expiry:** access can actually end.
+
+| Architecture | Custody | Authority | Expiry | What it really is |
+|---|:--:|:--:|:--:|---|
+| Postgres + S3 | ❌ | ❌ | ✅ | The incumbent. |
+| Swarm only | ✅ | — | ❌ | Permanent sharing: the link is the key, forever. |
+| Arkiv + S3 | ❌ | ✅ | ✅ | Expiry works because *we* delete the file. |
+| Swarm + a key-value store with a timer | ✅ | ❌ | ✅ | Expires on **our** timer. A gatekeeper with good manners. |
+| Swarm + Arkiv, key in the grant (our v1) | ✅ | ✅ | ❌ | No working expiry. [See below](#what-expiry-does-and-does-not-do). |
+| **Swarm + Arkiv + a key release** (*what ships*) | ✅ | ✅ | ✅ | The only row with all three. |
 
 ## What expiry does and does not do
 
-We got this wrong the first time, and the correction is the most useful thing in
-this repository, so it is stated plainly rather than buried.
+**We got this wrong first, and the correction is the most useful thing in this repository.**
 
-**What we believed:** the wrapped key lives only in the grant, so when the grant
-expires the key is destroyed and the ciphertext on Swarm becomes permanently
-unopenable — even to us.
+Our first version put a wrapped key inside the Arkiv grant, assuming the key was gone once the
+grant expired. It isn't:
+- An Arkiv entity is created by a transaction.
+- Expiry removes it from the live query results, not from chain history.
+- So anyone who saved the payload while it was live could decrypt later, using a leaked link.
 
-**What was actually true of v1:** Arkiv entities are created by transactions,
-and the payload travels in the transaction's calldata. Expiry prunes the entity from the
-*live query surface*. It does not, and cannot, remove the transaction. The
-wrapped key stays public and permanent in chain history.
-
-Check it against a grant of ours that has already expired:
+Check it against one of our expired v1 grants:
 
 ```bash
 node scripts/payload-survives.mjs \
   0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6 \
   0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905
+# status   gone from the query surface
+# PAYLOAD RECOVERED FROM CALLDATA: {"v":1,"ref":"demo-swarm-reference","wrap":{"iv":"x","ct":"y"}}
 ```
 
-```
-status   gone from the query surface
+The fix is the split key above: key material stays out of anything public and sits behind a party
+that can refuse. Run the same script on a current grant and it reports *"no key material"*.
 
-PAYLOAD RECOVERED FROM CALLDATA:
-  {"v":1,"ref":"demo-swarm-reference","wrap":{"iv":"x","ct":"y"}}
-```
-
-So v1's real guarantee was narrower than the one we set out to build:
+What that buys, precisely:
 
 | Claim | True? |
 |---|---|
-| The document is encrypted client-side, and no server of ours receives plaintext | **Yes** |
-| Neither the URL fragment nor the public v1 grant payload alone reveals plaintext | **Yes** |
-| After expiry, an ordinary reader opening the link finds nothing | **Yes** |
-| After expiry, someone who archived the public payload and *later* obtains the link can still decrypt | **Yes — this is the hole** |
-| Expiry destroys the key | **No** |
-
-The archiving attack needs no privilege and no foresight about which link to
-target: the payload is public and enumerable while the grant lives, and permanent
-in calldata afterwards. Only the fragment is scarce. The two halves need never be
-captured at the same time, which is what our original claim assumed.
-
-Arkiv's own documentation says this in advance — *"it is not a confidentiality
-layer… encrypt your own data before it goes in."* We did encrypt the document
-before it went in. The mistake was putting the **wrapped key** in as well, and
-assuming pruning was erasure.
-
-**What fixed it** — and, just as usefully, what would not.
-
-*Not* Swarm ACT. We reached for it first and it is ruled out explicitly: bee-js
-states that *"updating the grantees list to remove a public key will not revoke
-access to the content retroactively"*, and Swarm's access-control design keeps
-historical versions precisely so a grantee can still fetch what they were once
-authorised for. A former grantee need not even have downloaded during the window.
-ACT would add another permanent envelope, not an expiring one.
-
-*Not* letting the postage batch lapse either. That removes the incentive to keep
-serving chunks; it is not an obligation on anyone to erase bytes, and an
-archivist needs no key to keep a copy of ciphertext.
-
-The deployed fix is a live holder: keep the key material out of public storage
-and behind a party that can refuse, with Arkiv holding only a commitment and the
-typed attributes. HealthSend currently uses one holder; the independent
-threshold quorum we would prefer is designed but **not built**. This trades
-against the no-server premise, which is exactly the tension
-[§7 of the brief](./healthsend-brief.md) flags.
-
-And it is worth being precise about what even that buys. It does **not** expire
-access already obtained: a recipient who opened the document keeps whatever their
-browser received, and no design changes that. After Arkiv expiry, the shipped
-holder route refuses retrieval immediately. The held share remains in storage for
-a one-hour grace period, so direct access to that store plus the fragment can
-still reconstruct the key during that hour. After the TTL removes the share, a
-fragment that leaks later — an old bookmark, a forwarded message, a stale backup
-— is useless, subject to the provider deletion caveat below. That is a real gain,
-and it is narrower than "the key is gone".
-
-### What we never claimed
-
-Expiry governs *future retrieval*, not *past disclosure*. A recipient who
-screenshots the page during the window keeps the screenshot. No expiry design can
-revoke bytes a recipient already received. The live holder controls later key
-retrieval; it does not control copies already made.
-
-## Why Swarm and Arkiv, and not a database
-
-The fair challenge to any project like this is: *you could build this with Postgres
-and S3 in an afternoon.* True — and the difference is whether the guarantee rests
-on our **behaviour** or on the **structure**. "We promise to stop serving" is what
-the incumbent already offers.
-
-Three properties decide whether the product is honest, and a gatekeeper needs
-**both the right to decide and the means to act**. Split those and nobody is one.
-
-- **Custody** — we never hold the documents.
-- **Authority** — we do not decide whether access is still valid, and anyone can
-  check who does.
-- **Expiry** — access can actually end.
-
-Every combination of the three components, scored the same way:
-
-| # | Architecture | Custody | Authority | Expiry | What it really is |
-|---|---|:--:|:--:|:--:|---|
-| 1 | Postgres + S3 | ❌ | ❌ | ✅ | The incumbent. It works, and it is what we exist to replace. |
-| 2 | Swarm only | ✅ | — | ❌ | Permanent sharing. The link is the key, forever. |
-| 3 | Arkiv + S3 | ❌ | ✅ | ✅ | Expiry works — because *we* delete the object. Good governance over data we should not hold. |
-| 4 | KV only | ❌ | ❌ | ✅ | Row 1 with extra steps. |
-| 5 | **Swarm + Arkiv** — *superseded v1* | ✅ | ✅ | ❌ | Best custody, no working expiry. See the section above. |
-| 6 | Swarm + KV | ✅ | ❌ | ✅ | It expires — on **our** timer. A gatekeeper with good manners. |
-| 7 | Arkiv + KV + S3 | ❌ | ✅ | ✅ | Governance right, custody wrong. |
-| 8 | **Swarm + Arkiv + KV** — *what ships today* | ✅ | ✅ | ✅ | The only row with all three. |
-
-### Why Swarm rather than S3
-
-- **We hold zero copies of anything.** With S3 we would be the custodian of an
-  encrypted health-document corpus — breachable, subpoenable, acquirable.
-  Compromising our storage reaches nothing, because there is no copy of it
-  there to take. That is narrower than "compromising HealthSend reaches
-  nothing," and the narrower claim is the one we make. Our code reads the file
-  in the browser before it encrypts it, and later serves the recipient the
-  code that decrypts it (`lib/sends.ts`). A compromised deployment — one
-  serving a tampered build of that JavaScript — can read plaintext as it
-  passes through, even though it never touches a document we stored.
-  Browser-side encryption bounds what an attacker who steals *stored data*
-  reaches. It does not bound what an attacker who controls the *build*
-  reaches.
-- **The archive outlives us.** Shut the project down and the documents are still
-  retrievable by hash, still the sender's. On S3 they die when the bill stops.
-  That is "users own their data" as a fact rather than a slogan.
-- **Ciphertext reads do not touch our infrastructure** — a recipient fetches the
-  encrypted blob from a public gateway. The separate holder call serves only a
-  random-looking key share, but it is still part of the read path.
-
-### Why Arkiv rather than a table with an `expires_at` column
-
-This is the load-bearing one, and row 6 is the honest way to see it: Swarm plus a
-KV *does* expire. The difference is **who answers the question**.
-
-With an `expires_at` column, "has this expired?" is a question **we** answer. We
-can extend it, be compelled to extend it, or answer wrongly through a bug, and
-nobody outside can tell. With Arkiv:
-
-- **Expiry is publicly verifiable.** The holder queries a public chain — and so
-  can the recipient, the sender, or a court.
-- **We cannot extend the Arkiv grant.** Grants are `ownedBy` the sender's key,
-  derived from their Swarm ID. We cannot forge, backdate, or quietly un-expire one.
-- **The sender audits their own history** without trusting an API of ours.
-- **Expiry is the trigger, not a status field.** In row 8 the holder refuses
-  because Arkiv says the grant is gone, which is what makes a key unreconstructable.
-
-So the KV ends up with **capability but no authority**; Arkiv has **authority but
-no capability**. That separation is the whole argument, and a single database
-cannot express it — because it would be *our* database.
+| Documents are encrypted on your device; no server of ours receives plaintext | **Yes** |
+| After the deadline, someone opening the link gets nothing | **Yes** |
+| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes**, once piece 2 is refused |
+| Expiry erases the document | **No.** Encrypted files on Swarm and grant calldata are permanent. Expiry ends *access*, not *existence*. |
+| Expiry takes back what someone already saw | **No.** A screenshot taken during the window stays a screenshot. |
 
 ### The cost, stated plainly
 
-Row 8 buys expiry with **fragility**. If the KV is unreachable, live sends stop
-working early — the one failure rows 2 and 5 never have. The Arkiv grant and
-Swarm ciphertext remain, but the recipient cannot reconstruct the key. A valid
-link can therefore break, so that state must read *"temporarily unavailable"*
-and never *"expired"*.
-
-That is not a defect to engineer away. **If nothing can break access, nothing can
-end it** — they are the same mechanism. Rows 2 and 5 cannot be shut down, which is
-exactly why they cannot expire.
-
-Deletion is also only as good as the provider's: a TTL removes the holder's
-share, and we do not claim its bytes are provably gone from every disk. It is
-categorically better than key material published to a public chain forever, and
-that is the honest comparison.
-
-> **Status: row 8 is built and deployed.** New sends split the content key and
-> publish no key material at all. Check any grant's transaction yourself:
->
-> ```bash
-> node scripts/payload-survives.mjs <txHash>
-> ```
->
-> A v1 grant returns *"this grant published KEY MATERIAL"*. A v2 grant returns
-> *"no key material"* — the payload is still in calldata and always will be, but
-> it carries a Swarm reference and a SHA-256 commitment, and neither
-> reconstructs anything.
->
-> Legacy v1 links still open while their grants are live, for backward
-> compatibility. They still cannot provide expiry against an archived payload,
-> and the script tells you which kind you are looking at.
+- **Something can refuse, so something can fail.** If the key release is unreachable, a live link
+  stops opening early. The recipient sees *"Temporarily unavailable"*, never *"expired"*. If
+  nothing can break access, nothing can end it: they are the same mechanism.
+- **You trust the key release to refuse.**
+  - Lit Chipotle is an enclave service run by Lit, with a TEE-derived key. It is not a
+    decentralised or threshold network.
+  - Our holder is a server of ours.
+  - We also built a TACo (threshold) adapter. It is parked until TACo's network is reachable
+    ([evidence](./arkiv/evidence/taco-adapter-poc.md)).
+- **The code that decrypts comes from our deployment.** Encrypting in the browser limits what a
+  thief of stored data can reach. It doesn't limit what someone who controls our published code
+  can reach.
+- **PDFs are shared as issued.** A name or date of birth printed on a PDF goes with it, and the
+  share screen says so before the link exists.
 
 ## Running it
 
 ```bash
 pnpm install
-cp .env.example .env.local
-# add ARKIV_FUNDER_PRIVATE_KEY, KV_REST_API_URL and KV_REST_API_TOKEN
-pnpm doctor
+cp .env.example .env.local   # fill in the values below
+pnpm doctor                  # Arkiv RPC, funder balance, Swarm gateway, Swarm ID origin
 pnpm dev
 ```
 
-`pnpm doctor` checks the Arkiv RPC, the funder account's balance, the Swarm
-download gateway and the Swarm ID origin. It does **not** check the holder. A
-working v2 send also needs a Redis REST endpoint in `KV_REST_API_URL` and its
-token in `KV_REST_API_TOKEN`; without them the handoff route returns 501.
+| Variable | Why |
+|---|---|
+| `ARKIV_FUNDER_PRIVATE_KEY` | A throwaway testnet key that tops up each user's derived Arkiv key with gas (`/api/fund`) |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Redis REST store for the key-share holder |
+| `NEXT_PUBLIC_CHIPOTLE_*` | Optional Lit Chipotle key release. Leave `NEXT_PUBLIC_CHIPOTLE_ENABLED=false` to use the holder only |
 
-Two sender prerequisites cannot be scripted, so both are worth doing first.
+Two things can't be scripted, so do them first:
 
-### 1. Test GLM, for writing grants
+1. **Test GLM for the funder key.** The [Arkiv faucet](https://hub.arkiv.network/faucet) pays the
+   wallet you connect, so:
+   - Import `ARKIV_FUNDER_PRIVATE_KEY` into MetaMask.
+   - Add the Tiramisu network: RPC `https://rpc.tiramisu.db-chain.testnet.arkiv.network`, chain id
+     `7738577`, symbol `GLM`.
+   - Claim, then re-run `pnpm doctor`.
+2. **A storage drive on your Swarm ID.** At ETHRome, the Swarm desk hands out gift codes; otherwise
+   buy one in the [Swarm ID app](https://swarm-id.snaha.net). Sign-in shows `canUpload: false`
+   until you have one.
 
-Arkiv writes are chain transactions, so the key in `ARKIV_FUNDER_PRIVATE_KEY`
-needs gas. The faucet pays **the wallet you connect** — there is no field to type
-an address into — so the trick is to connect the funder key itself rather than
-claim somewhere else and forward:
-
-1. Import the `ARKIV_FUNDER_PRIVATE_KEY` from `.env.local` into MetaMask as a new
-   account. It is a throwaway testnet key; that is what it is for.
-2. Add the Tiramisu network:
-   - Network name: `Tiramisu`
-   - RPC: `https://rpc.tiramisu.db-chain.testnet.arkiv.network`
-   - Chain ID: `7738577`
-   - Symbol: `GLM`
-   - Explorer: `https://tiramisu.explorer.arkiv.network`
-3. Go to [hub.arkiv.network/faucet](https://hub.arkiv.network/faucet), connect
-   that account, claim. One claim per wallet per cooldown window.
-4. `pnpm doctor` — it should now report the funder's balance.
-
-The GLM lands exactly where `/api/fund` expects it, with nothing to forward.
-
-### 2. A postage batch on your Swarm ID, for uploading
-
-The sign-in panel shows `canUpload: false` until the signed-in identity holds
-one. Swarm ID calls these **drives**.
-
-**At ETHRome:** the Swarm Foundation desk at Urbe Hub hands out **gift codes**
-that cover storage for the whole weekend, specifically so nobody has to acquire
-xBZZ or xDAI first. That is the intended path and it takes a minute. Mentors
-`@Riky0923`, `@yjkellyjoo` and `@rakymi` are in the Swarm topic of the ETHRome
-group chat, and [discord.ethswarm.org](https://discord.ethswarm.org) otherwise.
-
-**Otherwise:** buy a drive inside the [Swarm ID app](https://swarm-id.snaha.net),
-which needs xBZZ on Gnosis Chain.
-
-Running your own subsidised gateway is the third option and the reason
-`NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY` exists, but it means running a funded Bee
-node — not a weekend job. Leave it unset.
-
-### Testing the recipient path
-
-The recipient path is deliberately stateless — no login, no wallet, nothing in
-local storage. Two ways to prove it.
-
-**Automated**, in a fresh browser context, which is a guest window you can re-run:
-
-```bash
-pnpm e2e                                    # states needing no setup
-SHARE_URL='http://localhost:3000/s/0x…#…' pnpm e2e   # plus a real link
-```
-
-The live tests assert every document in a bundle renders, that no sign-in is ever
-offered, that the context holds no cookies, and that no download control exists
-anywhere on the page.
-
-**By hand**, which is what convinces a room:
-
-1. Create a send and copy the link.
-2. Open a **guest** or private window (Chrome: profile menu → Guest).
-3. Paste the link. It should render the document with a live countdown.
-4. Wait out a two-minute window, reload, and the same URL shows the expired
-   state. Nothing was deleted in between.
-
-If step 3 fails but the sender's dashboard shows the grant, the usual cause is
-Swarm propagation — the ciphertext has not reached the public gateway yet. Give
-it a few seconds.
+> Swarm ID app secrets are scoped to identity **and origin**. `localhost:3000` and the deployed
+> site derive different keys from the same passkey, so they have separate archives and shares.
 
 ## Verifying the claims
 
-Two things here are worth not taking on faith.
-
-**The split key actually splits.** No network required:
-
 ```bash
-pnpm verify:crypto
+pnpm verify:crypto        # split key round-trips; the holder's own view can't decrypt; no key in the commitment
+pnpm verify:expiry 60     # writes a 60-second grant, runs the same query before and after, no delete call
+pnpm e2e                  # recipient states in a clean browser: expired, ended early, unavailable, wrong link
+RUN_CHIPOTLE_LIVE_PROBE=1 pnpm verify:chipotle-adapter-live   # Lit refuses a release for a grant Arkiv doesn't have
 ```
 
-Round-trips a bundle through the encryption and envelope code, then checks both
-the current split-key scheme and the legacy v1 scheme. For v2 it proves that the
-fragment and holder share reconstruct the key, that the holder's own view does
-not, and that the on-chain commitment carries no key material. The v1 check stays
-in place to reproduce the archived-payload defect rather than hide it. The script
-also checks that filenames are absent from stored bytes and that a blinded
-attribute is stable under one user's key but differs under another key.
-
-**Grants expire on their own.** Needs a funded key:
-
-```bash
-pnpm verify:expiry 60
-```
-
-Writes one grant with a 60-second lifetime, runs the sender's compound query,
-waits, and runs the **identical** query again. No delete call appears anywhere in
-the script. Output is the before count, the after count, and a pass/fail.
-
-A recorded run against Tiramisu is committed at
-[`arkiv/evidence/mission-02-expiry.txt`](./arkiv/evidence/mission-02-expiry.txt),
-with the entity key and transaction hash so it can be checked on the explorer:
+A recorded Mission 02 run against Tiramisu. The full file,
+[`arkiv/evidence/mission-02-expiry.txt`](./arkiv/evidence/mission-02-expiry.txt), includes the
+entity key and transaction hash:
 
 ```
 BEFORE   query returns 1 row(s)
          t+56s rows=1
          t+66s rows=0
 AFTER    query returns 0 row(s)
-
 PASS  the grant expired on its own.
-getEntity(0x5f9b5f13ea…) -> not found
 ```
 
 ## Layout
 
 ```
-lib/crypto.ts     current split-key and legacy v1 primitives
-lib/envelope.ts   the bundle format — N files, one sealed blob; names inside it
-lib/swarm.ts      Swarm ID for the sender, public gateway for the recipient
-lib/arkiv.ts      v2 grants: Swarm ref, commitment, typed attributes, expiry
-lib/holder-store.ts
-                  held shares under TTL, plus the access log
-lib/identity.ts   identity keys derived from Swarm ID; no user database
-lib/sends.ts      create a send / open a send, end to end
-app/(sender)/     sender: sign in and your archive, at `/`
-app/(sender)/new/ compose a send: pick files, set a window, get a link
-app/(sender)/shares/
-                  your shares: countdown, end one early, its access log
-app/add/          add files to the archive
-app/s/[key]/      recipient: no account, renders in place, no download button
-app/api/holder/   four holder routes: share, unlock, revoke, access log
-app/api/fund/     gas top-ups for user-derived keys — hackathon scaffolding
-arkiv/schema.md   the superseded v1 model and the expiry discovery
-friction.md       what broke and what we suggest
-scripts/          doctor, crypto and expiry verification
-e2e/              Playwright recipient tests, run in a clean browser context
+lib/crypto.ts            split key, commitments, the four-digit code
+lib/swarm.ts             Swarm ID for the sender, public gateway for the recipient
+lib/identity.ts          every per-user key, derived from the Swarm ID identity
+lib/archive*.ts          the sealed archive: PDFs, the share index, upload once
+lib/assets.ts            pack and seal the documents for one share
+lib/arkiv.ts             grants: typed attributes, atBlock expiry, queries
+lib/key-release/         Lit Chipotle (live), TACo (parked), one factory choosing between them
+lib/sends.ts             create a share and open a share, end to end
+app/(sender)/            your archive, new share, your shares
+app/s/[key]/             recipient: no account, renders in place, no download
+app/api/holder/          key-share holder: share, unlock, revoke, access log
+app/api/fund/            gas top-ups for user-derived Arkiv keys (hackathon scaffolding)
+arkiv/                   schema, and recorded evidence
+scripts/                 doctor and every verify:* proof
+e2e/                     Playwright, in clean browser contexts
 ```
 
-## How a user's keys are made
+## Provenance and third-party components
 
-No identity key or complete content key is stored by HealthSend. The holder stores
-one random-looking share per send under a TTL; neither that share nor the derived
-auth key can reconstruct the content key. There are two key families, and they
-are different on purpose.
+Built at ETHRome 2026, Friday 11 September 18:00 – Sunday 13 September 10:00.
 
-**Identity keys — derived, stable, reproducible.** Everything hangs off the Swarm
-ID the user signed in with:
+- **All code in this repository was written during the hackathon.** The git history is the record.
+- **Two planning documents predate the event.** Both were written on 3 September, and both are prose
+  only: [`healthsend-brief.md`](./healthsend-brief.md) and [`DESIGN.md`](./DESIGN.md), plus a
+  Pencil design file. No code, schema or configuration came from them.
 
-```ts
-const arkivSeed = await deriveAppSecret("healthsend/arkiv/v1")
-const blindKey  = await deriveAppSecret("healthsend/blind/v1")
+**Third-party components:**
+- [Swarm ID](https://github.com/snaha/swarm-id) (`@snaha/swarm-id`)
+- [Arkiv SDK](https://www.npmjs.com/package/@arkiv-network/sdk) (`@arkiv-network/sdk`)
+- [Lit Chipotle](https://developer.litprotocol.com) (HTTP API)
+- [TACo](https://www.npmjs.com/package/@nucypher/taco) (`@nucypher/taco`, parked)
+- Upstash Redis (`@upstash/redis`)
+- The MCP SDK (`@modelcontextprotocol/sdk`)
+- Next.js, React, viem, ethers, zod, Phosphor Icons, Tailwind CSS and Playwright
+- Hosted on Vercel.
 
-const privateKey = keccak256(arkivSeed)          // a valid secp256k1 scalar
-const address    = privateKeyToAccount(privateKey).address
-```
+## Where it goes next
 
-`deriveAppSecret` computes `HMAC(appSecret, label)` **inside the Swarm ID
-iframe**, where `appSecret` never leaves the trusted context. It is deterministic
-for a given identity, origin and label, so the same passkey on a second device
-reproduces the same Arkiv key and finds the same sends waiting. That is what lets
-this app have no user database at all: there is nothing to look up, because the
-key is a function of the identity.
+**Next: share the rest of a health record.** That means wearable exports and structured lab values,
+with identifiers removed before they leave the device. It also means letting practitioners who
+receive one link start sending their own.
 
-**Per-send keys — random, never derived from the identity.** One fresh pair per
-send:
+**Built but hidden for now:** an assistant connector (MCP) that gives an AI tool an expiring slice
+of your archive.
 
-```ts
-const contentKey = randomBytes(32)   // encrypts the bundle
-const linkSecret = randomBytes(16)   // lives only in the URL fragment
-const { heldShare, commitment } = await splitContentKey(contentKey, linkSecret)
-
-// heldShare + commitment go to /api/holder/share under a TTL
-// { v: 2, ref: swarmRef, authCommitment: commitment } goes to Arkiv
-```
-
-`splitContentKey` derives one share and a separate auth key from the link secret.
-It XORs the content key with the link share to make `heldShare`, which the holder
-stores. On open, the holder compares the SHA-256 commitment after it checks that
-the Arkiv grant is live. The auth key proves possession of the link but cannot
-reconstruct the content key. The Arkiv grant carries no share and no key.
-
-These values are deliberately *not* derived from the identity. If they were, a
-compromised identity would retroactively open every send ever made. Fresh
-randomness makes each send independent of the user's identity and of every other
-send.
-
-> ⚠️ **App secrets are scoped to identity *and origin*.** `http://localhost:3000`
-> and `https://healthsend.vercel.app` derive **different** Arkiv keys from the
-> same passkey. Sends made on one origin do not appear in the other's dashboard,
-> and each origin's key needs funding separately. This is good isolation and a
-> bad demo surprise — pick one origin and rehearse on it.
->
-> Connecting on a new origin also adds a one-time **"Check storage"** step in the
-> Swarm ID consent screen, which grants the iframe first-party storage access. Do
-> it once before you present rather than discovering it on stage.
-
-## Why there is a server at all
-
-The app has five server API routes. Four implement the live key-share holder; the
-fifth, `/api/fund`, tops up user-derived Arkiv keys with testnet gas. Neither role
-receives a document, a complete content key, a link secret, or a filename.
-
-The holder is the deliberate read-path dependency that makes v2 expiry work:
-
-- The sender calls `/api/holder/share` after its Arkiv grant exists. The route
-  stores the first held share under a TTL.
-- `/api/holder/unlock` checks that the grant is live, verifies a proof derived
-  from the URL fragment, returns the held share, and tries to record the served
-  unlock.
-- `/api/holder/revoke` deletes the held share after a sender signature.
-- `/api/holder/access-log` returns the served-unlock times after the same kind of
-  sender proof.
-
-The TTL lasts one hour beyond the requested window, so it cannot end a valid
-send before Arkiv does. The Arkiv check blocks retrieval after the grant lapses;
-the later TTL removes the share from the holder. `/shares` gives the sender a
-control for each backend: ending a share early calls `/api/holder/revoke`
-(`lib/sends.ts`'s `endSend`), and each share's access log calls
-`/api/holder/access-log` (`app/(sender)/shares/access-log-client.ts`).
-
-The funder route solves a different problem. Writing a grant to Arkiv is a chain
-transaction, so it costs gas. Each user's grant key is **derived from their own
-Swarm ID** (`deriveAppSecret`), which is what makes grants genuinely `ownedBy`
-the sender — and what makes the dashboard's ownership filter mean something
-rather than being decoration. But a freshly derived key holds no GLM, and the
-Arkiv faucet is an interactive wallet claim with no HTTP API, so nothing can top
-it up automatically.
-
-That leaves three options, and the trade is the interesting part:
-
-| Approach | Cost |
-|---|---|
-| User brings a funded key | Defeats the premise — we promised no wallet, no seed phrase. |
-| One shared app wallet signs every grant | Every grant is `ownedBy` **us**. "Users own their data" becomes false, and the ownership query is theatre. |
-| **Server funds the user's own key** | One funding route, and gas is centralised. What we chose. |
-
-So `/api/fund` buys back user-owned keys at the price of a faucet we run. It
-moves gas and nothing else: it never sees a document, a content key, a link
-secret, or a filename.
-
-It is hackathon scaffolding and is marked as such in the code. The intended
-production replacement is a fiat on-ramp to the user's own key; it is **not
-built**. Note also that deployed publicly this route is an **open faucet** —
-anyone can POST an address and receive testnet gas. It keeps a reserve so it
-cannot be fully drained mid-demo, but it is not rate limited and we do not
-pretend otherwise.
-
-## Provenance — what was built when
-
-Built at ETHRome 2026 (Friday 11 September 18:00 – Sunday 13 September 10:00).
-Stating this plainly because the rules are strict about it:
-
-- **All code in this repository was written during the hackathon.** The git
-  history is the record; nothing was pre-written and dropped in.
-- **Two planning documents predate the event**, both written on 3 September and
-  both prose rather than code: [`healthsend-brief.md`](./healthsend-brief.md)
-  (the product brief) and [`DESIGN.md`](./DESIGN.md), along with a Pencil design
-  file. They are included so the thinking behind the build is inspectable rather
-  than hidden. No code, schema or configuration came from them.
-
-If a judge considers the brief enough to make this a pre-existing project, treat
-this section as the declaration the rules ask for — but the honest summary is
-that the weekend produced everything that runs.
-
-## Where this is going
-
-**Onboarding.** First run still costs a trip through Swarm ID's own windows, and
-two of the three context switches we started with were our own bugs (now fixed).
-What remains is not fixable from a dApp — the proxy iframe delegates no WebAuthn
-permission, and no API exists to mint an account. The design we would build is a
-self-hosted identity layer on a same-site subdomain, which removes the boundary
-without letting the app touch the seed. Written up in full, including why "just
-use Privy" does not work, in [`docs/identity-and-onboarding.md`](./docs/identity-and-onboarding.md).
-
-The brief this scaffold came from ([`healthsend-brief.md`](./healthsend-brief.md))
-covers the rest. Archive records exist in code, but no application screen uses that
-archive yet. De-identification at import already reaches past labelled identifiers:
-`lib/deident.ts` also catches an unlabeled date of birth by its shape and year, and
-the importing sender's own account name wherever it recurs in the text — both feed
-`/import-review`. Detection of an identifier with no label, no birth-date shape and
-no match to the sender's own name is still designed but **not built**. A separate
-PIN, claim-on-first-open locking to one device, and an MCP server for expiring AI
-tools are also designed but **not built**.
-
-## Notes on Swarm and Arkiv
-
-**Swarm.** Every payload byte lives there. No server of ours receives plaintext,
-a content key, or a link secret — there is no upload endpoint and no user
-database. To be exact, we do serve the JavaScript that handles those values in
-the browser, so this is a claim about our servers rather than a proof against a
-malicious build of the client. Swarm ID is both sides of identity — the sender signs in with a passkey and
-signs their own postage stamps in the browser; the recipient needs no identity at
-all and reads by content hash from a public gateway. No Bee node of ours.
-
-**Arkiv.** The index beside the file, never the file: a v2 entity holds the Swarm
-hash, a SHA-256 auth commitment and the typed attributes we filter on. It holds
-no key material; the encrypted bytes stay on Swarm and the held share stays with
-the holder. The dashboard is a compound filter over owner, namespace, kind, file
-type and a time range rather than a lookup by id. Attribute values that would
-disclose something are HMAC'd under a user-held key, so equality lookups keep
-working while the public index stays opaque. `expires` removes the grant from the
-live query surface, and the holder uses that public result to decide whether to
-serve its share. [`arkiv/schema.md`](./arkiv/schema.md) preserves the superseded
-v1 model and the expiry mistake; `GrantPayload` in [`lib/arkiv.ts`](./lib/arkiv.ts)
-is the current v2 shape.
+**Designed but not built:**
+- Claim-on-first-open, which locks a link to the first device that opens it.
+- A self-hosted identity layer that removes Swarm ID's extra windows at first sign-in
+  ([write-up](./docs/identity-and-onboarding.md)).
