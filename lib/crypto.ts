@@ -27,6 +27,17 @@
 
 const KEY_BYTES = 32
 const IV_BYTES = 12
+
+/**
+ * Entropy in the link secret, in bytes.
+ *
+ * 16 bytes — 128 bits — and this is a floor rather than a preference. The auth
+ * commitment is written to a public chain, so anyone can grind candidate link
+ * secrets offline and compare hashes. At 128 bits that is infeasible forever; at
+ * 64 it would be a weekend. The derived shares stay a full 32 bytes either way,
+ * because HKDF expands — what is bounded here is the guessing space, not the key.
+ */
+const LINK_SECRET_BYTES = 16
 const HKDF_INFO = "healthsend/grant/v1"
 const INFO_SHARE = "healthsend/share/v1"
 const INFO_AUTH = "healthsend/auth/v1"
@@ -63,7 +74,7 @@ export function generateContentKey(): Uint8Array {
 
 /** A fresh link secret. This is the half that travels in the URL fragment. */
 export function generateLinkSecret(): Uint8Array {
-  return randomBytes(KEY_BYTES)
+  return randomBytes(LINK_SECRET_BYTES)
 }
 
 async function importAesKey(raw: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
@@ -245,4 +256,33 @@ export async function joinContentKey(
   linkSecret: Uint8Array,
 ): Promise<Uint8Array> {
   return xor(heldShare, await deriveLinkShare(linkSecret))
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * Entity keys in URLs
+ *
+ * An Arkiv entity key is 32 bytes. Written as hex it costs 66 characters; the
+ * same bytes in base64url cost 43. Nothing is lost — it is the same value in a
+ * denser alphabet — and a link people paste into WhatsApp is shorter for it.
+ * ------------------------------------------------------------------------- */
+
+/** `0x…` hex to the short form used in share links. */
+export function packEntityKey(entityKeyHex: string): string {
+  const hex = entityKeyHex.startsWith("0x") ? entityKeyHex.slice(2) : entityKeyHex
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return toBase64Url(bytes)
+}
+
+/**
+ * Back to `0x…` hex.
+ *
+ * Accepts the hex form too, so links created before the short form still open.
+ */
+export function unpackEntityKey(value: string): string {
+  if (/^0x[0-9a-fA-F]{64}$/.test(value)) return value.toLowerCase()
+  const bytes = fromBase64Url(value)
+  if (bytes.length !== 32) throw new Error("Not an entity key")
+  return `0x${toHex(bytes)}`
 }

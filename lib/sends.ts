@@ -19,6 +19,8 @@ import {
   blindAttribute,
   toBase64Url,
   fromBase64Url,
+  packEntityKey,
+  unpackEntityKey,
 } from "./crypto"
 import {
   classifyBundle,
@@ -142,7 +144,9 @@ export async function createSend(params: {
     )
   }
 
-  const url = `${window.location.origin}/s/${grant.entityKey}#${toBase64Url(linkSecret)}`
+  const url = `${window.location.origin}/s/${packEntityKey(grant.entityKey)}#${toBase64Url(
+    linkSecret,
+  )}`
   progress("Done")
 
   return { ...grant, swarmRef: reference, url }
@@ -170,10 +174,19 @@ export type OpenFailure =
  * than as an error, because nothing went wrong.
  */
 export async function openSend(
-  entityKey: string,
+  entityKeyOrShort: string,
   linkSecretB64: string,
 ): Promise<{ status: "ok"; send: OpenedSend } | OpenFailure> {
   if (!linkSecretB64) return { status: "no-key" }
+
+  // Links carry the entity key in base64url; older ones carry hex. Both resolve
+  // to the same 32 bytes.
+  let entityKey: string
+  try {
+    entityKey = unpackEntityKey(entityKeyOrShort)
+  } catch {
+    return { status: "error", message: "This link does not contain a valid grant reference." }
+  }
 
   let grant: Grant | null
   try {

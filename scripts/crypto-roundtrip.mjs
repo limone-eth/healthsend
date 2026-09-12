@@ -12,7 +12,8 @@ import assert from "node:assert/strict"
 const {
   generateContentKey, generateLinkSecret, seal, open,
   wrapContentKey, unwrapContentKey, blindAttribute, toBase64Url, fromBase64Url,
-  splitContentKey, joinContentKey, deriveAuthKey, authCommitment,
+  splitContentKey, joinContentKey, authCommitment,
+  packEntityKey, unpackEntityKey,
 } = await import("../lib/crypto.ts")
 const { packEnvelope, unpackEnvelope } = await import("../lib/envelope.ts")
 
@@ -158,4 +159,22 @@ console.log("\nAll checks passed.")
   assert.equal(commitment.length, 64)
   assert.ok(!commitment.includes(Buffer.from(authKey).toString("hex").slice(0, 16)))
   console.log("PASS  the on-chain commitment is a hash, and carries no key material")
+}
+
+
+// --- short links round-trip losslessly --------------------------------------
+{
+  const hex = "0x" + "7f".repeat(32)
+  const short = packEntityKey(hex)
+  assert.equal(short.length, 43, "an entity key should cost 43 characters, not 66")
+  assert.equal(unpackEntityKey(short), hex, "short form must resolve to the same key")
+  assert.equal(unpackEntityKey(hex), hex, "hex links made before the change must still open")
+  console.log("PASS  short entity keys round-trip, and old hex links still resolve")
+
+  // The fragment is 128 bits: enough that grinding it against the public
+  // commitment is infeasible, small enough to keep the link pasteable.
+  const secret = generateLinkSecret()
+  assert.equal(secret.length, 16)
+  assert.equal(toBase64Url(secret).length, 22)
+  console.log("PASS  link secret is 128 bits and 22 characters")
 }
