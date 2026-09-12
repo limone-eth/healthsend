@@ -14,6 +14,7 @@ import { createSend, listMySends, type CreateSendResult } from "@/lib/sends"
 import type { FileKind, Grant } from "@/lib/arkiv"
 import { ARKIV_EXPLORER } from "@/lib/arkiv"
 import { Button, Card, Field, Mono, inputClass, timeLeft } from "@/components/ui"
+import { DemoNotice } from "@/components/demo-notice"
 
 /**
  * Windows are deliberately short by default. The Arkiv mission is judged on the
@@ -217,6 +218,8 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   return (
     <Card className="mb-6">
       <h2 className="mb-4 text-sm font-medium">New send</h2>
+
+      <DemoNotice />
 
       <div className="space-y-4">
         <Field label="Documents">
