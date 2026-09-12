@@ -8,9 +8,7 @@
  */
 
 import {
-  generateContentKey,
   generateLinkSecret,
-  seal,
   open,
   splitContentKey,
   joinContentKey,
@@ -23,29 +21,29 @@ import {
   packEntityKey,
   unpackEntityKey,
 } from "./crypto"
-import {
-  classify,
-  classifyBundle,
-  packEnvelope,
-  unpackEnvelope,
-  type PackedFile,
-} from "./envelope"
+import { unpackEnvelope, type PackedFile } from "./envelope"
 import { uploadEncryptedBlob, fetchBlobFromGateway } from "./swarm"
 import {
+  buildGrantBinding,
   createGrant,
+  createThresholdGrant,
   getCurrentBlock,
   getGrant,
   listGrants,
   MalformedGrantError,
   type FileKind,
   type Grant,
+  type ThresholdGrantPayload,
 } from "./arkiv"
 import { getIdentity, ensureFunded } from "./identity"
 import { revokeMessage } from "./revoke"
 import { shareMessage } from "./share"
 import { privateKeyToAccount } from "viem/accounts"
-import { createArchive, scopeArchive, type SetAsideIdentifiers } from "./archive"
-import { hasSetAside, importDocument } from "./import"
+import { type SetAsideIdentifiers } from "./archive"
+import { createEncryptedAsset, type EncryptedAsset } from "./assets"
+import { protectGrantShare, releaseGrantShare } from "./grant-package"
+import { createTacoKeyReleaseProvider, TacoUnavailableError } from "./key-release/taco"
+import type { GrantBinding } from "./key-release/types"
 
 const IV_BYTES = 12
 
@@ -109,73 +107,6 @@ async function preflightHolder(request: typeof fetch): Promise<void> {
   )
 }
 
-/** A packed file's name with its extension swapped — what it actually holds now, not what it arrived as. */
-function withExtension(name: string, extension: string): string {
-  return `${name.replace(/\.[^./]+$/, "")}.${extension}`
-}
-
-/**
- * Import one file and turn it into what actually travels.
- *
- * This is the seam H-36 wires in: every file passes through `importDocument`
- * before anything is encrypted, so identifiers are set aside on the way in,
- * never filtered on the way out. A recognized blood panel is then run back
- * through `scopeArchive` — the same function a scoped share from the
- * persisted archive will use once a compose flow can select markers rather
- * than whole files (H-14/H-23) — so what a recipient receives is a scoped
- * share carrying only that record's fields, never the archive's own
- * provenance. The key used here is generated fresh and discarded
- * immediately after; nothing about this archive persists past this call.
- *
- * Every other document — a PDF, a plain note, an export `lib/import.ts`
- * does not recognize as a marker table — has no archive record shape to
- * become, so what travels is the cleaned text import produced, never the
- * original bytes.
- */
-async function importForSend(
-  file: File,
-  accountName: string | undefined,
-  importedAt: string,
-): Promise<{ packed: PackedFile; fileName: string; setAside: SetAsideIdentifiers }> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  const imported = importDocument({
-    bytes,
-    format: classify(file),
-    recordId: `record:send:${crypto.randomUUID()}`,
-    // Opaque, and never the filename — see `RecordProvenance.sourceId`.
-    sourceId: `source:${crypto.randomUUID()}`,
-    importedAt,
-    takenOn: importedAt.slice(0, 10),
-    accountName,
-  })
-
-  if (imported.kind === "blood-panel") {
-    const ephemeralKey = crypto.getRandomValues(new Uint8Array(32))
-    const encryptedArchive = await createArchive(ephemeralKey, [imported.record])
-    const scoped = await scopeArchive(encryptedArchive, ephemeralKey, [
-      {
-        kind: "blood-panel",
-        recordId: imported.record.id,
-        markerIds: imported.record.markers.map((marker) => marker.id),
-      },
-    ])
-    const name = withExtension(file.name, "json")
-    return {
-      packed: { header: { name, mime: "application/json", size: scoped.length }, body: scoped },
-      fileName: file.name,
-      setAside: imported.record.provenance.setAside ?? {},
-    }
-  }
-
-  const body = new TextEncoder().encode(imported.cleanedText)
-  const name = withExtension(file.name, "txt")
-  return {
-    packed: { header: { name, mime: "text/plain", size: body.length }, body },
-    fileName: file.name,
-    setAside: imported.setAside,
-  }
-}
-
 /**
  * Encrypt → Swarm → grant → link.
  *
@@ -183,6 +114,12 @@ async function importForSend(
  * ciphertext goes straight to Swarm from the browser, and only then is a grant
  * written. Our own origin is never in the path of the plaintext, which is the
  * claim the README makes and the reason this app has no upload endpoint.
+ *
+ * H-53 moved the pack/encrypt/upload step into `lib/assets.ts`
+ * (`createEncryptedAsset`), so this function is now that call followed by one
+ * grant issued against the asset it returns — behaviorally identical to
+ * before, since nothing here reuses the asset for a second grant. See
+ * `createThresholdSend` for the path that does.
  */
 export async function createSend(
   params: {
@@ -206,30 +143,10 @@ export async function createSend(
 
   const identity = await dependencies.getIdentity()
 
-  progress(params.files.length > 1 ? `Reading ${params.files.length} files` : "Reading file")
-  const importedAt = new Date().toISOString()
-  const imports = await Promise.all(
-    params.files.map((file) => importForSend(file, params.accountName, importedAt)),
+  const asset = await createEncryptedAsset(
+    { files: params.files, accountName: params.accountName, onProgress: progress },
+    { uploadEncryptedBlob: dependencies.uploadEncryptedBlob },
   )
-  const packed: PackedFile[] = imports.map((entry) => entry.packed)
-  const setAside = imports
-    .map(({ fileName, setAside }) => ({ fileName, setAside }))
-    .filter((entry) => hasSetAside(entry.setAside))
-
-  // One envelope, one key, one blob, one grant — however many documents it
-  // holds. The bundle is the unit of sharing because it is the unit of expiry.
-  const envelope = packEnvelope(packed)
-
-  progress("Encrypting")
-  const contentKey = generateContentKey()
-  const sealed = await seal(contentKey, envelope)
-  // The nonce rides with the ciphertext so the blob is self-describing.
-  const blob = new Uint8Array(sealed.iv.length + sealed.ciphertext.length)
-  blob.set(sealed.iv, 0)
-  blob.set(sealed.ciphertext, sealed.iv.length)
-
-  progress("Uploading to Swarm")
-  const { reference } = await dependencies.uploadEncryptedBlob(blob)
 
   progress("Splitting key")
   // The content key is split, never wrapped-and-published. One half is derived
@@ -241,21 +158,20 @@ export async function createSend(
   // alone. The commitment written to Arkiv below is therefore identical
   // whether or not a code was chosen; nothing about the code ever reaches it.
   const linkSecret = generateLinkSecret()
-  const { heldShare, authKey, commitment } = await splitContentKey(contentKey, linkSecret, params.code)
+  const { heldShare, authKey, commitment } = await splitContentKey(asset.contentKey, linkSecret, params.code)
 
   // Topping up the user's own key is bookkeeping, not a step they took. It is
   // deliberately not narrated: the previous stage label stays on screen.
   await ensureFunded(identity.address)
 
   progress("Writing grant to Arkiv")
-  const fileKind = classifyBundle(params.files)
   const grant = await dependencies.createGrant({
     privateKey: identity.privateKey,
-    payload: { v: 2, ref: reference, authCommitment: commitment },
-    fileKind,
+    payload: { v: 2, ref: asset.ref, authCommitment: commitment },
+    fileKind: asset.fileKind,
     recipientBlind: await blindAttribute(identity.blindKey, params.recipientLabel),
-    labelBlind: await blindAttribute(identity.blindKey, params.files.map((f) => f.name).join("|")),
-    fileCount: params.files.length,
+    labelBlind: await blindAttribute(identity.blindKey, asset.labelSource),
+    fileCount: asset.fileCount,
     ttlSeconds: params.ttlSeconds,
   })
 
@@ -306,7 +222,7 @@ export async function createSend(
   )}`
   progress("Done")
 
-  return { ...grant, swarmRef: reference, url, code: params.code, setAside }
+  return { ...grant, swarmRef: asset.ref, url, code: params.code, setAside: asset.setAside }
 }
 
 export type OpenedSend = {
@@ -333,6 +249,20 @@ export type OpenFailure =
   | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
 
+type OpenSendDependencies = {
+  getGrant: typeof getGrant
+  getCurrentBlock: typeof getCurrentBlock
+  fetchBlobFromGateway: typeof fetchBlobFromGateway
+  createTacoKeyReleaseProvider: typeof createTacoKeyReleaseProvider
+}
+
+const defaultOpenSendDependencies: OpenSendDependencies = {
+  getGrant,
+  getCurrentBlock,
+  fetchBlobFromGateway,
+  createTacoKeyReleaseProvider,
+}
+
 /**
  * Open a send.
  *
@@ -340,14 +270,21 @@ export type OpenFailure =
  * the wrapped key from the Arkiv grant. A missing grant is the ordinary,
  * expected outcome once the window closes — it is reported as "expired" rather
  * than as an error, because nothing went wrong.
+ *
+ * `dependencyOverrides` exists only so `scripts/taco-unlock-proof.mjs` can
+ * drive the v3 branch offline, the same seam `createSend`'s
+ * `CreateSendDependencies` already uses; app code never passes it.
  */
 export async function openSend(
   entityKeyOrShort: string,
   linkSecretB64: string,
   /** H-7: presented once the reader has typed the code this share requires. */
   code?: string,
+  dependencyOverrides: Partial<OpenSendDependencies> = {},
 ): Promise<{ status: "ok"; send: OpenedSend } | OpenFailure> {
   if (!linkSecretB64) return { status: "no-key" }
+
+  const dependencies = { ...defaultOpenSendDependencies, ...dependencyOverrides }
 
   // Links carry the entity key in base64url; older ones carry hex. Both resolve
   // to the same 32 bytes.
@@ -360,7 +297,7 @@ export async function openSend(
 
   let grant: Grant | null
   try {
-    grant = await getGrant(entityKey)
+    grant = await dependencies.getGrant(entityKey)
   } catch (error) {
     if (error instanceof MalformedGrantError) {
       // The grant is live and we read it — the data itself is broken, which is a
@@ -384,22 +321,54 @@ export async function openSend(
     // payload never asks us at all. It keeps the ordinary case truthful; the
     // cryptography does not depend on it.
     if (grant.expiresBlock > 0) {
-      const head = await getCurrentBlock()
+      const head = await dependencies.getCurrentBlock()
       if (Number(head) >= grant.expiresBlock) return { status: "expired" }
     }
 
     const linkSecret = fromBase64Url(linkSecretB64)
+    const payload = grant.payload
 
     let contentKey: Uint8Array
     if (grant.legacy) {
       // A v1 grant published its wrapped key on-chain. It still opens, and it
       // still cannot expire — which is exactly why the format changed.
-      const wrap = (grant.payload as { wrap: { iv: string; ct: string } }).wrap
+      const wrap = (payload as { wrap: { iv: string; ct: string } }).wrap
       contentKey = await unwrapContentKey(
         { iv: fromBase64Url(wrap.iv), ciphertext: fromBase64Url(wrap.ct) },
         linkSecret,
-        grant.payload.ref,
+        payload.ref,
       )
+    } else if (payload.v === 3) {
+      // v3: no holder at all. TACo checks Arkiv's own live state itself (see
+      // `buildArkivGrantQuery`) and releases the complementary share only
+      // while that state still matches exactly what this share was protected
+      // for — the head-boundary check above already covers the ordinary,
+      // expected expiry, so nothing here calls TACo once that has fired.
+      const binding: GrantBinding = {
+        grantId: payload.release.grantId,
+        owner: grant.owner as `0x${string}`,
+        expiresBlock: BigInt(grant.expiresBlock),
+        ref: payload.ref,
+      }
+      try {
+        const heldShare = await releaseGrantShare(
+          payload.release,
+          linkSecret,
+          binding,
+          dependencies.createTacoKeyReleaseProvider(),
+        )
+        contentKey = await joinContentKey(heldShare, linkSecret)
+      } catch (error) {
+        if (error instanceof TacoUnavailableError) {
+          // TACo's own adapter never claims a clean denial — see
+          // lib/key-release/taco.ts. The one authoritative "expired" for a
+          // v3 grant is the head-boundary check above; anything TACo itself
+          // reports is retryable unavailability, never a second way to say
+          // expired.
+          return { status: "unavailable", message: error.message }
+        }
+        throw error
+      }
     } else {
       // Prove we hold the link, and ask the holder for the other half. Without
       // it there is no key to reconstruct — this is the expiry.
@@ -462,7 +431,7 @@ export async function openSend(
       contentKey = await joinContentKey(fromBase64Url(share), linkSecret, code)
     }
 
-    const blob = await fetchBlobFromGateway(grant.payload.ref)
+    const blob = await dependencies.fetchBlobFromGateway(payload.ref)
     const envelope = await open(contentKey, {
       iv: blob.subarray(0, IV_BYTES),
       ciphertext: blob.subarray(IV_BYTES),
@@ -475,6 +444,128 @@ export async function openSend(
     }
   } catch (error) {
     return { status: "error", message: (error as Error).message }
+  }
+}
+
+type CreateThresholdSendDependencies = {
+  getIdentity: typeof getIdentity
+  ensureFunded: typeof ensureFunded
+  getCurrentBlock: typeof getCurrentBlock
+  createThresholdGrant: typeof createThresholdGrant
+  createTacoKeyReleaseProvider: typeof createTacoKeyReleaseProvider
+}
+
+const defaultCreateThresholdSendDependencies: CreateThresholdSendDependencies = {
+  getIdentity,
+  ensureFunded,
+  getCurrentBlock,
+  createThresholdGrant,
+  createTacoKeyReleaseProvider,
+}
+
+/**
+ * Nominal Arkiv block time, in seconds — must match `lib/arkiv.ts`'s own
+ * private `BLOCK_TIME`, which turns a TTL into the absolute block
+ * `createGrant` pins. That constant is not exported and `lib/arkiv.ts` is
+ * another story's file in this worktree (see docs/stories/H-53.md, "Other
+ * workers are live"), so it is duplicated here rather than imported. Record
+ * as a decision — see the story's `## Choices`.
+ */
+const NOMINAL_BLOCK_SECONDS = 2
+
+export type CreateThresholdSendResult = {
+  entityKey: string
+  txHash: string
+  expiresBlock: number
+  expiresAt: number
+  swarmRef: string
+  /** The full share URL, link secret in the fragment. A different fragment per grant, even for the same asset. */
+  url: string
+}
+
+/**
+ * Issue one more grant against an asset that already exists on Swarm.
+ *
+ * No upload happens here — `asset.ref` and `asset.contentKey` (from
+ * `createEncryptedAsset`) are reused exactly as they were produced. Only the
+ * per-recipient things are fresh: a random grant id, a new link secret, a new
+ * TACo-protected key share, and one new Arkiv v3 entity. Two calls against the
+ * same asset therefore cost one Swarm upload and two grants, each with its
+ * own expiry and its own link.
+ */
+export async function createThresholdSend(
+  asset: EncryptedAsset,
+  params: { recipientLabel: string; ttlSeconds: number; onProgress?: SendProgress },
+  dependencyOverrides: Partial<CreateThresholdSendDependencies> = {},
+): Promise<CreateThresholdSendResult> {
+  const progress = params.onProgress ?? (() => {})
+  const dependencies = { ...defaultCreateThresholdSendDependencies, ...dependencyOverrides }
+
+  const identity = await dependencies.getIdentity()
+  await dependencies.ensureFunded(identity.address)
+
+  progress("Binding the grant")
+  const currentBlock = await dependencies.getCurrentBlock()
+  const expiresBlock = currentBlock + BigInt(Math.ceil(params.ttlSeconds / NOMINAL_BLOCK_SECONDS))
+  const binding: GrantBinding = buildGrantBinding({
+    owner: identity.address as `0x${string}`,
+    expiresBlock,
+    ref: asset.ref,
+  })
+
+  const linkSecret = generateLinkSecret()
+  // Split first, exactly like `createSend` — one half derives from the link
+  // secret and never travels; the other (`heldShare`) is what TACo protects
+  // below, gated on this grant's own binding rather than handed to a holder
+  // that could be asked to delete it.
+  const { heldShare } = await splitContentKey(asset.contentKey, linkSecret)
+
+  progress("Protecting the key share")
+  const provider = dependencies.createTacoKeyReleaseProvider({ signerPrivateKey: identity.privateKey })
+  const protectedShare = await protectGrantShare(heldShare, linkSecret, binding, provider)
+
+  progress("Writing grant to Arkiv")
+  const payload: ThresholdGrantPayload = {
+    v: 3,
+    ref: asset.ref,
+    release: { ...protectedShare, grantId: binding.grantId },
+  }
+  const grant = await dependencies.createThresholdGrant({
+    privateKey: identity.privateKey,
+    grantId: binding.grantId,
+    expiresBlock,
+    payload,
+    fileKind: asset.fileKind,
+    recipientBlind: await blindAttribute(identity.blindKey, params.recipientLabel),
+    labelBlind: await blindAttribute(identity.blindKey, asset.labelSource),
+    fileCount: asset.fileCount,
+  })
+
+  // The Arkiv entity is the only thing a TACo release condition ever checks
+  // against — see `buildArkivGrantQuery`. If what actually got written
+  // disagrees with the binding this share was protected for, TACo will
+  // refuse to release forever, not just late: refuse to hand out a link that
+  // can never open rather than silently trusting the transaction succeeded
+  // exactly as asked. See docs/stories/H-53.md, "Prevent mismatched bindings".
+  if (
+    grant.owner.toLowerCase() !== binding.owner.toLowerCase() ||
+    grant.expiresBlock !== Number(binding.expiresBlock)
+  ) {
+    throw new Error(
+      "The threshold grant was written with an owner or expiry different from the one its key share was protected for, so it can never open — refusing to produce a link",
+    )
+  }
+
+  const url = `${window.location.origin}/s/${packEntityKey(grant.entityKey)}#${toBase64Url(linkSecret)}`
+  progress("Done")
+
+  return {
+    entityKey: grant.entityKey,
+    txHash: grant.txHash,
+    expiresBlock: grant.expiresBlock,
+    expiresAt: Math.floor(Date.now() / 1000) + params.ttlSeconds,
+    swarmRef: asset.ref,
+    url,
   }
 }
 
