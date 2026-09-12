@@ -44,13 +44,13 @@ import { useSenderIdentity } from "@/components/use-sender-identity"
  * disabled, matching how `chrome.tsx` already marks the assistant nav item
  * inert; the PIN and assistant controls are left out rather than faked.
  *
- * The shared `(sender)` layout wraps every route's content in a fixed
- * `max-w-2xl` (672px) column (`layout.tsx`, off-limits to this story). The
- * frame's two-column, 1080px desktop split cannot fit inside that column, so
- * this screen stacks everything in one column at every width instead of
- * fighting the inherited container. The desktop/mobile divergence the frame
- * actually calls for — one continuous scroll versus two steps behind a fixed
- * bar — is independent of column count and is built as designed.
+ * The shared `(sender)` layout gives every route's content a wide column
+ * (`layout.tsx`, off-limits to this story). At `md` and up this screen
+ * restores the frame's split: the scope accordion beside the fixed-width
+ * summary panel, matching `HMa4U`'s `iYhlT`/`B6zXII` adjacency. The
+ * desktop/mobile divergence the frame actually calls for — one continuous
+ * scroll versus two steps behind a fixed bar — is independent of column
+ * count and is built as designed.
  */
 
 type FileKindGuess = "pdf" | "csv" | "text"
@@ -258,39 +258,42 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         </div>
       </div>
 
-      {/* Desktop/tablet — one continuous scroll, no step gate. Stacked rather
-          than the frame's two-column split: `layout.tsx` caps every sender
-          route's content at 672px, which the frame's 1080px columns cannot
-          fit inside — see the file-level comment. */}
-      <div className="hidden md:block md:space-y-6">
-        <ScopeSection
-          files={files}
-          selected={selected}
-          expanded={expanded}
-          tickState={tickState}
-          onPickFiles={onPickFiles}
-          onToggleHeader={toggleHeader}
-          onToggleExpand={() => setExpanded((v) => !v)}
-          onToggleFile={toggleFile}
-        />
-        <SettingsSection
-          recipient={recipient}
-          onRecipient={setRecipient}
-          windowSeconds={windowSeconds}
-          onWindow={(seconds) => {
-            setWindowSeconds(seconds)
-            setCustomEnabled(false)
-          }}
-          customEnabled={customEnabled}
-          onCustomEnabled={setCustomEnabled}
-          customValue={customValue}
-          onCustomValue={setCustomValue}
-          expiresAt={expiresAt}
-          now={previewNow}
-        />
-        <Action fullWidth icon={PaperPlaneTilt} disabled={!canCreate} onClick={submit}>
-          {stage ?? "Create the link"}
-        </Action>
+      {/* Desktop/tablet — one continuous scroll, no step gate. The scope
+          accordion (`iYhlT`) sits beside the fixed-width summary panel
+          (`B6zXII`), the frame's own adjacency — not a decorative split. */}
+      <div className="hidden md:flex md:items-start md:gap-10">
+        <div className="min-w-0 md:flex-1">
+          <ScopeSection
+            files={files}
+            selected={selected}
+            expanded={expanded}
+            tickState={tickState}
+            onPickFiles={onPickFiles}
+            onToggleHeader={toggleHeader}
+            onToggleExpand={() => setExpanded((v) => !v)}
+            onToggleFile={toggleFile}
+          />
+        </div>
+        <div className="flex flex-col gap-6 md:w-[400px] md:shrink-0">
+          <SettingsSection
+            recipient={recipient}
+            onRecipient={setRecipient}
+            windowSeconds={windowSeconds}
+            onWindow={(seconds) => {
+              setWindowSeconds(seconds)
+              setCustomEnabled(false)
+            }}
+            customEnabled={customEnabled}
+            onCustomEnabled={setCustomEnabled}
+            customValue={customValue}
+            onCustomValue={setCustomValue}
+            expiresAt={expiresAt}
+            now={previewNow}
+          />
+          <Action fullWidth icon={PaperPlaneTilt} disabled={!canCreate} onClick={submit}>
+            {stage ?? "Create the link"}
+          </Action>
+        </div>
       </div>
 
       {error && <p className="text-sm text-error">{error}</p>}

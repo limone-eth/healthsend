@@ -39,7 +39,7 @@ export default function SenderLayout({ children }: { children: ReactNode }) {
       }}
       onNewShare={() => router.push("/new")}
     >
-      <div className="mx-auto w-full max-w-2xl">
+      <div className="mx-auto w-full max-w-[1176px]">
         <header className="mb-10">
           <h1 className="text-2xl font-semibold tracking-tight">HealthSend</h1>
           {/* "Then the key is gone" stood here until it was checked. It was the same
