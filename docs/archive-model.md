@@ -18,8 +18,15 @@ Separate metrics use separate record IDs.
 
 Both shapes have archive-only provenance. The provenance points to an opaque source ID.
 It does not contain a filename. Scoped shares remove provenance before they encode recipient bytes.
-H-16 can add its de-identification transform at the marked boundary in `scopeArchive`.
-That boundary is after selection and before recipient encoding.
+
+Provenance also carries `setAside`: name, date of birth, address and any patient or
+record identifier that `lib/import.ts` found and held back at import, before a record
+is ever archived. Neither `BloodPanelRecord` nor `WearableSeriesRecord` has a field for
+any of those, so there is nothing for `scopeArchive` to filter at share time — the
+identifiers are held back before the record exists, not stripped from it afterwards.
+`setAside` is visible to the sender through `openArchive`, and it leaves recipient bytes
+the same way the rest of provenance does: `selectRecords` builds every `SharedRecord`
+field by field, so an omitted field is never in the object to begin with.
 
 ## Archive and addressing
 

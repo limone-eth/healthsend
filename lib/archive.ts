@@ -1,12 +1,24 @@
+import type { SetAsideIdentifiers } from "./deident.ts"
+
 const ARCHIVE_MAGIC = new Uint8Array([0x48, 0x53, 0x41, 0x52]) // HSAR
 const ARCHIVE_VERSION = 1
 const ARCHIVE_IV_BYTES = 12
 const ARCHIVE_KEY_BYTES = 32
 
+export type { SetAsideIdentifiers } from "./deident.ts"
+
 export type RecordProvenance = {
   /** Opaque address of the retained source. It must not contain a filename. */
   sourceId: string
   importedAt: string
+  /**
+   * What import found and held back — name, date of birth, address, a
+   * patient or record identifier — none of which this record's own fields
+   * ever carry. Archive-only, exactly like the rest of provenance: omitted
+   * from `SharedRecord` and rejected if a caller tries to smuggle it into a
+   * scoped share (see `validateRecord`).
+   */
+  setAside?: SetAsideIdentifiers
 }
 
 export type ReferenceRange = {
@@ -154,8 +166,12 @@ export async function scopeArchive(
   const archive = await openArchive(encryptedArchive, senderKey)
   const records = selectRecords(archive, selections)
 
-  // H-16's de-identification transform belongs here, after selection and before
-  // recipient bytes are encoded. Archive-only provenance is already removed.
+  // H-16: identifiers never reach this point to begin with. `lib/import.ts`
+  // sets name, date of birth, address and any patient identifier aside into
+  // `provenance.setAside` at import, before a record is ever archived, and
+  // `selectRecords` above builds each `SharedRecord` field by field — the
+  // same construction that already drops the rest of `provenance`. There is
+  // nothing left to filter out here.
   return new TextEncoder().encode(
     JSON.stringify({ v: 1, kind: "healthsend-scoped-share", records } satisfies ScopedShare),
   )
@@ -369,10 +385,21 @@ function validateRecord(record: ArchiveRecord | SharedRecord, needsProvenance: b
 
 function validateProvenance(provenance: RecordProvenance): void {
   if (!isObject(provenance)) throw new Error("Invalid record provenance")
-  assertOnlyKeys(provenance, ["sourceId", "importedAt"], "record provenance")
+  assertOnlyKeys(provenance, ["sourceId", "importedAt", "setAside"], "record provenance")
   assertText(provenance.sourceId, "source id")
   assertText(provenance.importedAt, "import time")
   if (Number.isNaN(Date.parse(provenance.importedAt))) throw new Error("Invalid import time")
+  if (provenance.setAside !== undefined) validateSetAside(provenance.setAside)
+}
+
+const SET_ASIDE_KEYS = ["name", "dateOfBirth", "address", "patientId"] as const
+
+function validateSetAside(setAside: SetAsideIdentifiers): void {
+  if (!isObject(setAside)) throw new Error("Invalid set-aside identifiers")
+  assertOnlyKeys(setAside, [...SET_ASIDE_KEYS], "set-aside identifiers")
+  for (const key of SET_ASIDE_KEYS) {
+    if (setAside[key] !== undefined) assertText(setAside[key], `set-aside ${key}`)
+  }
 }
 
 function validateReferenceRange(range: ReferenceRange): void {
