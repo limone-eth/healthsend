@@ -5,7 +5,7 @@ import { ArrowDown, Eye, FileText, FileX } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { NotAPdfError, recordsFromPdfFiles } from "@/lib/archive-input"
 import { addRecordsToMyArchive, loadMyArchive } from "@/lib/archive-store"
-import type { ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
+import type { Archive, ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
 import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
 import { performRemoveDocument, type LiveShareView } from "@/components/remove-document-sheet-logic"
 import { loadLiveSharesForDocument } from "./live-shares-for-document"
@@ -51,7 +51,7 @@ function eyebrowLabel(count: number): string {
 
 type ArchiveLoadState =
   | { status: "loading" }
-  | { status: "ready"; records: ArchiveRecord[]; shareIndex: ShareIndexEntry[] | undefined }
+  | { status: "ready"; rev: number; records: ArchiveRecord[]; shareIndex: ShareIndexEntry[] | undefined }
   | { status: "error"; message: string }
 
 const ARCHIVE_LOAD_TIMEOUT_MS = 15_000
@@ -89,6 +89,20 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
   const pdfInput = useRef<HTMLInputElement>(null)
   const [adding, setAdding] = useState<AddState>({ status: "idle" })
   const isAdding = adding.status === "adding"
+  // Every write (`addRecordsToMyArchive`/`removeDocumentFromMyArchive`) already
+  // returns the `Archive` it produced, so the screen renders that directly
+  // rather than re-reading — the Swarm feed can still be lagging right after
+  // the write that just landed. `latestAppliedRev` is what stops a slower
+  // in-flight read (the initial load, most often) from later overwriting a
+  // newer result with a stale one: a load only applies once its own `rev` is
+  // at least the one already on screen.
+  const latestAppliedRev = useRef(-1)
+
+  function applyArchive(loaded: Archive) {
+    if (loaded.rev < latestAppliedRev.current) return
+    latestAppliedRev.current = loaded.rev
+    setArchive({ status: "ready", rev: loaded.rev, records: loaded.records, shareIndex: loaded.shareIndex })
+  }
 
   function pickPdfs() {
     if (isAdding) return
@@ -104,9 +118,9 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
     try {
       // The same path as Add's "A letter or report" card: every PDF in the pick
       // is resealed and uploaded once, together — see lib/archive-store.ts.
-      await addRecordsToMyArchive(await recordsFromPdfFiles(files))
+      const result = await addRecordsToMyArchive(await recordsFromPdfFiles(files))
       setAdding({ status: "idle" })
-      await refreshArchive()
+      applyArchive(result)
     } catch (cause) {
       setAdding({
         status: "error",
@@ -129,9 +143,12 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
 
     return Promise.race([loadMyArchive(), deadline])
       .then((loaded) => {
-        setArchive({ status: "ready", records: loaded.records, shareIndex: loaded.shareIndex })
+        applyArchive(loaded)
       })
       .catch((cause) => {
+        // A write that already landed while this load was in flight has its own,
+        // newer result on screen — this load failing must not erase it.
+        if (latestAppliedRev.current >= 0) return
         setArchive({ status: "error", message: (cause as Error).message })
       })
       .finally(() => {
@@ -190,7 +207,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
       return
     }
     closeRemoveSheet()
-    void refreshArchive()
+    applyArchive(outcome.archive)
   }
 
   return (

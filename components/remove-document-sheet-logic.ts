@@ -12,6 +12,7 @@
  */
 
 import { removeDocumentFromMyArchive } from "@/lib/archive-store"
+import type { Archive } from "@/lib/archive"
 import { endSend } from "@/lib/sends"
 import { markEndedByYou } from "@/app/(sender)/shares/local-history"
 import { endMoment, remainingFigure } from "./countdown-copy"
@@ -99,8 +100,13 @@ export const UNKNOWN_SHARES_NOTE =
   "Shares made before this list, or sent straight from a file, aren't tracked here. If one of them includes this PDF, end it in Your shares."
 
 export type RemoveDocumentOutcome =
-  | { outcome: "removed"; endedShares: string[] }
-  | { outcome: "removed-partial"; endedShares: string[]; failedShares: { entityKey: string; message: string }[] }
+  | { outcome: "removed"; archive: Archive; endedShares: string[] }
+  | {
+      outcome: "removed-partial"
+      archive: Archive
+      endedShares: string[]
+      failedShares: { entityKey: string; message: string }[]
+    }
   | { outcome: "refused"; message: string }
 
 type RemoveDocumentDependencies = {
@@ -131,13 +137,14 @@ export async function performRemoveDocument(
   senderAddress: string,
   dependencies: RemoveDocumentDependencies = defaultDependencies,
 ): Promise<RemoveDocumentOutcome> {
+  let archive: Archive
   try {
-    await dependencies.removeDocumentFromMyArchive(documentId)
+    archive = await dependencies.removeDocumentFromMyArchive(documentId)
   } catch (error) {
     return { outcome: "refused", message: (error as Error).message }
   }
 
-  if (sharesToEnd.length === 0) return { outcome: "removed", endedShares: [] }
+  if (sharesToEnd.length === 0) return { outcome: "removed", archive, endedShares: [] }
 
   const ended: string[] = []
   const failed: { entityKey: string; message: string }[] = []
@@ -150,6 +157,6 @@ export async function performRemoveDocument(
       failed.push({ entityKey: share.entityKey, message: result.message })
     }
   }
-  if (failed.length > 0) return { outcome: "removed-partial", endedShares: ended, failedShares: failed }
-  return { outcome: "removed", endedShares: ended }
+  if (failed.length > 0) return { outcome: "removed-partial", archive, endedShares: ended, failedShares: failed }
+  return { outcome: "removed", archive, endedShares: ended }
 }

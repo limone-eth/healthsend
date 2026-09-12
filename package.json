@@ -19,6 +19,7 @@
     "verify:log": "node --experimental-strip-types scripts/access-log-proof.mjs",
     "verify:archive": "node --experimental-strip-types scripts/archive-roundtrip.mjs",
     "verify:archive-store": "node --experimental-strip-types scripts/archive-store-proof.mjs",
+    "verify:archive-lag": "node --experimental-strip-types scripts/archive-lag-proof.mjs",
     "verify:remove-document": "node --experimental-strip-types scripts/remove-document-proof.mjs",
     "verify:deident": "node --experimental-strip-types scripts/deident-proof.mjs",
     "verify:send-path": "node --experimental-strip-types scripts/send-path-proof.mjs",
