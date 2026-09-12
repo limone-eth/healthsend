@@ -29,6 +29,12 @@
  * the recipient forwards the whole URL to opens it exactly as they would. A
  * one-time code sent apart from the link, claimed on first open, would close
  * that gap (H-7) — it is not built, so the notice says what is true today.
+ *
+ * A fourth pass (H-64) carves out the one kind that skips all of this: a PDF
+ * document (H-62/H-63) is never run past the matcher and never scoped down —
+ * the operator's decision is that it travels exactly as issued, identifiers
+ * included. The blanket "set aside before anything is encrypted" claim below
+ * would otherwise be false for it.
  */
 export function DemoNotice() {
   return (
@@ -42,11 +48,13 @@ export function DemoNotice() {
         opens nothing. But anyone with the link can open it &mdash; including anyone your recipient
         forwards it to. There is no separate code and no device check to confirm it&apos;s still
         them. The encrypted copy also goes to a public network and stays there permanently &mdash;
-        expiry ends access, it does not erase anything. Your name, date of birth, address and any
-        patient ID are set aside before anything is encrypted, and a recognized blood panel is
-        scoped down to its readings rather than sent as the original file &mdash; but detection
-        still only catches what it has been taught to recognize, so an identifier in a shape it
-        does not know can still go through. Please use the sample files in{" "}
+        expiry ends access, it does not erase anything. For a CSV or JSON file, your name, date of
+        birth, address and any patient ID are set aside before anything is encrypted, and a
+        recognized blood panel is scoped down to its readings rather than sent as the original file
+        &mdash; but detection still only catches what it has been taught to recognize, so an
+        identifier in a shape it does not know can still go through. A PDF is different: it goes out
+        exactly as issued, including any name or date of birth printed on it. Please use the sample
+        files in{" "}
         <code className="font-mono">fixtures/</code> instead of your own health records.
       </p>
     </div>

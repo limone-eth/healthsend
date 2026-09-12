@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import {
   CalendarBlank,
   CaretDown,
@@ -20,10 +21,12 @@ import {
   UserCircle,
   type Icon as PhosphorIcon,
 } from "@phosphor-icons/react"
-import { createSend, type CreateSendResult } from "@/lib/sends"
+import { createSend, createSendFromArchive, type CreateSendResult } from "@/lib/sends"
 import { generateCode } from "@/lib/crypto"
 import { classifyBundle } from "@/lib/envelope"
 import type { FileKind } from "@/lib/arkiv"
+import type { DocumentRecord } from "@/lib/archive"
+import { loadMyArchive } from "@/lib/archive-store"
 import { Action, Card, Field, ScreenHeader, inputClass } from "@/components/ui"
 import { DemoNotice } from "@/components/demo-notice"
 import { useSenderIdentity } from "@/components/use-sender-identity"
@@ -65,6 +68,18 @@ import { isExpiryValid, resolveCustomSeconds, resolveTtlSeconds } from "./expiry
  * exact toggle — see `## Choices` — so its visual language follows
  * `AccessModeRow` above rather than inventing a new one.
  *
+ * H-64 adds a second scope group above the one described in the first
+ * paragraph: "Your documents", the PDFs already sitting in the signed-in
+ * sender's archive (H-63), fed by `loadMyArchive` rather than a file input.
+ * It reuses `ScopeRowHeader`/the three tick states rather than a new
+ * component — the same DESIGN.md "Scope row" pattern the freshly-picked
+ * "Documents" group already draws from, just over a different data source.
+ * The two groups are kept mutually exclusive (picking in one clears the
+ * other) rather than merged into a single combined send: nothing in `lib/`
+ * packs a freshly-picked `File` and an already-imported `DocumentRecord`
+ * into one envelope today, and the story's own evidence only exercises one
+ * archived document at a time — see `## Choices`.
+ *
  * The shared `(sender)` layout gives every route's content a wide column
  * (`layout.tsx`, off-limits to this story). Per DESIGN.md's Layout table,
  * the two-column split is a `≥1280` (`xl`) behaviour only — 768–1279 is one
@@ -94,6 +109,14 @@ function formatBytes(bytes: number): string {
 
 const dateFormat = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" })
 
+/** "Blood test, March and Thyroid panel, June" — the operator's own phrasing
+ *  (docs/stories/H-62.md) for naming a tick-list of archived documents. */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ""
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+}
+
 /** Short demo windows, kept short on purpose: DESIGN.md's every-window-control
  *  rule (presets *and* an explicit custom choice) applies here too, and the
  *  Arkiv mission is judged on one query answering differently either side of
@@ -119,11 +142,36 @@ export default function NewSendPage() {
   return <ComposeSend canUpload={info.canUpload} />
 }
 
+type ArchiveLoadState =
+  | { status: "loading" }
+  | { status: "ready"; documents: DocumentRecord[] }
+  | { status: "error"; message: string }
+
 function ComposeSend({ canUpload }: { canUpload: boolean }) {
   const router = useRouter()
   const [files, setFiles] = useState<File[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [expanded, setExpanded] = useState(false)
+
+  const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
+  const [selectedArchiveIds, setSelectedArchiveIds] = useState<Set<string>>(new Set())
+  const [archiveExpanded, setArchiveExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    loadMyArchive()
+      .then((loaded) => {
+        if (cancelled) return
+        const documents = loaded.records.filter((record): record is DocumentRecord => record.kind === "document")
+        setArchive({ status: "ready", documents })
+      })
+      .catch((cause) => {
+        if (!cancelled) setArchive({ status: "error", message: (cause as Error).message })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const [recipient, setRecipient] = useState("")
   const [windowSeconds, setWindowSeconds] = useState(WINDOWS[1].seconds)
@@ -143,6 +191,14 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
 
   const tickState: "none" | "some" | "all" =
     selected.size === 0 ? "none" : selected.size === files.length ? "all" : "some"
+
+  const archiveDocuments = archive.status === "ready" ? archive.documents : []
+  const archiveTickState: "none" | "some" | "all" =
+    selectedArchiveIds.size === 0
+      ? "none"
+      : selectedArchiveIds.size === archiveDocuments.length
+        ? "all"
+        : "some"
 
   // A preview clock, not a countdown timer: refreshed on an interval rather
   // than read straight from `Date.now()` during render, which React's purity
@@ -170,17 +226,28 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   const expiryValid = isExpiryValid({ customEnabled, customSeconds })
 
   const selectedFiles = files.filter((_, i) => selected.has(i))
-  const canCreate = selectedFiles.length > 0 && canUpload && stage === null && expiryValid
+  const selectedArchiveDocuments = archiveDocuments.filter((document) => selectedArchiveIds.has(document.id))
+  const canCreate =
+    (selectedFiles.length > 0 || selectedArchiveDocuments.length > 0) &&
+    canUpload &&
+    stage === null &&
+    expiryValid
 
   const onPickFiles = (fileList: FileList | null) => {
     setFiles(Array.from(fileList ?? []))
     // Nothing is pre-selected — a fresh pick starts every tick state at "none".
     setSelected(new Set())
     setExpanded(false)
+    // A file picked for this send and an archived document are two different
+    // send paths (`createSend` vs `createSendFromArchive`) — see the
+    // file-level comment. Picking one clears the other so a send always
+    // reads from exactly one source.
+    setSelectedArchiveIds(new Set())
   }
 
   const toggleHeader = () => {
     setSelected(tickState === "all" ? new Set() : new Set(files.map((_, i) => i)))
+    setSelectedArchiveIds(new Set())
   }
 
   const toggleFile = (index: number) => {
@@ -190,6 +257,24 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
       else next.add(index)
       return next
     })
+    setSelectedArchiveIds(new Set())
+  }
+
+  const toggleArchiveHeader = () => {
+    setSelectedArchiveIds(
+      archiveTickState === "all" ? new Set() : new Set(archiveDocuments.map((document) => document.id)),
+    )
+    setSelected(new Set())
+  }
+
+  const toggleArchiveDocument = (id: string) => {
+    setSelectedArchiveIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setSelected(new Set())
   }
 
   const submit = async () => {
@@ -200,24 +285,34 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
     // show it, not imply it"), and a value fixed here is what gets sent to
     // the holder and what gets shown back to the sender to relay separately.
     const code = codeEnabled ? generateCode() : undefined
+    const fromArchive = selectedArchiveDocuments.length > 0
     try {
-      const send = await createSend({
-        files: selectedFiles,
-        recipientLabel: recipient || "unnamed",
-        ttlSeconds,
-        code,
-        onProgress: setStage,
-      })
+      const send = fromArchive
+        ? await createSendFromArchive({
+            documents: selectedArchiveDocuments,
+            recipientLabel: recipient || "unnamed",
+            ttlSeconds,
+            code,
+            onProgress: setStage,
+          })
+        : await createSend({
+            files: selectedFiles,
+            recipientLabel: recipient || "unnamed",
+            ttlSeconds,
+            code,
+            onProgress: setStage,
+          })
       setResult(send)
       setSentSummary({
         recipientLabel: recipient.trim(),
-        fileCount: selectedFiles.length,
-        fileKind: classifyBundle(selectedFiles),
+        fileCount: fromArchive ? selectedArchiveDocuments.length : selectedFiles.length,
+        fileKind: fromArchive ? "pdf" : classifyBundle(selectedFiles),
         ttlSeconds,
         code,
       })
       setFiles([])
       setSelected(new Set())
+      setSelectedArchiveIds(new Set())
       setRecipient("")
       setCodeEnabled(false)
       setMobileStep(1)
@@ -228,10 +323,15 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
     }
   }
 
-  const summaryLine =
-    selectedFiles.length === 0
-      ? "Nothing included yet"
-      : `${selectedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} included`
+  const summaryLine = (() => {
+    if (selectedArchiveDocuments.length > 0) {
+      const names = joinNames(selectedArchiveDocuments.map((document) => document.name))
+      const noun = archiveDocuments.length === 1 ? "document" : "documents"
+      return `${names} — ${selectedArchiveDocuments.length} of your ${archiveDocuments.length} ${noun}`
+    }
+    if (selectedFiles.length === 0) return "Nothing included yet"
+    return `${selectedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} included`
+  })()
 
   // The WeTransfer moment (2.5, `LKFS1`/`uQP20`) is its own screen, not a
   // panel appended under the compose form — it replaces the form entirely
@@ -272,6 +372,13 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             onToggleHeader={toggleHeader}
             onToggleExpand={() => setExpanded((v) => !v)}
             onToggleFile={toggleFile}
+            archive={archive}
+            selectedArchiveIds={selectedArchiveIds}
+            archiveTickState={archiveTickState}
+            archiveExpanded={archiveExpanded}
+            onToggleArchiveHeader={toggleArchiveHeader}
+            onToggleArchiveExpand={() => setArchiveExpanded((v) => !v)}
+            onToggleArchiveDocument={toggleArchiveDocument}
           />
         ) : (
           <div className="space-y-4">
@@ -343,6 +450,13 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             onToggleHeader={toggleHeader}
             onToggleExpand={() => setExpanded((v) => !v)}
             onToggleFile={toggleFile}
+            archive={archive}
+            selectedArchiveIds={selectedArchiveIds}
+            archiveTickState={archiveTickState}
+            archiveExpanded={archiveExpanded}
+            onToggleArchiveHeader={toggleArchiveHeader}
+            onToggleArchiveExpand={() => setArchiveExpanded((v) => !v)}
+            onToggleArchiveDocument={toggleArchiveDocument}
           />
         </div>
         <div className="flex flex-col gap-6 xl:sticky xl:top-11 xl:w-[400px] xl:shrink-0">
@@ -390,6 +504,13 @@ function ScopeSection({
   onToggleHeader,
   onToggleExpand,
   onToggleFile,
+  archive,
+  selectedArchiveIds,
+  archiveTickState,
+  archiveExpanded,
+  onToggleArchiveHeader,
+  onToggleArchiveExpand,
+  onToggleArchiveDocument,
 }: {
   files: File[]
   selected: Set<number>
@@ -399,6 +520,13 @@ function ScopeSection({
   onToggleHeader: () => void
   onToggleExpand: () => void
   onToggleFile: (index: number) => void
+  archive: ArchiveLoadState
+  selectedArchiveIds: Set<string>
+  archiveTickState: "none" | "some" | "all"
+  archiveExpanded: boolean
+  onToggleArchiveHeader: () => void
+  onToggleArchiveExpand: () => void
+  onToggleArchiveDocument: (id: string) => void
 }) {
   const countLabel =
     tickState === "none" ? undefined : tickState === "all" ? "All" : `${selected.size} of ${files.length}`
@@ -406,6 +534,16 @@ function ScopeSection({
   return (
     <Card className="space-y-4">
       <DemoNotice />
+
+      <ArchiveDocumentsGroup
+        archive={archive}
+        selectedIds={selectedArchiveIds}
+        tickState={archiveTickState}
+        expanded={archiveExpanded}
+        onToggleHeader={onToggleArchiveHeader}
+        onToggleExpand={onToggleArchiveExpand}
+        onToggleDocument={onToggleArchiveDocument}
+      />
 
       <label className="flex h-13 w-full cursor-pointer items-center justify-center gap-2 rounded-control border border-hairline bg-surface text-title text-ink shadow-control">
         <UploadSimple size={18} weight="light" />
@@ -461,6 +599,136 @@ function ScopeSection({
         </div>
       )}
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Your documents — H-64. PDFs already sitting in the archive (H-63), listed
+// with the same three-tick-state accordion `ScopeRowHeader` already draws for
+// freshly-picked files, just fed by `loadMyArchive` instead of a file input.
+// No pen frame names this exact bucket; it follows the row it sits beside —
+// see the file-level comment and `## Choices`.
+// ---------------------------------------------------------------------------
+
+const CONSEQUENCE_LINE =
+  "A PDF you share here goes to the link as issued, including any name or date of birth printed on it."
+
+function ArchiveDocumentsGroup({
+  archive,
+  selectedIds,
+  tickState,
+  expanded,
+  onToggleHeader,
+  onToggleExpand,
+  onToggleDocument,
+}: {
+  archive: ArchiveLoadState
+  selectedIds: Set<string>
+  tickState: "none" | "some" | "all"
+  expanded: boolean
+  onToggleHeader: () => void
+  onToggleExpand: () => void
+  onToggleDocument: (id: string) => void
+}) {
+  if (archive.status === "loading") {
+    return (
+      <div role="status" className="rounded-inset bg-grouped p-[18px] text-[14px] text-secondary">
+        Opening your archive…
+      </div>
+    )
+  }
+
+  if (archive.status === "error") {
+    return (
+      <div role="alert" className="rounded-inset border border-error/20 bg-grouped p-[18px] text-[14px] text-error">
+        Could not load your archive: {archive.message}
+      </div>
+    )
+  }
+
+  const { documents } = archive
+
+  if (documents.length === 0) {
+    return (
+      <div className="flex flex-col gap-2.5 rounded-inset bg-grouped p-[18px]">
+        <p className="text-[14px] leading-[1.45] text-secondary">
+          Your archive has no documents yet. Add a PDF to send it from here.
+        </p>
+        <Link href="/add" className="text-[13.5px] font-semibold text-navy">
+          Add to your archive
+        </Link>
+      </div>
+    )
+  }
+
+  const countLabel =
+    tickState === "none" ? undefined : tickState === "all" ? "All" : `${selectedIds.size} of ${documents.length}`
+  const selectedNames = documents.filter((document) => selectedIds.has(document.id)).map((document) => document.name)
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {selectedNames.length > 0 && (
+        // The operator's own phrasing (docs/stories/H-62.md): "Blood test,
+        // March and Thyroid panel, June — 2 of your 12 documents". Shown at
+        // every width — the mobile fixed bar's `summaryLine` covers the
+        // phone step flow, but this is the only place a desktop sender sees
+        // which documents they ticked named in full.
+        <p className="text-[13px] font-medium text-ink">
+          {joinNames(selectedNames)} — {selectedIds.size} of your {documents.length} document
+          {documents.length === 1 ? "" : "s"}
+        </p>
+      )}
+      <div className="overflow-hidden rounded-control border border-hairline">
+        <ScopeRowHeader
+          state={tickState}
+          label="Your documents"
+          meta={`${documents.length} document${documents.length === 1 ? "" : "s"} in your archive`}
+          countLabel={countLabel}
+          expanded={expanded}
+          onToggleCheck={onToggleHeader}
+          onToggleExpand={onToggleExpand}
+        />
+        {expanded && (
+          <div className="space-y-2.5 border-t border-hairline bg-canvas px-[18px] py-3.5">
+            {documents.map((document) => (
+              <ArchiveDocumentRow
+                key={document.id}
+                document={document}
+                checked={selectedIds.has(document.id)}
+                onToggle={() => onToggleDocument(document.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-[12.5px] leading-[1.4] text-muted">{CONSEQUENCE_LINE}</p>
+    </div>
+  )
+}
+
+/** Mirrors `FileRow` below, over a `DocumentRecord` rather than a picked `File`. */
+function ArchiveDocumentRow({
+  document,
+  checked,
+  onToggle,
+}: {
+  document: DocumentRecord
+  checked: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button type="button" onClick={onToggle} className="flex h-[34px] w-full items-center gap-2.5 text-left">
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-select border-[1.5px] ${
+          checked ? "border-ink bg-ink" : "border-silver bg-surface"
+        }`}
+      >
+        {checked && <Check size={12} weight="bold" className="text-surface" />}
+      </span>
+      <FileText size={15} weight="light" className="shrink-0 text-navy" />
+      <span className="flex-1 truncate text-[14px] font-semibold text-ink">{document.name}</span>
+      <span className="shrink-0 text-[12.5px] text-muted">PDF · {formatBytes(document.size)}</span>
+    </button>
   )
 }
 

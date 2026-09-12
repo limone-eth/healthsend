@@ -17,10 +17,10 @@
  * in docs/stories/H-53.md `## Choices`.
  */
 
-import { generateContentKey, seal } from "./crypto"
+import { fromBase64Url, generateContentKey, seal } from "./crypto"
 import { classify, classifyBundle, packEnvelope, type PackedFile } from "./envelope"
 import { uploadEncryptedBlob } from "./swarm"
-import { createArchive, scopeArchive, type SetAsideIdentifiers } from "./archive"
+import { createArchive, scopeArchive, type DocumentRecord, type SetAsideIdentifiers } from "./archive"
 import { hasSetAside, importDocument } from "./import"
 import type { FileKind } from "./arkiv"
 
@@ -161,5 +161,61 @@ export async function createEncryptedAsset(
     fileCount: params.files.length,
     labelSource: params.files.map((f) => f.name).join("|"),
     setAside,
+  }
+}
+
+/**
+ * Pack, encrypt and upload a fresh asset from already-imported archive PDFs.
+ *
+ * H-64: the operator's model — the archive key opens the sender's archive
+ * locally, the chosen PDFs come out readable in the browser, and a **brand-new
+ * share key** (generated here, never the archive key) seals just those before
+ * one upload. `documents[].bytes` is read as-is — no `importDocument` step,
+ * because these are not fresh uploads to parse; they were already imported PDF
+ * bytes when H-63's Add flow put them in the archive, and the whole point of
+ * H-62's operator decision is that a PDF travels exactly as issued, including
+ * any name or date of birth printed on it, rather than through the cleaning
+ * path `importForAsset` runs fresh files through.
+ */
+export async function createEncryptedAssetFromArchive(
+  documents: DocumentRecord[],
+  onProgress?: AssetProgress,
+  dependencyOverrides: Partial<CreateEncryptedAssetDependencies> = {},
+): Promise<EncryptedAsset> {
+  const progress = onProgress ?? (() => {})
+  if (documents.length === 0) throw new Error("Pick at least one document")
+
+  const dependencies = { ...defaultCreateEncryptedAssetDependencies, ...dependencyOverrides }
+
+  progress(documents.length > 1 ? `Reading ${documents.length} documents` : "Reading document")
+  const packed: PackedFile[] = documents.map((document) => {
+    const bytes = fromBase64Url(document.bytes)
+    return { header: { name: document.name, mime: "application/pdf", size: bytes.length }, body: bytes }
+  })
+
+  // One envelope, one key, one blob — the same shape `createEncryptedAsset`
+  // produces for freshly picked files, so the recipient's existing
+  // multi-document switcher and `PdfPreview` need no changes to read it.
+  const envelope = packEnvelope(packed)
+
+  progress("Encrypting")
+  const contentKey = generateContentKey()
+  const sealed = await seal(contentKey, envelope)
+  const blob = new Uint8Array(sealed.iv.length + sealed.ciphertext.length)
+  blob.set(sealed.iv, 0)
+  blob.set(sealed.ciphertext, sealed.iv.length)
+
+  progress("Uploading to Swarm")
+  const { reference } = await dependencies.uploadEncryptedBlob(blob)
+
+  return {
+    ref: reference,
+    contentKey,
+    fileKind: "pdf",
+    fileCount: documents.length,
+    labelSource: documents.map((d) => d.name).join("|"),
+    // Nothing is set aside for a document record — H-62's consequence is that
+    // a PDF is never scanned or scoped, so there is nothing to report back.
+    setAside: [],
   }
 }

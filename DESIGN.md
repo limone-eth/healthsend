@@ -1150,8 +1150,10 @@ to know.
   report.
 - A download, save, export, print, copy-all or "view original PDF" control appears on
   the recipient page.
-- A date of birth or provider reference appears anywhere on the recipient page, or a
-  surname sits in the same block as a reading.
+- A date of birth or provider reference appears anywhere on the recipient page next
+  to a *parsed* reading, or a surname sits in the same block as one. (A PDF the
+  sender chose to share is the deliberate exception, reversed 2026-09-12 — see
+  "Original files and PDFs" below.)
 - Any group is pre-ticked on the send screen.
 - Expiry is drawn as a progress bar, ring or depleting meter.
 - A countdown runs on a stored date rather than the real window.
@@ -1186,7 +1188,7 @@ preference, it is the interface.
 | Revoke access | **End access now** | Revoke is a permissions word from software she resents |
 | Grant · entity · record | **Share** | One noun for the thing she made. A second noun means the model is wrong |
 | Scoped copy · payload | **Only what you chose** | Names the reassurance, not the data structure |
-| De-identified · anonymised | **Your name and date of birth stay with you** | And never *anonymous*: health data re-identifies, so that is the one promise we would actually be breaking |
+| De-identified · anonymised | **Your name and date of birth stay with you** (a CSV or JSON record — a PDF goes out as issued, see "Original files and PDFs") | And never *anonymous*: health data re-identifies, so that is the one promise we would actually be breaking |
 | The ciphertext becomes noise | **There is nothing left to open** | Same fact, no vocabulary lesson |
 | Expires in 84 days | **Ends 4 December** | A date can be planned around; a duration has to be computed |
 | Bearer link · anyone-with-link | **Anyone with the link can open it** | Say the risk in the sentence that offers the option |
@@ -1289,6 +1291,16 @@ overrode an earlier, stricter rule of ours that banned any route out of the reci
 page; the ban now covers navigation and account chrome, not this one secondary action.
 
 ### Original files and PDFs
+
+**Reversed for PDFs, 2026-09-12 — see docs/stories/H-62.md.** Everything below this
+paragraph was the design until then, and it still holds for a blood panel or a
+wearable export: those are parsed, and only the parsed readings ever reach a
+recipient. The operator's decision for a PDF specifically is the opposite: **a PDF
+goes to the recipient exactly as issued, rendered in place with no download
+control, including any name or date of birth printed on it.** The reasoning below —
+why the original was withheld, what it would cost to keep withholding it — is kept
+as the record of why that took this long to reverse, not as a description of what
+the build does today.
 
 **Parsed readings only. No original PDF is shown, linked or downloadable.**
 
