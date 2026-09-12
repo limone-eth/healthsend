@@ -41,6 +41,18 @@ pnpm doctor            # external dependencies: RPC, funder balance, gateways
 gas and takes ~90s, so it is not part of the routine loop — run it when the
 expiry behaviour itself changed.
 
+**Working in a git worktree? Give the browser tests their own port.**
+
+```bash
+BASE_URL=http://localhost:3100 pnpm e2e     # any free port
+```
+
+`pnpm e2e` starts its own dev server on port 3000. If a `pnpm dev` from
+another checkout already owns 3000, Playwright now refuses to run rather
+than attaching to it — it used to attach silently and test *that* checkout's
+code while reporting green for your branch. Never kill the process holding
+3000 to free it; it belongs to someone else's session. Pick another port.
+
 ## Things that will bite
 
 - **Arkiv attribute names are lowercase.** The engine's `Ident32` grammar rejects
