@@ -2,12 +2,15 @@
 
 import {
   addArchiveRecords,
+  addShareIndexEntry,
   createArchive,
   openArchive,
+  removeDocument,
   scopeArchive,
   type Archive,
   type ArchiveRecord,
   type ArchiveSelection,
+  type ShareIndexEntry,
 } from "./archive"
 import { getIdentity, type Identity } from "./identity"
 import { readArchiveReference, writeArchiveReference } from "./archive-manifest"
@@ -66,6 +69,45 @@ export async function addRecordsToMyArchive(
   const stored = await readStoredArchive(identity, dependencies)
   const current = stored ?? (await createArchive(identity.archiveKey))
   const encrypted = await addArchiveRecords(current, identity.archiveKey, records)
+  const { reference } = await dependencies.uploadEncryptedBlob(encrypted)
+  await dependencies.writeArchiveReference(identity.archiveTopic, reference)
+  return openArchive(encrypted, identity.archiveKey)
+}
+
+/**
+ * Remove one document with the same read-modify-write cycle `addRecordsToMyArchive`
+ * uses: the feed moves only after the replacement ciphertext exists, so a failed
+ * upload or feed update leaves the previous archive — document included — readable.
+ */
+export async function removeDocumentFromMyArchive(
+  documentId: string,
+  dependencyOverrides: Partial<ArchiveStoreDependencies> = {},
+): Promise<Archive> {
+  const dependencies = { ...defaults, ...dependencyOverrides }
+  const identity = await dependencies.getIdentity()
+  const stored = await readStoredArchive(identity, dependencies)
+  if (!stored) throw new Error("Your archive is empty")
+  const encrypted = await removeDocument(stored, identity.archiveKey, documentId)
+  const { reference } = await dependencies.uploadEncryptedBlob(encrypted)
+  await dependencies.writeArchiveReference(identity.archiveTopic, reference)
+  return openArchive(encrypted, identity.archiveKey)
+}
+
+/**
+ * Record one more share in the archive's own share index. Called by
+ * `createSendFromArchive` (H-64) once that share's grant and key hand-off
+ * both succeed — never before, and never for a share this archive did not
+ * make.
+ */
+export async function addShareIndexEntryToMyArchive(
+  entry: ShareIndexEntry,
+  dependencyOverrides: Partial<ArchiveStoreDependencies> = {},
+): Promise<Archive> {
+  const dependencies = { ...defaults, ...dependencyOverrides }
+  const identity = await dependencies.getIdentity()
+  const stored = await readStoredArchive(identity, dependencies)
+  const current = stored ?? (await createArchive(identity.archiveKey))
+  const encrypted = await addShareIndexEntry(current, identity.archiveKey, entry)
   const { reference } = await dependencies.uploadEncryptedBlob(encrypted)
   await dependencies.writeArchiveReference(identity.archiveTopic, reference)
   return openArchive(encrypted, identity.archiveKey)
