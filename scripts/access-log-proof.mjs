@@ -1,9 +1,10 @@
 /**
  * Proves "When she looked" offline: no Redis, no chain, no network.
  *
- *   resolveUnlock(entityKey, authKey, { getGrant, getShare, recordAccess })  — lib/unlock.ts
+ *   resolveUnlock(entityKey, authKey, { getGrant, getShare, serveShare })  — lib/unlock.ts
  *   readAccessLog(request, { getGrant, getAccessLog })  — lib/access-log.ts
- *   recordAccessWith / getAccessLogWith / tombstoneShareWith / putShareWith  — lib/holder-store.ts
+ *   serveShareWith / recordAccessWith / getAccessLogWith / tombstoneShareWith / putShareWith
+ *     — lib/holder-store.ts
  *
  * The first two take their Arkiv and holder access as injected dependencies,
  * so the property under test there is the recording hook and the sender-only
@@ -27,6 +28,7 @@ const { resolveUnlock } = await import("../lib/unlock.ts")
 const { readAccessLog, accessLogMessage } = await import("../lib/access-log.ts")
 const {
   recordAccessWith,
+  serveShareWith,
   getAccessLogWith,
   tombstoneShareWith,
   putShareWith,
@@ -154,6 +156,10 @@ function fakeRedis() {
       }
       return deleted
     }
+    if (command === "GET") {
+      const [key] = args
+      return strings.has(key) ? strings.get(key) : null
+    }
     if (command === "SET") {
       const [key, value, ...options] = args
       const nx = options.some((option) => option.toUpperCase() === "NX")
@@ -211,10 +217,11 @@ function fakeRedis() {
   const grant = { sender: sender.address, authCommitment: commitment, expiresAt: now + 3600 }
   const stored = { share: "held-share", commitment }
   const store = fakeRedis()
+  await putShareWith(store, ENTITY_KEY, stored, 3600)
   const unlockDeps = {
     getGrant: async () => grant,
     getShare: async () => stored,
-    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
+    serveShare: (entityKey, at, expiresAt) => serveShareWith(store, entityKey, at, expiresAt),
   }
 
   const result = await resolveUnlock(ENTITY_KEY, authKey, unlockDeps)
@@ -240,7 +247,7 @@ function fakeRedis() {
   const deps = {
     getGrant: async () => grant,
     getShare: async () => stored,
-    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
+    serveShare: (entityKey, at, expiresAt) => serveShareWith(store, entityKey, at, expiresAt),
   }
 
   const result = await resolveUnlock(ENTITY_KEY, wrongAuthKey, deps)
@@ -260,7 +267,7 @@ function fakeRedis() {
     getShare: async () => {
       throw new Error("must not be reached once the grant is gone")
     },
-    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
+    serveShare: (entityKey, at, expiresAt) => serveShareWith(store, entityKey, at, expiresAt),
   }
 
   const result = await resolveUnlock(ENTITY_KEY, authKey, deps)
@@ -337,7 +344,7 @@ function fakeRedis() {
   console.log("PASS  a signature made for another action does not authorise the read")
 }
 
-// --- a record-write failure still serves the share ------------------------------
+// --- a holder failure cannot serve an unrecorded share -----------------------
 {
   const now = Math.floor(Date.now() / 1000)
   const { authKey, commitment } = await validAuthKey()
@@ -346,16 +353,17 @@ function fakeRedis() {
   const deps = {
     getGrant: async () => grant,
     getShare: async () => stored,
-    recordAccess: async () => {
+    serveShare: async () => {
       throw new Error("Redis is down")
     },
   }
 
   const result = await resolveUnlock(ENTITY_KEY, authKey, deps)
 
-  assert.equal(result.ok, true, "a bookkeeping failure must not fail the unlock")
-  assert.equal(result.share, "held-share")
-  console.log("PASS  a record-write failure still serves the share")
+  assert.equal(result.ok, false, "a holder failure must not serve a share that the log cannot record")
+  assert.equal(result.status, 503, "the failure must stay distinguishable from an empty access log")
+  assert.equal(result.retryable, true)
+  console.log("PASS  a holder failure stays unavailable instead of serving an unrecorded share")
 }
 
 // --- a rejected EXPIRE must not leave a list without a TTL --------------------
@@ -393,9 +401,8 @@ function fakeRedis() {
   const grant = { sender: sender.address }
   const deps = { getGrant: async () => grant, getAccessLog: (entityKey) => getAccessLogWith(store, entityKey) }
 
-  // The write path fails outright. lib/unlock.ts would swallow this so the
-  // reader is unaffected — reproduced here as the direct holder-store call
-  // the unlock's recordAccess dependency makes.
+  // Exercise the standalone writer kept for rolling-release compatibility.
+  // A dropped write still sets its degraded marker before it rethrows.
   store.failNextEval()
   await assert.rejects(() => recordAccessWith(store, ENTITY_KEY, now, now + 3600))
 
@@ -422,6 +429,21 @@ function fakeRedis() {
   assert.deepEqual(result.opened, [])
   assert.equal(result.reliable, true, "a share that was genuinely never opened must still read as a confident zero")
   console.log("PASS  a genuinely empty log still reads as reliable")
+}
+
+// --- access history survives the revoke that ends access ---------------------
+{
+  const store = fakeRedis()
+  const value = { share: "held-share", commitment: "c".repeat(64) }
+
+  await putShareWith(store, ENTITY_KEY, value, 3600)
+  await recordAccessWith(store, ENTITY_KEY, 1000, 4600)
+  await recordAccessWith(store, ENTITY_KEY, 2000, 4600)
+  await tombstoneShareWith(store, ENTITY_KEY, 3600)
+
+  const after = await getAccessLogWith(store, ENTITY_KEY)
+  assert.deepEqual(after.opened, [1000, 2000], "ending access must preserve its prior open history")
+  console.log("PASS  access history survives the revoke that ends access")
 }
 
 // --- a failed tombstone write must not leave a refillable slot ----------------
@@ -479,6 +501,25 @@ function fakeRedis() {
   const result = await putShareWith(racyClient, ENTITY_KEY, { share: "held-share", commitment: "c".repeat(64) }, 3600)
   assert.equal(result, false, "a tombstone that lands immediately before the atomic put must still win")
   console.log("PASS  putShare's atomic check-and-set refuses a write raced against a revoke")
+}
+
+// --- atomic serve refuses stale share bytes behind a tombstone ----------------
+{
+  const store = fakeRedis()
+  const shareKey = shareKeyName(ENTITY_KEY)
+  const tombKey = tombstoneKeyName(ENTITY_KEY)
+  const logKey = accessLogKeyName(ENTITY_KEY)
+  const value = { share: "stale-held-share", commitment: "c".repeat(64) }
+
+  // Model the state that exposes a missing tombstone guard: stale share bytes
+  // coexist with a completed revoke marker. The exact Lua text must refuse it.
+  await store.set(shareKey, JSON.stringify(value), { ex: 3600 })
+  await store.set(tombKey, "1", { ex: 3600 })
+
+  const served = await serveShareWith(store, ENTITY_KEY, 1000, 4600)
+  assert.equal(served, null, "an atomic serve must refuse any share behind a tombstone")
+  assert.deepEqual(await store.lrange(logKey), [], "a refused serve must not create an access event")
+  console.log("PASS  atomic serve refuses stale share bytes behind a tombstone")
 }
 
 console.log("\nAll checks passed.")

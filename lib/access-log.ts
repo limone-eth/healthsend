@@ -13,12 +13,12 @@
  * so `scripts/access-log-proof.mjs` can prove this offline, the same way
  * `scripts/revoke-proof.mjs` proves `lib/revoke.ts`.
  *
- * The result carries `reliable` alongside `opened`. A served unlock can leave
- * no record — `lib/unlock.ts` never lets bookkeeping fail the unlock itself —
- * so an empty (or short) `opened` is not always proof that nothing happened.
- * `reliable` is false once a write for this entity is known to have been
- * dropped (see `recordAccessWith` in `lib/holder-store.ts`), and a caller must
- * not render a confident "Not opened yet" while it is false — the same
+ * The result carries `reliable` alongside `opened`. Current unlocks read the
+ * share and append the record atomically, refusing access if that holder call
+ * fails. `reliable` remains for records written by older deployments: it is
+ * false once their standalone writer is known to have dropped an entry (see
+ * `recordAccessWith` in `lib/holder-store.ts`). A caller must not render a
+ * confident "Not opened yet" while it is false — the same
  * expired-versus-unavailable distinction `lib/unlock.ts` makes for the
  * recipient, applied here for the sender. `DESIGN.md` § Share state chip.
  */

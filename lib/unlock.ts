@@ -25,10 +25,10 @@
  * so a caller that needs to tell them apart — H-35's copy on the open-link
  * page — can, without this function deciding how that gets shown.
  *
- * Every unlock actually served is recorded — see `lib/access-log.ts` for who
- * gets to read that record back. The recording happens after every check
- * above has passed, once and only once, and its own failure is swallowed:
- * bookkeeping must never be able to turn a served share into a failed one.
+ * Every unlock actually served is recorded. The final holder operation reads
+ * the share and writes that record in one Lua invocation. It also checks the
+ * revoke tombstone in that same operation. Thus, no revoke or holder failure
+ * can leave a returned share without its access record.
  */
 
 import type { Grant } from "./arkiv"
@@ -58,8 +58,10 @@ function equal(a: string, b: string): boolean {
 
 export type UnlockDeps = {
   getGrant: (entityKey: string) => Promise<Grant | null>
+  /** Preliminary read used only to check the stored commitment. */
   getShare: (entityKey: string) => Promise<StoredShare | null>
-  recordAccess: (entityKey: string, at: number, expiresAt: number) => Promise<void>
+  /** Atomic tombstone check, share read, access record, and return. */
+  serveShare: (entityKey: string, at: number, expiresAt: number) => Promise<StoredShare | null>
   /** Consulted only once the share is already missing, to tell a revoke apart from a lapsed grant. */
   isRevoked?: (entityKey: string) => Promise<boolean>
 }
@@ -126,20 +128,26 @@ export async function resolveUnlock(
     return { ok: false, status: 403, error: "Not authorised for this grant" }
   }
 
-  // 4. Re-check, right before anything is handed back. Step 2 read the share
-  // once; a revoke can complete between that read and this line, and an
-  // unlock that trusted its first read would hand back a share the sender
-  // had already ended. Re-reading closes that window instead of widening it
-  // with a timer or a lock this store does not have.
-  stored = await deps.getShare(entityKey)
-  if (!stored) return noShare(entityKey, deps)
-
-  // 5. Served. Record it — never allowed to fail the unlock itself.
+  // 4. Serve at one atomic holder boundary. The Lua operation checks the
+  // tombstone, reads the current share, records this access, and returns the
+  // share. Revoke cannot complete in a gap between those steps because no gap
+  // exists. A holder failure returns 503 instead of creating an unrecorded
+  // access that a later empty log could misreport.
   try {
-    await deps.recordAccess(entityKey, Math.floor(Date.now() / 1000), grant.expiresAt)
-  } catch {
-    // Swallow: the reader's access does not depend on our bookkeeping.
+    stored = await deps.serveShare(
+      entityKey,
+      Math.floor(Date.now() / 1000),
+      grant.expiresAt,
+    )
+  } catch (error) {
+    return {
+      ok: false,
+      status: 503,
+      error: `Could not reach the key-share holder: ${(error as Error).message}`,
+      retryable: true,
+    }
   }
+  if (!stored) return noShare(entityKey, deps)
 
   return { ok: true, share: stored.share, expiresAt: grant.expiresAt }
 }

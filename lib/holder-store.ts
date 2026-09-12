@@ -37,30 +37,27 @@ import { Redis } from "@upstash/redis"
  *
  * ---
  *
- * **Every multi-key write here is one Lua script, not several round trips.**
+ * **Every coordinated holder change here is one Lua script, not several round trips.**
  * `@upstash/redis` is an HTTP client: there is no `MULTI`/`EXEC` transaction,
  * and `.pipeline()` (`.multi()` is an alias for the same thing) is explicitly
  * documented as non-atomic — "commands sent by other clients can interleave
- * with the pipeline." The one primitive that *is* atomic is `EVAL`: the script
- * runs to completion on the Redis server as a single operation, so nothing
- * else can be interleaved between the commands inside it, and a failure to
- * reach the server (the only realistic way an `RPUSH` succeeds while the
- * following `EXPIRE` does not) now fails the whole call — either every effect
- * lands, or none of them do. That closes three separate bugs at once with one
- * mechanism:
+ * with the pipeline." The one primitive that *is* atomic against interleaving
+ * is `EVAL`: each script runs to completion on the Redis server as one
+ * operation. A transport failure before the script reaches Redis leaves no
+ * effect. Redis does not roll back commands before a script runtime error, so
+ * each script also keeps its command sequence small and direct.
  *
- *   - `recordAccess` used to `RPUSH` then `EXPIRE` as two calls, so a dropped
- *     second call left timestamps with no TTL at all.
- *   - `tombstoneShare` used to `del(share)`, `del(accessLog)`, `set(tombstone)`
- *     in a `Promise.all` — independent HTTP requests, not a bundle. A dropped
- *     tombstone write after the delete succeeded would free the slot with
- *     nothing marking it revoked, reopening the hole H-29 closed.
- *   - `putShare` used to read `isRevoked` and then `SET NX` as two calls, so a
- *     revoke landing in the gap between them could let a write through.
+ * Four holder operations use this mechanism:
  *
- * All three now go through `eval()`. See `scripts/access-log-proof.mjs` for
- * the proof, against a fake client that can fail a call outright to model an
- * unreachable server.
+ *   - `recordAccess` keeps `RPUSH` and `EXPIRE` together for old callers.
+ *   - `tombstoneShare` deletes the share and creates its tombstone together,
+ *     while it preserves the access history.
+ *   - `putShare` checks the tombstone and claims the write-once slot together.
+ *   - `serveShare` checks the tombstone, reads the share, and records the open
+ *     together. This is the final unlock operation.
+ *
+ * See `scripts/access-log-proof.mjs`. Fengari runs the real Lua text against an
+ * in-memory Redis command surface.
  */
 
 const TTL_GRACE_SECONDS = 60 * 60
@@ -91,7 +88,7 @@ function redis(): Redis {
 const key = (entityKey: string) => `healthsend:share:${entityKey.toLowerCase()}`
 const accessLogKey = (entityKey: string) => `healthsend:access:${entityKey.toLowerCase()}`
 const tombstoneKey = (entityKey: string) => `healthsend:revoked:${entityKey.toLowerCase()}`
-/** Set only when a log write was dropped — see `recordAccessWith`. */
+/** Set only when the older standalone log writer drops a write. */
 const degradedKey = (entityKey: string) => `healthsend:degraded:${entityKey.toLowerCase()}`
 
 export type StoredShare = {
@@ -117,14 +114,14 @@ redis.call("RPUSH", KEYS[1], ARGV[1])
 return redis.call("EXPIRE", KEYS[1], ARGV[2])
 `
 
-// KEYS[1] = share key, KEYS[2] = access log key, KEYS[3] = tombstone key.
+// KEYS[1] = share key, KEYS[2] = tombstone key.
 // ARGV[1] = tombstone value, ARGV[2] = tombstone ttl seconds.
 // One call: the slot can never be observed freed (share gone) without the
-// tombstone that guards it also being in place.
+// tombstone that guards it also being in place. The access log keeps its own
+// TTL and survives so the sender can still see opens after ending access.
 export const TOMBSTONE_SCRIPT = `
 redis.call("DEL", KEYS[1])
-redis.call("DEL", KEYS[2])
-return redis.call("SET", KEYS[3], ARGV[1], "EX", ARGV[2])
+return redis.call("SET", KEYS[2], ARGV[1], "EX", ARGV[2])
 `
 
 // KEYS[1] = share key, KEYS[2] = tombstone key.
@@ -140,6 +137,23 @@ if redis.call("SET", KEYS[1], ARGV[1], "NX", "EX", ARGV[2]) then
   return 1
 end
 return 0
+`
+
+// KEYS[1] = share key, KEYS[2] = tombstone key, KEYS[3] = access log key.
+// ARGV[1] = access timestamp, ARGV[2] = access-log ttl seconds.
+// This is the unlock linearization point. A revoke cannot run between the
+// tombstone check, the share read, the access record, and the script return.
+export const SERVE_SHARE_SCRIPT = `
+if redis.call("EXISTS", KEYS[2]) == 1 then
+  return false
+end
+local share = redis.call("GET", KEYS[1])
+if not share then
+  return false
+end
+redis.call("RPUSH", KEYS[3], ARGV[1])
+redis.call("EXPIRE", KEYS[3], ARGV[2])
+return share
 `
 
 /**
@@ -176,25 +190,56 @@ export async function putShare(
   return putShareWith(redis(), entityKey, value, ttlSeconds)
 }
 
-export async function getShare(entityKey: string): Promise<StoredShare | null> {
-  const raw = await redis().get<StoredShare | string>(key(entityKey))
+function parseStoredShare(raw: StoredShare | string | null): StoredShare | null {
   if (!raw) return null
   return typeof raw === "string" ? (JSON.parse(raw) as StoredShare) : raw
+}
+
+export async function getShare(entityKey: string): Promise<StoredShare | null> {
+  return parseStoredShare(await redis().get<StoredShare | string>(key(entityKey)))
+}
+
+/**
+ * Return the share and record its delivery in one Redis operation.
+ *
+ * This is the final holder operation in an unlock. `SERVE_SHARE_SCRIPT` refuses
+ * a tombstoned key, reads the share, appends the access event, and sets the log
+ * TTL without an interleaving point. A holder failure returns no share to the
+ * caller, so a later empty log remains a true empty log.
+ */
+export async function serveShareWith(
+  client: HolderClient,
+  entityKey: string,
+  at: number,
+  expiresAt: number,
+): Promise<StoredShare | null> {
+  const ttlSeconds = Math.max(60, Math.ceil(expiresAt - at) + TTL_GRACE_SECONDS)
+  const raw = await client.eval(
+    SERVE_SHARE_SCRIPT,
+    [key(entityKey), tombstoneKey(entityKey), accessLogKey(entityKey)],
+    [at, ttlSeconds],
+  )
+  return parseStoredShare(raw as StoredShare | string | null)
+}
+
+export async function serveShare(
+  entityKey: string,
+  at: number,
+  expiresAt: number,
+): Promise<StoredShare | null> {
+  return serveShareWith(redis(), entityKey, at, expiresAt)
 }
 
 /**
  * Used when a sender ends a send early. Expiry does not need this.
  *
- * Deletes the share and its access log, the same as before, and leaves a
- * tombstone under a TTL at least as long as the grant's own remaining life
- * (`ttlSeconds`, plus the same grace as everything else here) — all three in
- * the one atomic script (`TOMBSTONE_SCRIPT`) instead of a `Promise.all` of
- * independent calls. While the grant is live, `putShare` refuses any write to
- * a tombstoned entity — so the recipient's copy of the share, still sitting
- * in their browser, cannot be POSTed back to reopen what was just closed. A
- * `Promise.all` could previously delete the share and then drop the tombstone
- * write, freeing the slot with nothing marking it revoked; the atomic script
- * cannot land in that half-applied state.
+ * Deletes the share, preserves its access log, and leaves a tombstone under a
+ * TTL at least as long as the grant's own remaining life (`ttlSeconds`, plus
+ * the same grace as everything else here). The delete and tombstone write run
+ * in one atomic script (`TOMBSTONE_SCRIPT`) instead of independent requests.
+ * While the grant is live, `putShare` refuses any write to a tombstoned entity,
+ * so the recipient's copy cannot reopen access. Preserving the access log lets
+ * the sender see prior opens after ending access.
  */
 export async function tombstoneShareWith(
   client: HolderClient,
@@ -204,7 +249,7 @@ export async function tombstoneShareWith(
   const ttl = Math.max(60, Math.floor(ttlSeconds) + TTL_GRACE_SECONDS)
   await client.eval(
     TOMBSTONE_SCRIPT,
-    [key(entityKey), accessLogKey(entityKey), tombstoneKey(entityKey)],
+    [key(entityKey), tombstoneKey(entityKey)],
     ["1", ttl],
   )
 }
@@ -219,26 +264,12 @@ export async function isRevoked(entityKey: string): Promise<boolean> {
 }
 
 /**
- * Record one served unlock. Called only after the holder has actually handed
- * back the share — see `resolveUnlock` in lib/unlock.ts, which swallows any
- * error this throws so a bookkeeping failure can never turn a served share
- * into a failed one.
+ * Standalone access writer kept for old callers and direct atomicity proofs.
  *
- * The log's TTL is pinned to the grant's own expiry, the same way the share's
- * TTL is: the record lives only as long as the arrangement it describes. The
- * append and the expiry are one atomic script (`RECORD_ACCESS_SCRIPT`), so a
- * list can never be observed holding timestamps with no TTL at all.
- *
- * If the write is dropped anyway — the whole call never reaches Redis, or
- * comes back as an error — a served unlock still leaves no record, by design
- * (see the file header on `lib/unlock.ts`). That would let the access-log
- * read report a confident "never opened" about a share that was, in fact,
- * opened. So a dropped write makes one more best-effort attempt: a single
- * `SET` marking this entity's log as degraded. `getAccessLogWith` checks that
- * marker and reports `reliable: false` when it is set, so a reader is told
- * "we don't know" instead of a false negative. If even that marker write
- * fails, there is nothing further to try here — this function still rethrows,
- * and `lib/unlock.ts`'s own swallow is the last line of defense.
+ * New unlocks use `serveShareWith`, which reads and records in one operation.
+ * This helper still pins the record to the grant expiry and marks the log as
+ * degraded if its atomic append fails. The marker keeps older deployments'
+ * dropped writes visible after a rolling release.
  */
 export async function recordAccessWith(
   client: HolderClient,

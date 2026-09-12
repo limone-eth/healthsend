@@ -184,17 +184,20 @@ export async function createSend(
   // versa.
   progress("Handing the key share to the holder")
   const shareTimestamp = Math.floor(Date.now() / 1000)
+  const sharePayload = {
+    share: toBase64Url(heldShare),
+    commitment,
+    ttlSeconds: params.ttlSeconds,
+  }
   const shareSignature = await privateKeyToAccount(identity.privateKey).signMessage({
-    message: shareMessage(grant.entityKey, shareTimestamp),
+    message: shareMessage(grant.entityKey, shareTimestamp, sharePayload),
   })
   const handoff = await dependencies.fetch("/api/holder/share", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       entityKey: grant.entityKey,
-      share: toBase64Url(heldShare),
-      commitment,
-      ttlSeconds: params.ttlSeconds,
+      ...sharePayload,
       signature: shareSignature,
       timestamp: shareTimestamp,
     }),

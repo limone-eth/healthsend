@@ -2,7 +2,7 @@
  * Proves "End access now" offline: no Redis, no chain, no network.
  *
  *   performRevoke(request, { getGrant, tombstoneShare })  — lib/revoke.ts
- *   resolveUnlock(entityKey, authKey, { getGrant, getShare, recordAccess })  — lib/unlock.ts
+ *   resolveUnlock(entityKey, authKey, { getGrant, getShare, serveShare })  — lib/unlock.ts
  *   performShare(request, { getGrant, putShare })  — lib/share.ts
  *
  * All three take their Arkiv and holder access as injected dependencies, so
@@ -161,7 +161,7 @@ function fakeHolder() {
 
   // Same grant, still live — only the share is gone, exactly the state a
   // revoke leaves behind. This must read as "expired" (410), not a 5xx.
-  const unlockDeps = { getGrant: async () => grant(), getShare: async () => stored, recordAccess: async () => {} }
+  const unlockDeps = { getGrant: async () => grant(), getShare: async () => stored, serveShare: async () => stored }
   const opened = await resolveUnlock(ENTITY_KEY, "irrelevant-once-the-share-is-gone", unlockDeps)
 
   assert.equal(opened.ok, false)
@@ -217,7 +217,9 @@ function fakeHolder() {
   const firstWrite = await performShare(
     {
       entityKey: ENTITY_KEY,
-      signature: await sender.signMessage({ message: shareMessage(ENTITY_KEY, now) }),
+      signature: await sender.signMessage({
+        message: shareMessage(ENTITY_KEY, now, { share: "held-share", commitment, ttlSeconds: 3600 }),
+      }),
       timestamp: now,
       share: "held-share",
       commitment,
@@ -247,7 +249,13 @@ function fakeHolder() {
   const replay = await performShare(
     {
       entityKey: ENTITY_KEY,
-      signature: await sender.signMessage({ message: shareMessage(ENTITY_KEY, now + 2) }),
+      signature: await sender.signMessage({
+        message: shareMessage(ENTITY_KEY, now + 2, {
+          share: savedShare.share,
+          commitment: savedShare.commitment,
+          ttlSeconds: 3600,
+        }),
+      }),
       timestamp: now + 2,
       share: savedShare.share,
       commitment: savedShare.commitment,
@@ -261,7 +269,7 @@ function fakeHolder() {
   const opened = await resolveUnlock(ENTITY_KEY, authKey, {
     getGrant: async () => g,
     getShare: holder.getShare,
-    recordAccess: async () => {},
+    serveShare: holder.getShare,
   })
   assert.equal(opened.ok, false)
   assert.equal(opened.status, 410, "the link must not open after the replayed share was refused")
@@ -278,27 +286,25 @@ function fakeHolder() {
 
   const unlockDeps = {
     getGrant: async () => g,
-    // The first call is the unlock's own read. Right after it captures the
-    // value it is about to trust, a revoke completes underneath it — the
-    // exact interleaving the race allows, made deterministic here instead of
-    // depending on timing.
+    // The preliminary read captures a value for the commitment check. A revoke
+    // then completes underneath it before the final atomic serve.
     getShare: async () => {
       calls++
-      if (calls === 1) {
-        const before = stored
-        await performRevoke(
-          {
-            entityKey: ENTITY_KEY,
-            signature: await sender.signMessage({ message: revokeMessage(ENTITY_KEY, now) }),
-            timestamp: now,
-          },
-          { getGrant: async () => g, tombstoneShare: async () => { stored = null } },
-        )
-        return before
-      }
+      const before = stored
+      await performRevoke(
+        {
+          entityKey: ENTITY_KEY,
+          signature: await sender.signMessage({ message: revokeMessage(ENTITY_KEY, now) }),
+          timestamp: now,
+        },
+        { getGrant: async () => g, tombstoneShare: async () => { stored = null } },
+      )
+      return before
+    },
+    serveShare: async () => {
+      calls++
       return stored
     },
-    recordAccess: async () => {},
   }
 
   const result = await resolveUnlock(ENTITY_KEY, authKey, unlockDeps)
@@ -307,6 +313,90 @@ function fakeHolder() {
   assert.equal(result.status, 410)
   assert.ok(calls >= 2, "the unlock must check again before returning, not trust its first read")
   console.log("PASS  an unlock paused after its read does not return a share revoked in between")
+}
+
+// --- an unlock paused in its final serve cannot outlive a completed revoke ----
+{
+  const now = Math.floor(Date.now() / 1000)
+  const { authKey, commitment } = await validAuthKey()
+  const g = { sender: sender.address, authCommitment: commitment, expiresAt: now + 3600 }
+  let stored = { share: "held-share", commitment }
+  let revoked = false
+
+  const revoke = async () => {
+    if (revoked) return
+    revoked = true
+    await performRevoke(
+      {
+        entityKey: ENTITY_KEY,
+        signature: await sender.signMessage({ message: revokeMessage(ENTITY_KEY, now) }),
+        timestamp: now,
+      },
+      { getGrant: async () => g, tombstoneShare: async () => { stored = null } },
+    )
+  }
+
+  const result = await resolveUnlock(ENTITY_KEY, authKey, {
+    getGrant: async () => g,
+    getShare: async () => stored,
+    serveShare: async () => {
+      await revoke()
+      return stored
+    },
+  })
+
+  assert.equal(result.ok, false, "an unlock must not return a share after revoke succeeds")
+  assert.equal(result.status, 410)
+  console.log("PASS  an unlock paused in its final serve cannot outlive a completed revoke")
+}
+
+// --- a captured share signature cannot authorise an altered payload -----------
+{
+  const now = Math.floor(Date.now() / 1000)
+  const original = {
+    entityKey: ENTITY_KEY,
+    share: "legitimate-share",
+    commitment: "d".repeat(64),
+    ttlSeconds: 3600,
+  }
+  const message = shareMessage(ENTITY_KEY, now, original)
+  assert.ok(
+    message.startsWith(`${signedMessage("share", ENTITY_KEY, now)}:`),
+    "the payload-bound message must keep the share action namespace",
+  )
+  const signature = await sender.signMessage({ message })
+  const alterations = [
+    { label: "share", payload: { ...original, share: "attacker-selected-share" } },
+    { label: "commitment", payload: { ...original, commitment: "e".repeat(64) } },
+    { label: "requested TTL", payload: { ...original, ttlSeconds: 365 * 24 * 60 * 60 } },
+    {
+      label: "complete payload",
+      payload: {
+        ...original,
+        share: "attacker-selected-share",
+        commitment: "e".repeat(64),
+        ttlSeconds: 365 * 24 * 60 * 60,
+      },
+    },
+  ]
+
+  for (const { label, payload } of alterations) {
+    let stored = null
+    const result = await performShare(
+      { ...payload, signature, timestamp: now },
+      {
+        getGrant: async () => ({ sender: sender.address }),
+        putShare: async (_entityKey, value, ttlSeconds) => {
+          stored = { value, ttlSeconds }
+          return true
+        },
+      },
+    )
+
+    assert.equal(result.ok, false, `the signature must bind the ${label}`)
+    assert.equal(stored, null, `an altered ${label} must not consume the write-once slot`)
+  }
+  console.log("PASS  a captured share signature binds the action, share, commitment, and requested TTL")
 }
 
 // --- share POST: no signature, wrong signer, or a revoke-action signature is refused ---
@@ -325,7 +415,7 @@ function fakeHolder() {
   // Wrong signer.
   {
     let stored = false
-    const signature = await attacker.signMessage({ message: shareMessage(ENTITY_KEY, now) })
+    const signature = await attacker.signMessage({ message: shareMessage(ENTITY_KEY, now, base) })
     const result = await performShare(
       { ...base, signature, timestamp: now },
       { getGrant: async () => g, putShare: async () => { stored = true; return true } },
@@ -350,7 +440,7 @@ function fakeHolder() {
   // Sanity: the same sender key, signed for "share", is accepted.
   {
     let stored = false
-    const signature = await sender.signMessage({ message: shareMessage(ENTITY_KEY, now) })
+    const signature = await sender.signMessage({ message: shareMessage(ENTITY_KEY, now, base) })
     const result = await performShare(
       { ...base, signature, timestamp: now },
       { getGrant: async () => g, putShare: async () => { stored = true; return true } },
