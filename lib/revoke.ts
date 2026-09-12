@@ -72,11 +72,20 @@ export async function performRevoke(req: RevokeRequest, deps: RevokeDeps): Promi
     return { ok: false, status: 503, error: `Could not reach Arkiv: ${(error as Error).message}` }
   }
 
-  // No live grant: nothing is readable regardless of the share, so there is
-  // no owner left to check a signature against. Clearing the share here is
-  // cleanup, not an authorisation bypass.
+  // No live grant: nothing is readable regardless of the share, because the
+  // holder asks Arkiv before it serves. The access has genuinely ended, so say
+  // so — but do NOT delete here.
+  //
+  // There is no owner to check a signature against without a grant, so this
+  // branch is reachable unauthenticated by anyone holding the entity key. The
+  // deletion it would perform buys at most an hour of earlier cleanup on a row
+  // that is already inert and already carries its own TTL. Against that: it
+  // would make an unauthenticated mutation depend on `isNotFound` in
+  // lib/arkiv.ts never misclassifying a transport failure as a not-found, and
+  // that check matches on error message substrings. Keeping the mutation behind
+  // a signature means that heuristic can only ever cost a misleading status,
+  // never a deletion.
   if (!grant) {
-    await deps.deleteShare(req.entityKey)
     return { ok: true }
   }
 

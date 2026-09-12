@@ -144,4 +144,17 @@ const grant = () => ({ sender: sender.address, authCommitment: AUTH_COMMITMENT }
   console.log("PASS  revoking twice is not an error")
 }
 
+{
+  // Hardening: the no-grant branch is reachable without any signature, because
+  // there is no owner to check one against. It must therefore not mutate.
+  let deleted = false
+  const result = await performRevoke(
+    { entityKey: `0x${"ab".repeat(32)}`, signature: `0x${"cd".repeat(65)}`, timestamp: Math.floor(Date.now() / 1000) },
+    { getGrant: async () => null, deleteShare: async () => { deleted = true } },
+  )
+  assert.equal(result.ok, true, "with no live grant the access has ended, so report ok")
+  assert.ok(!deleted, "an unauthenticated caller must not be able to delete anything")
+  console.log("PASS  the unauthenticated no-grant path reports ended without deleting")
+}
+
 console.log("\nAll checks passed.")
