@@ -618,7 +618,7 @@ function SettingsSection({
       */}
       <ToggleRow
         title="Add a four-digit code"
-        description="They enter it before anything opens, sent to them separately from the link. Nobody can open this without it — not even you, once it's sent."
+        description="Send it separately from the link. Someone with only the link gets five tries, then it locks. Not even you can open it without the code."
         checked={codeEnabled}
         onChange={onCodeEnabled}
       />

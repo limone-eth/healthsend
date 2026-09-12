@@ -137,9 +137,12 @@ check a derived proof, and its lifetime determines whether the holder serves.
 The holder cannot decrypt with the values it sees, and the link alone cannot
 decrypt without the holder.
 
-Today, possession of the link is the recipient's only credential. A separate
-four-digit PIN and a claim-on-first-open lock to one device are designed but
-**not built**.
+By default, possession of the link is the recipient's only credential. A sender
+can add a separate four-digit code: someone holding only the link then gets five
+attempts before the share locks. That is all it does. It does **not** protect
+against someone who holds both the link and the holder's share — four digits is
+10,000 candidates, searchable offline in under a second. A claim-on-first-open
+lock to one device is designed but **not built**.
 
 ## What expiry does and does not do
 

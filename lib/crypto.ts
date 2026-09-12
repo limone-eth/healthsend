@@ -242,11 +242,19 @@ export function deriveLinkShare(linkSecret: Uint8Array): Promise<Uint8Array> {
  * HKDF salt, under a distinct info string from the uncoded share, so this
  * never collides with `deriveLinkShare`'s output for the same fragment.
  *
- * This is the second of the two places the code lives, and it is defence in
- * depth against the holder specifically: a compromised or compelled holder
- * that serves its half to the wrong party still hands over something
- * useless, because this half cannot be derived without the code too. The
- * auth key and the on-chain commitment never take this path — see
+ * This is the second of the two places the code lives. What it buys is
+ * narrow, and review 3 (R3-016) proved the wider claim false:
+ *
+ *   - It DOES mean the link alone is not enough. Someone holding only a
+ *     forwarded or leaked link must get the code from the holder, which
+ *     checks it and locks after five wrong attempts.
+ *   - It does NOT protect against someone holding both the link and the
+ *     holder's share. Four digits is 10,000 candidates: derive each link
+ *     share, XOR with the held share, test the GCM tag. Offline, never
+ *     touching the holder, under a second. No four-digit secret survives an
+ *     offline search, so nothing may claim this one does.
+ *
+ * The auth key and the on-chain commitment never take this path — see
  * `deriveAuthKey` — so a code can never affect what gets written to Arkiv.
  */
 export function deriveLinkShareWithCode(linkSecret: Uint8Array, code: string): Promise<Uint8Array> {
