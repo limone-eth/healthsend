@@ -33,6 +33,8 @@ export type ImportParams = {
   importedAt: string
   /** Blood panels don't carry their own draw date in these fixture formats. */
   takenOn: string
+  /** The importing sender's own account name, if known — passed through to `deidentifyText`. */
+  accountName?: string
 }
 
 export type ImportedBloodPanel = { kind: "blood-panel"; record: BloodPanelRecord }
@@ -44,7 +46,7 @@ const BLOOD_PANEL_HEADER = "marker,value,unit,ref_low,ref_high,flag"
 /** Import one document: strip identifiers first, then read whatever shape is left. */
 export function importDocument(params: ImportParams): ImportResult {
   const rawText = extractDocumentText(params.bytes, params.format)
-  const { cleaned, setAside } = deidentifyText(rawText)
+  const { cleaned, setAside } = deidentifyText(rawText, { accountName: params.accountName })
 
   const markers = parseBloodPanelMarkers(cleaned)
   if (markers) {

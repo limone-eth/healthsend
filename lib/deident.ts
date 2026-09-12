@@ -33,34 +33,113 @@ const LABEL_PATTERNS: LabelPattern[] = [
 const SET_ASIDE_PLACEHOLDER = "[set aside]"
 
 /**
- * Find every labeled identifier in a text and strip it — the label, the
- * value, and any other place the same value string recurs in the document
- * (a name mentioned again in a note body, say). What remains is what a
- * recipient may see; what is returned is what the sender still gets to see.
+ * A value recurring later in free text can be wrapped across a line —
+ * "Jane\nRivera" — so recurrence matches on words rather than the exact
+ * literal, or a PDF's fixed line width would let the name straight through.
  */
-export function deidentifyText(raw: string): { cleaned: string; setAside: SetAsideIdentifiers } {
+function wordPattern(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s+")
+}
+
+function containsWordSequence(text: string, value: string): boolean {
+  return new RegExp(wordPattern(value), "i").test(text)
+}
+
+/** Month names, long and short, for a date written out rather than numbered. */
+const MONTH_NAMES = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+
+/**
+ * The three date shapes a birth date is actually written in: ISO, slashed,
+ * and spelled out. Each alternative tags its year with a distinct named
+ * group so the caller can read off the year without caring which shape hit.
+ */
+const DOB_SHAPE_SOURCE =
+  `\\b(?:(?<isoYear>\\d{4})-\\d{2}-\\d{2}` +
+  `|\\d{1,2}\\/\\d{1,2}\\/(?<slashYear>\\d{4})` +
+  `|\\d{1,2}\\s+(?:${MONTH_NAMES})\\.?\\s+(?<longYear>\\d{4}))\\b`
+
+/** How far into a document "near the top" reaches — a letterhead or a `Re:` line, not a buried table. */
+const DOB_TOP_WINDOW = 500
+
+const MIN_BIRTH_YEAR = 1900
+
+/** A birth date is written years before today; a report or a lab draw date is written close to it. */
+function maxBirthYear(): number {
+  return new Date().getFullYear() - 5
+}
+
+/**
+ * A date-of-birth-shaped value near the top of a document, whether or not a
+ * label precedes it — a letterhead, a `Re:` line, a caption under a name.
+ * The year is what separates it from an ordinary report or draw date: a
+ * birth year reads years in the past, where a report date reads as current.
+ */
+function findUnlabeledDateOfBirth(raw: string): string | undefined {
+  const nearTop = raw.slice(0, DOB_TOP_WINDOW)
+  const pattern = new RegExp(DOB_SHAPE_SOURCE, "gi")
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(nearTop))) {
+    const year = Number(match.groups?.isoYear ?? match.groups?.slashYear ?? match.groups?.longYear)
+    if (year >= MIN_BIRTH_YEAR && year <= maxBirthYear()) return match[0].trim()
+  }
+  return undefined
+}
+
+export type DeidentifyOptions = {
+  /** The importing sender's own account name, if known — scanned for wherever it appears, not only after a label. */
+  accountName?: string
+}
+
+/**
+ * Find every identifier in a text and strip it — the label if there was one,
+ * the value, and any other place the same value string recurs in the
+ * document (a name mentioned again in a note body, say). What remains is
+ * what a recipient may see; what is returned is what the sender still gets
+ * to see.
+ *
+ * Labeled identifiers are read first, because a label is explicit evidence
+ * and the two heuristics below are not: an unlabeled match never overrides
+ * one, it only fills a gap the label pass left empty. Every value that ends
+ * up scrubbed — labeled or not — still gets its recurrences removed, even a
+ * value that loses out to a label match for the single `name` field the
+ * sender sees.
+ */
+export function deidentifyText(raw: string, options: DeidentifyOptions = {}): { cleaned: string; setAside: SetAsideIdentifiers } {
   const setAside: SetAsideIdentifiers = {}
+  const scrubValues = new Set<string>()
   for (const { key, source } of LABEL_PATTERNS) {
     const match = new RegExp(source, "i").exec(raw)
     const value = match?.[1]?.trim()
-    if (value) setAside[key] = value
+    if (value) {
+      setAside[key] = value
+      scrubValues.add(value)
+    }
+  }
+
+  const accountName = options.accountName?.trim()
+  if (accountName && containsWordSequence(raw, accountName)) {
+    setAside.name = setAside.name ?? accountName
+    scrubValues.add(accountName)
+  }
+
+  if (!setAside.dateOfBirth) {
+    const dob = findUnlabeledDateOfBirth(raw)
+    if (dob) {
+      setAside.dateOfBirth = dob
+      scrubValues.add(dob)
+    }
   }
 
   let cleaned = raw
   for (const { source } of LABEL_PATTERNS) {
     cleaned = cleaned.replace(new RegExp(source, "gi"), "")
   }
-  for (const value of Object.values(setAside)) {
-    if (!value) continue
-    // A value recurring later in free text can be wrapped across a line —
-    // "Jane\nRivera" — so the scrub matches on words rather than the exact
-    // literal, or a PDF's fixed line width would let the name straight through.
-    const wordPattern = value
-      .trim()
-      .split(/\s+/)
-      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("\\s+")
-    cleaned = cleaned.replace(new RegExp(wordPattern, "gi"), SET_ASIDE_PLACEHOLDER)
+  for (const value of scrubValues) {
+    cleaned = cleaned.replace(new RegExp(wordPattern(value), "gi"), SET_ASIDE_PLACEHOLDER)
   }
   return { cleaned, setAside }
 }

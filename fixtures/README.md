@@ -20,12 +20,19 @@ the dashboard one at a time.
 
 ## De-identification fixtures
 
-Two more files carry a made-up name, date of birth, address and patient
+Four more files carry a made-up name, date of birth, address and patient
 identifier — placed somewhere a naive import would miss it — so
 `scripts/deident-proof.mjs` (`pnpm verify:deident`) has a real leak to catch,
 not just an absence to describe.
+
+The first two carry a label the matcher reads directly. The last two carry no
+label at all — they are only caught because the name matches the "sender's"
+account name passed into the proof script, and because the date sits near the
+top in a shape a birth date is written in.
 
 | File | Kind | Where the identifier hides |
 |---|---|---|
 | `patient-panel.csv` | csv | A metadata line ahead of the real CSV header, not a data cell. |
 | `patient-summary.pdf` | pdf | Inside a PDF text run, including a name that wraps across a line. |
+| `letterhead-report.txt` | text | A name alone on a letterhead line, no label, matched against the sender's account name. |
+| `referral-letter.txt` | text | A name after `Re:` and an unlabeled date-of-birth-shaped value on the next line. |

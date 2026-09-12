@@ -48,6 +48,30 @@ const FIXTURES = [
       patientId: "552391",
     },
   },
+  {
+    file: "letterhead-report.txt",
+    format: "text",
+    expectIdentifiers: true,
+    // No label anywhere in this file. The name is only findable because it
+    // matches the sender's own account name, passed in as ground truth.
+    accountName: "Jordan Vance",
+    identifiers: {
+      name: "Jordan Vance",
+    },
+  },
+  {
+    file: "referral-letter.txt",
+    format: "text",
+    expectIdentifiers: true,
+    // Two unlabeled shapes at once: a name after "Re:" (still found only via
+    // the account-name match) and a bare date-of-birth-shaped value near the
+    // top that no label precedes.
+    accountName: "Jordan Vance",
+    identifiers: {
+      name: "Jordan Vance",
+      dateOfBirth: "14 March 1988",
+    },
+  },
 ]
 
 const senderKey = crypto.getRandomValues(new Uint8Array(32))
@@ -75,6 +99,7 @@ for (const fixture of FIXTURES) {
     sourceId: `source:${fixture.file}`,
     importedAt: "2026-09-12T09:00:00.000Z",
     takenOn: "2026-09-01",
+    accountName: fixture.accountName,
   })
 
   let recipientBytes
