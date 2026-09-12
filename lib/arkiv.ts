@@ -42,18 +42,41 @@ const KIND_GRANT = "grant"
 
 export type FileKind = "pdf" | "csv" | "text" | "mixed"
 
-/** What we put in the entity payload — opaque to Arkiv, meaningful to us. */
+/**
+ * What we put in the entity payload.
+ *
+ * v2 carries **no key material at all** — only a Swarm reference and a hash
+ * commitment. That is deliberate and it is the fix for the defect described in
+ * the README: entity payloads travel in transaction calldata, which is permanent,
+ * so anything secret written here is published forever. A commitment lets the
+ * holder check a claim without anyone being able to reconstruct the secret
+ * behind it, which is the role Arkiv's own docs describe for an index.
+ *
+ * v1 put the wrapped content key here. Those grants are readable forever; see
+ * `scripts/payload-survives.mjs`.
+ */
 export type GrantPayload = {
-  v: 1
+  v: 2
   /** Swarm content hash of `iv || ciphertext`. */
   ref: string
-  /** Content key, wrapped under a key derived from the link secret. */
+  /** SHA-256 of the auth key, hex. Public by design, and reveals nothing. */
+  authCommitment: string
+}
+
+/** The superseded shape, still readable so old links degrade honestly. */
+export type LegacyGrantPayload = {
+  v: 1
+  ref: string
   wrap: { iv: string; ct: string }
 }
 
 export type Grant = {
   entityKey: string
-  payload: GrantPayload
+  payload: GrantPayload | LegacyGrantPayload
+  /** Convenience accessor; empty for v1 grants, which have no commitment. */
+  authCommitment: string
+  /** True when this grant predates the split-key design. */
+  legacy: boolean
   fileKind: FileKind
   createdAt: number
   /** The block the grant dies at. This is the authority — see `createGrant`. */
@@ -235,13 +258,16 @@ function toGrant(entity: any, head: bigint): Grant | null {
   try {
     const attributes = normaliseAttributes(entity.attributes)
     const expiresBlock = Number(attributes.expires_block ?? 0)
-    const payload: GrantPayload =
+    const payload: GrantPayload | LegacyGrantPayload =
       typeof entity.toJson === "function" ? entity.toJson() : JSON.parse(String(entity.payload))
-    if (!payload?.ref || !payload?.wrap) return null
+    if (!payload?.ref) return null
 
+    const legacy = payload.v !== 2
     return {
       entityKey: entity.key ?? entity.entityKey,
       payload,
+      authCommitment: legacy ? "" : ((payload as GrantPayload).authCommitment ?? ""),
+      legacy,
       fileKind: (attributes.filetype as FileKind) ?? "text",
       createdAt: Number(attributes.created_at ?? 0),
       expiresBlock,

@@ -165,6 +165,87 @@ Expiry governs *future retrieval*, not *past disclosure*. A recipient who
 screenshots the page during the window keeps the screenshot. No system without a
 live gatekeeper does better, and we chose not to have one.
 
+## Why Swarm and Arkiv, and not a database
+
+The fair challenge to any project like this is: *you could build this with Postgres
+and S3 in an afternoon.* True — and the difference is whether the guarantee rests
+on our **behaviour** or on the **structure**. "We promise to stop serving" is what
+the incumbent already offers.
+
+Three properties decide whether the product is honest, and a gatekeeper needs
+**both the right to decide and the means to act**. Split those and nobody is one.
+
+- **Custody** — we never hold the documents.
+- **Authority** — we do not decide whether access is still valid, and anyone can
+  check who does.
+- **Expiry** — access can actually end.
+
+Every combination of the three components, scored the same way:
+
+| # | Architecture | Custody | Authority | Expiry | What it really is |
+|---|---|:--:|:--:|:--:|---|
+| 1 | Postgres + S3 | ❌ | ❌ | ✅ | The incumbent. It works, and it is what we exist to replace. |
+| 2 | Swarm only | ✅ | — | ❌ | Permanent sharing. The link is the key, forever. |
+| 3 | Arkiv + S3 | ❌ | ✅ | ✅ | Expiry works — because *we* delete the object. Good governance over data we should not hold. |
+| 4 | KV only | ❌ | ❌ | ✅ | Row 1 with extra steps. |
+| 5 | **Swarm + Arkiv** — *what ships today* | ✅ | ✅ | ❌ | Best custody, no working expiry. See the section above. |
+| 6 | Swarm + KV | ✅ | ❌ | ✅ | It expires — on **our** timer. A gatekeeper with good manners. |
+| 7 | Arkiv + KV + S3 | ❌ | ✅ | ✅ | Governance right, custody wrong. |
+| 8 | **Swarm + Arkiv + KV** | ✅ | ✅ | ✅ | The only row with all three. |
+
+### Why Swarm rather than S3
+
+- **We hold zero copies of anything.** With S3 we would be the custodian of an
+  encrypted health-document corpus — breachable, subpoenable, acquirable.
+  Compromising HealthSend entirely does not reach the documents.
+- **The archive outlives us.** Shut the project down and the documents are still
+  retrievable by hash, still the sender's. On S3 they die when the bill stops.
+  That is "users own their data" as a fact rather than a slogan.
+- **Reads do not touch our infrastructure** — a recipient fetches ciphertext from
+  a public gateway. Our availability surface stays as small as it can be.
+
+### Why Arkiv rather than a table with an `expires_at` column
+
+This is the load-bearing one, and row 6 is the honest way to see it: Swarm plus a
+KV *does* expire. The difference is **who answers the question**.
+
+With an `expires_at` column, "has this expired?" is a question **we** answer. We
+can extend it, be compelled to extend it, or answer wrongly through a bug, and
+nobody outside can tell. With Arkiv:
+
+- **Expiry is publicly verifiable.** The holder queries a public chain — and so
+  can the recipient, the sender, or a court.
+- **We cannot extend access.** Grants are `ownedBy` the sender's key, derived from
+  their Swarm ID. We cannot forge, backdate, or quietly un-expire one.
+- **The sender audits their own history** without trusting an API of ours.
+- **Expiry is the trigger, not a status field.** In row 8 the holder refuses
+  because Arkiv says the grant is gone, which is what makes a key unreconstructable.
+
+So the KV ends up with **capability but no authority**; Arkiv has **authority but
+no capability**. That separation is the whole argument, and a single database
+cannot express it — because it would be *our* database.
+
+### The cost, stated plainly
+
+Row 8 buys expiry with **fragility**. If the KV is unreachable, live sends stop
+working early — the one failure rows 2 and 5 never have. The sender loses nothing
+(they hold the master key and the plaintext, and can re-share), but a recipient's
+valid link can break, so that state must read *"temporarily unavailable"* and
+never *"expired"*.
+
+That is not a defect to engineer away. **If nothing can break access, nothing can
+end it** — they are the same mechanism. Rows 2 and 5 cannot be shut down, which is
+exactly why they cannot expire.
+
+Deletion is also only as good as the provider's: a TTL removes the key, and we do
+not claim the bytes are provably gone from every disk. It is categorically better
+than a key published to a public chain forever, and that is the honest comparison.
+
+> **Status.** Row 5 is what is deployed and demonstrable today. Row 8 is the
+> design this analysis produced, and the README will say so plainly until the
+> holder is built — we would rather ship row 5 with an accurate description than
+> row 8 in a diagram.
+
 ## Running it
 
 ```bash

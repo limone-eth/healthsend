@@ -15,6 +15,7 @@
   "dependencies": {
     "@arkiv-network/sdk": "0.8.1",
     "@snaha/swarm-id": "0.4.1",
+    "@upstash/redis": "^1.38.4",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",

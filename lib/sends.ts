@@ -12,7 +12,9 @@ import {
   generateLinkSecret,
   seal,
   open,
-  wrapContentKey,
+  splitContentKey,
+  joinContentKey,
+  deriveAuthKey,
   unwrapContentKey,
   blindAttribute,
   toBase64Url,
@@ -94,9 +96,12 @@ export async function createSend(params: {
   progress("Uploading to Swarm")
   const { reference } = await uploadEncryptedBlob(blob)
 
-  progress("Wrapping key")
+  progress("Splitting key")
+  // The content key is split, never wrapped-and-published. One half is derived
+  // from the fragment; the other goes to a holder that can delete it. Nothing
+  // secret is written to Arkiv, so there is nothing for calldata to preserve.
   const linkSecret = generateLinkSecret()
-  const wrapped = await wrapContentKey(contentKey, linkSecret, reference)
+  const { heldShare, commitment } = await splitContentKey(contentKey, linkSecret)
 
   // Topping up the user's own key is bookkeeping, not a step they took. It is
   // deliberately not narrated: the previous stage label stays on screen.
@@ -106,17 +111,36 @@ export async function createSend(params: {
   const fileKind = classifyBundle(params.files)
   const grant = await createGrant({
     privateKey: identity.privateKey,
-    payload: {
-      v: 1,
-      ref: reference,
-      wrap: { iv: toBase64Url(wrapped.iv), ct: toBase64Url(wrapped.ciphertext) },
-    },
+    payload: { v: 2, ref: reference, authCommitment: commitment },
     fileKind,
     recipientBlind: await blindAttribute(identity.blindKey, params.recipientLabel),
     labelBlind: await blindAttribute(identity.blindKey, params.files.map((f) => f.name).join("|")),
     fileCount: params.files.length,
     ttlSeconds: params.ttlSeconds,
   })
+
+  // The share goes to the holder only once the grant exists, so the holder can
+  // always resolve an entity key to a live grant. If this fails the send is
+  // unreadable by anyone — including us — which is the correct failure.
+  progress("Handing the key share to the holder")
+  const handoff = await fetch("/api/holder/share", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      entityKey: grant.entityKey,
+      share: toBase64Url(heldShare),
+      commitment,
+      ttlSeconds: params.ttlSeconds,
+    }),
+  })
+  if (!handoff.ok) {
+    const detail = await handoff.json().catch(() => ({}))
+    throw new Error(
+      `The grant was written but the key share was not stored, so this send cannot be opened: ${
+        detail?.error ?? handoff.status
+      }`,
+    )
+  }
 
   const url = `${window.location.origin}/s/${grant.entityKey}#${toBase64Url(linkSecret)}`
   progress("Done")
@@ -133,6 +157,8 @@ export type OpenedSend = {
 export type OpenFailure =
   | { status: "expired" }
   | { status: "no-key" }
+  /** The holder is unreachable. Distinct from expiry, and must stay distinct. */
+  | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
 
 /**
@@ -172,14 +198,41 @@ export async function openSend(
     }
 
     const linkSecret = fromBase64Url(linkSecretB64)
-    const contentKey = await unwrapContentKey(
-      {
-        iv: fromBase64Url(grant.payload.wrap.iv),
-        ciphertext: fromBase64Url(grant.payload.wrap.ct),
-      },
-      linkSecret,
-      grant.payload.ref,
-    )
+
+    let contentKey: Uint8Array
+    if (grant.legacy) {
+      // A v1 grant published its wrapped key on-chain. It still opens, and it
+      // still cannot expire — which is exactly why the format changed.
+      const wrap = (grant.payload as { wrap: { iv: string; ct: string } }).wrap
+      contentKey = await unwrapContentKey(
+        { iv: fromBase64Url(wrap.iv), ciphertext: fromBase64Url(wrap.ct) },
+        linkSecret,
+        grant.payload.ref,
+      )
+    } else {
+      // Prove we hold the link, and ask the holder for the other half. Without
+      // it there is no key to reconstruct — this is the expiry.
+      const authKey = await deriveAuthKey(linkSecret)
+      const response = await fetch("/api/holder/unlock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entityKey, authKey: toBase64Url(authKey) }),
+      })
+
+      if (response.status === 410) return { status: "expired" }
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}))
+        // A holder we cannot reach is not an expiry. Saying so would tell the
+        // reader their access ended when we simply do not know.
+        if (detail?.retryable || response.status >= 500) {
+          return { status: "unavailable", message: detail?.error ?? `HTTP ${response.status}` }
+        }
+        return { status: "error", message: detail?.error ?? `HTTP ${response.status}` }
+      }
+
+      const { share } = (await response.json()) as { share: string }
+      contentKey = await joinContentKey(fromBase64Url(share), linkSecret)
+    }
 
     const blob = await fetchBlobFromGateway(grant.payload.ref)
     const envelope = await open(contentKey, {

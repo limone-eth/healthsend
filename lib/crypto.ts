@@ -28,6 +28,8 @@
 const KEY_BYTES = 32
 const IV_BYTES = 12
 const HKDF_INFO = "healthsend/grant/v1"
+const INFO_SHARE = "healthsend/share/v1"
+const INFO_AUTH = "healthsend/auth/v1"
 
 export function randomBytes(length: number): Uint8Array {
   const out = new Uint8Array(length)
@@ -157,4 +159,90 @@ export async function blindAttribute(secret: Uint8Array, value: string): Promise
   )
   const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value) as BufferSource)
   return toHex(new Uint8Array(mac).slice(0, 16))
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * Split keys — the design that actually expires
+ *
+ * The scheme above publishes the wrapped content key, and a public chain never
+ * forgets, so it cannot expire. This one never publishes key material at all.
+ *
+ *   contentKey = shareLink XOR shareHeld
+ *
+ * `shareLink` is derived from the link secret in the URL fragment. `shareHeld`
+ * is given to a holder that deletes it, and hands it back only while Arkiv says
+ * the grant is still live. Neither half is anywhere public, so there is nothing
+ * for calldata to preserve.
+ *
+ * The Arkiv entity carries a *commitment* — a hash of the auth key — which is
+ * exactly the role Arkiv's own documentation describes for an index: the thing
+ * that lets you check a claim without storing the secret behind it.
+ * ------------------------------------------------------------------------- */
+
+async function deriveFromLinkSecret(linkSecret: Uint8Array, info: string): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey("raw", linkSecret as BufferSource, "HKDF", false, [
+    "deriveBits",
+  ])
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new Uint8Array(0) as BufferSource,
+      info: new TextEncoder().encode(info) as BufferSource,
+    },
+    material,
+    KEY_BYTES * 8,
+  )
+  return new Uint8Array(bits)
+}
+
+function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
+  if (a.length !== b.length) throw new Error("Shares must be the same length")
+  const out = new Uint8Array(a.length)
+  for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i]
+  return out
+}
+
+/** The recipient's half, derived from the fragment. Never transmitted. */
+export function deriveLinkShare(linkSecret: Uint8Array): Promise<Uint8Array> {
+  return deriveFromLinkSecret(linkSecret, INFO_SHARE)
+}
+
+/**
+ * The key that proves the caller holds the link.
+ *
+ * Sent to the holder, which compares its hash against the commitment in the
+ * Arkiv entity. Deliberately a *different* derivation from the share: the holder
+ * learns this value and must still be unable to decrypt anything.
+ */
+export function deriveAuthKey(linkSecret: Uint8Array): Promise<Uint8Array> {
+  return deriveFromLinkSecret(linkSecret, INFO_AUTH)
+}
+
+/** What goes in the Arkiv entity. Public, permanent, and reveals nothing. */
+export async function authCommitment(authKey: Uint8Array): Promise<string> {
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", authKey as BufferSource)))
+}
+
+/** Split a content key so that neither half is ever published. */
+export async function splitContentKey(
+  contentKey: Uint8Array,
+  linkSecret: Uint8Array,
+): Promise<{ heldShare: Uint8Array; authKey: Uint8Array; commitment: string }> {
+  const linkShare = await deriveLinkShare(linkSecret)
+  const authKey = await deriveAuthKey(linkSecret)
+  return {
+    heldShare: xor(contentKey, linkShare),
+    authKey,
+    commitment: await authCommitment(authKey),
+  }
+}
+
+/** Put it back together. Needs the fragment AND the holder's half. */
+export async function joinContentKey(
+  heldShare: Uint8Array,
+  linkSecret: Uint8Array,
+): Promise<Uint8Array> {
+  return xor(heldShare, await deriveLinkShare(linkSecret))
 }

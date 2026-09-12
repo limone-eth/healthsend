@@ -12,6 +12,7 @@ import assert from "node:assert/strict"
 const {
   generateContentKey, generateLinkSecret, seal, open,
   wrapContentKey, unwrapContentKey, blindAttribute, toBase64Url, fromBase64Url,
+  splitContentKey, joinContentKey, deriveAuthKey, authCommitment,
 } = await import("../lib/crypto.ts")
 const { packEnvelope, unpackEnvelope } = await import("../lib/envelope.ts")
 
@@ -125,3 +126,36 @@ assert.ok(!a.includes("Rossi"))
 console.log("PASS  blinded attribute is stable under one key, opaque across keys")
 
 console.log("\nAll checks passed.")
+
+
+// --- the split-key design: neither half is ever published --------------------
+{
+  const cek = generateContentKey()
+  const secret = generateLinkSecret()
+  const { heldShare, authKey, commitment } = await splitContentKey(cek, secret)
+
+  // Both halves are required, and they reconstruct exactly.
+  const rejoined = await joinContentKey(heldShare, secret)
+  assert.deepEqual(Buffer.from(rejoined), Buffer.from(cek), "shares must rebuild the key")
+  console.log("PASS  split key rejoins from fragment + holder share")
+
+  // The held share alone is useless — this is what the holder stores.
+  assert.notDeepEqual(Buffer.from(heldShare), Buffer.from(cek))
+  const wrongSecret = generateLinkSecret()
+  const wrong = await joinContentKey(heldShare, wrongSecret)
+  assert.notDeepEqual(Buffer.from(wrong), Buffer.from(cek), "a wrong fragment must not rebuild it")
+  console.log("PASS  the holder's share alone rebuilds nothing")
+
+  // The auth key proves the link without being the decryption half. The holder
+  // learns it, so it must not help the holder decrypt.
+  assert.notDeepEqual(Buffer.from(authKey), Buffer.from(heldShare))
+  const holderView = await joinContentKey(heldShare, authKey)
+  assert.notDeepEqual(Buffer.from(holderView), Buffer.from(cek), "auth key must not unlock anything")
+  console.log("PASS  a holder knowing share + auth key still cannot rebuild the key")
+
+  // The commitment is what goes on-chain. It must reveal nothing.
+  assert.equal(commitment, await authCommitment(authKey))
+  assert.equal(commitment.length, 64)
+  assert.ok(!commitment.includes(Buffer.from(authKey).toString("hex").slice(0, 16)))
+  console.log("PASS  the on-chain commitment is a hash, and carries no key material")
+}

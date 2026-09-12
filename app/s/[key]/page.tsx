@@ -19,6 +19,7 @@ type State =
   | { status: "ok"; send: OpenedSend }
   | { status: "expired" }
   | { status: "no-key" }
+  | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
 
 export default function SharePage({ params }: { params: Promise<{ key: string }> }) {
@@ -45,6 +46,7 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
         <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
       )}
       {state.status === "expired" && <Expired />}
+      {state.status === "unavailable" && <Unavailable message={state.message} />}
       {state.status === "no-key" && <NoKey />}
       {state.status === "error" && <Failed message={state.message} />}
     </main>
@@ -276,6 +278,32 @@ function Expired() {
         Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Expiry ends
         access through this app. It is not erasure.
       </p>
+    </Card>
+  )
+}
+
+/**
+ * The holder could not be reached.
+ *
+ * This must never be dressed up as expiry. Expiry is a fact about the sender's
+ * intention; this is a fact about our infrastructure, and the difference is the
+ * price we pay for being able to expire anything at all. Telling someone their
+ * access ended when it did not is the same class of lie as telling them it is
+ * gone when it is not.
+ */
+function Unavailable({ message }: { message: string }) {
+  return (
+    <Card>
+      <h1 className="text-lg font-semibold">Temporarily unavailable</h1>
+      <p className="mt-2 text-sm text-muted">
+        This link has <strong>not</strong> expired. The service that holds half of the decryption
+        key could not be reached just now, so the key cannot be put back together. Try again in a
+        moment.
+      </p>
+      <p className="mt-3 text-xs text-muted">
+        If it keeps failing, ask the sender — they still hold the document and can re-share it.
+      </p>
+      <p className="mt-3 font-mono text-xs text-muted">{message}</p>
     </Card>
   )
 }
