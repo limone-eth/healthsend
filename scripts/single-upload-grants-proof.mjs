@@ -114,7 +114,7 @@ assert.equal(uploads, 1, "packing and encrypting the asset must upload exactly o
 assert.ok(asset.contentKey instanceof Uint8Array && asset.contentKey.length === 32)
 assert.equal(typeof asset.ref, "string")
 
-const deps = { getIdentity, ensureFunded, getCurrentBlock, createThresholdGrant, createTacoKeyReleaseProvider: fakeCreateTacoKeyReleaseProvider }
+const deps = { getIdentity, ensureFunded, getCurrentBlock, createThresholdGrant, selectProtectingProvider: fakeCreateTacoKeyReleaseProvider }
 
 const a = await createThresholdSend(asset, { recipientLabel: "Doctor A", ttlSeconds: 30 }, deps)
 const b = await createThresholdSend(asset, { recipientLabel: "Doctor B", ttlSeconds: 300 }, deps)

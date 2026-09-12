@@ -53,6 +53,7 @@ const {
   hashActionCid,
   __resetChipotleAdapterStateForTests,
 } = await import("../lib/key-release/chipotle.ts")
+const { CHIPOTLE_ACTION_SOURCE } = await import("../lib/key-release/chipotle-action-source.ts")
 
 const CONFIG = {
   enabled: true,
@@ -107,11 +108,24 @@ async function computeCommitment(grantId, owner, expiresBlockStr, ref) {
  * defaults to just the configured action, hashed the same way `list_actions`
  * really does; `pkpInGroup` defaults to true.
  */
+/**
+ * Lit's exact literal body for a `POST /lit_action` whose code the enclave's
+ * cache does not currently hold — see `chipotle.ts`'s `CACHE_MISS_MESSAGE`
+ * and the module doc's amendments paragraph.
+ */
+const CACHE_MISS_ERROR_MESSAGE =
+  "Chipotle /lit_action failed: HTTP 400 No cached code found. Submit the action code at least once before referencing it by IPFS ID."
+
 function makeFakeChipotleClient(overrides = {}) {
-  const calls = { getGroupAuthorization: 0, invokeAction: [] }
+  const calls = { getGroupAuthorization: 0, invokeAction: [], getActionIpfsId: 0 }
   const permittedActionCids = overrides.permittedActionCids ?? [CONFIG.actionCid]
   const pkpInGroup = overrides.pkpInGroup ?? true
   const arkivLedger = overrides.arkivLedger ?? new Map()
+  // How many leading `invokeAction` calls throw the exact cache-miss error
+  // before behaving normally — simulates Lit's in-memory action cache
+  // missing an `ipfs_id`-only call.
+  let cacheMissesRemaining = overrides.cacheMisses ?? 0
+  const bundledActionCid = overrides.bundledActionCid ?? CONFIG.actionCid
 
   const client = {
     async ping() {},
@@ -123,11 +137,20 @@ function makeFakeChipotleClient(overrides = {}) {
         pkpInGroup,
       }
     },
-    async invokeAction({ actionCid, usageApiKey, jsParams }) {
-      calls.invokeAction.push(jsParams)
+    async invokeAction({ actionCid, usageApiKey, jsParams, code }) {
+      calls.invokeAction.push({ jsParams, code })
       assert.equal(actionCid, CONFIG.actionCid)
       assert.equal(usageApiKey, CONFIG.usageApiKey)
       assert.equal(jsParams.pkpId, CONFIG.pkpId)
+
+      if (overrides.otherFourHundred && code === undefined) {
+        throw new Error("Chipotle /lit_action failed: HTTP 400 js_params failed schema validation")
+      }
+      if (cacheMissesRemaining > 0 && code === undefined) {
+        cacheMissesRemaining--
+        throw new Error(CACHE_MISS_ERROR_MESSAGE)
+      }
+
       if (overrides.invokeImpl) return overrides.invokeImpl(jsParams)
 
       // Mirrors chipotle-action.js's own commitment check.
@@ -149,6 +172,11 @@ function makeFakeChipotleClient(overrides = {}) {
       const inputString = jsParams.mode === "protect" ? jsParams.payload : jsParams.ciphertext
       const outputString = toBase64(xorTransform(fromBase64(inputString)))
       return { authorized: true, result: outputString }
+    },
+    async getActionIpfsId(code) {
+      calls.getActionIpfsId++
+      assert.equal(typeof code, "string")
+      return bundledActionCid
     },
   }
   return { client, calls, arkivLedger }
@@ -338,6 +366,68 @@ function makeFakeChipotleClient(overrides = {}) {
   assert.equal(calls.invokeAction.length, 0)
   assert.equal(calls.getGroupAuthorization, 0)
   console.log("PASS  a disabled provider refuses both calls without any network activity")
+}
+
+// --- docs/stories/H-69.md's amendments: the cache-miss retry -------------
+// RED before `invokeActionWithCacheMissRetry` existed: `protect()` would
+// have thrown the raw cache-miss error as a plain "invoke" failure instead
+// of ever retrying.
+{
+  __resetChipotleAdapterStateForTests()
+  const { client, calls, arkivLedger } = makeFakeChipotleClient({ cacheMisses: 1 })
+  arkivLedger.set(bindingA.grantId.toLowerCase(), { owner: bindingA.owner, expiresBlock: bindingA.expiresBlock.toString() })
+  const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
+
+  const heldShare = new Uint8Array(32).fill(5)
+  const protectedShare = await provider.protect(heldShare, bindingA)
+  const released = await provider.release(protectedShare, bindingA)
+  assert.deepEqual(released, heldShare, "a cache-miss retry must still complete the operation correctly")
+
+  // protect(): 1 miss + 1 retry = 2 calls. release(): the fake client's one
+  // configured miss was already consumed by protect(), so this is a single
+  // ordinary call = 3 calls total.
+  assert.equal(calls.invokeAction.length, 3, "each cache miss must retry exactly once, not loop or give up")
+  assert.equal(calls.invokeAction[0].code, undefined, "the first attempt must run by ipfs_id, never by code")
+  assert.equal(calls.invokeAction[1].code, CHIPOTLE_ACTION_SOURCE, "the retry must submit the bundled action source as code")
+  assert.equal(calls.getActionIpfsId, 1, "the bundled source's CID is checked once, then cached for the rest of the process")
+  console.log("PASS  a cache miss retries with the bundled action source exactly once, and still completes")
+}
+
+// --- any other 400 must not retry ------------------------------------------
+{
+  __resetChipotleAdapterStateForTests()
+  const { client, calls, arkivLedger } = makeFakeChipotleClient({ otherFourHundred: true })
+  arkivLedger.set(bindingA.grantId.toLowerCase(), { owner: bindingA.owner, expiresBlock: bindingA.expiresBlock.toString() })
+  const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
+
+  await assert.rejects(
+    () => provider.protect(new Uint8Array(32), bindingA),
+    (error) => error instanceof ChipotleUnavailableError && error.stage === "invoke",
+  )
+  assert.equal(calls.invokeAction.length, 1, "a non-cache-miss 400 must never be retried")
+  assert.equal(calls.getActionIpfsId, 0, "the bundled source's CID must never be checked for a non-cache-miss failure")
+  console.log("PASS  a 400 that is not the exact cache-miss response is never retried")
+}
+
+// --- a bundled-source CID mismatch refuses, never submits different code ---
+{
+  __resetChipotleAdapterStateForTests()
+  const { client, calls, arkivLedger } = makeFakeChipotleClient({ cacheMisses: 1, bundledActionCid: "bafyreisomeotheractioncid" })
+  arkivLedger.set(bindingA.grantId.toLowerCase(), { owner: bindingA.owner, expiresBlock: bindingA.expiresBlock.toString() })
+  const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
+
+  let caught
+  try {
+    await provider.protect(new Uint8Array(32), bindingA)
+    assert.fail("protect() must refuse when the bundled source's CID does not match the configured action CID")
+  } catch (error) {
+    caught = error
+  }
+  assert.ok(caught instanceof ChipotleUnavailableError)
+  assert.equal(caught.stage, "action-source")
+  assert.match(caught.message, /not the configured/)
+  assert.equal(calls.invokeAction.length, 1, "a CID mismatch must refuse before ever submitting code")
+  console.log("PASS  a bundled action-source CID mismatch refuses rather than submitting unverified code")
 }
 
 // --- nothing persists: one grant's held share never leaks into another's ---

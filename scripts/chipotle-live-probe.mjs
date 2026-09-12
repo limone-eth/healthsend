@@ -50,7 +50,8 @@ if (process.env.RUN_CHIPOTLE_LIVE_PROBE !== "1") {
   process.exit(2)
 }
 
-const { readChipotleConfig, createHttpChipotleClient, CHIPOTLE_API_BASE } = await import("../lib/key-release/chipotle.ts")
+const { readChipotleConfig, createHttpChipotleClient, CHIPOTLE_API_BASE, invokeActionWithCacheMissRetry, ChipotleUnavailableError } =
+  await import("../lib/key-release/chipotle.ts")
 const { encodeGrantBinding, toHex } = await import("../lib/crypto.ts")
 
 console.log(`Chipotle adapter live probe — ${new Date().toISOString()}`)
@@ -162,19 +163,20 @@ const commitment = toHex(
 const fabricatedCiphertext = toHex(crypto.getRandomValues(new Uint8Array(32)))
 
 try {
-  const response = await client.invokeAction({
-    actionCid: config.actionCid,
-    usageApiKey: config.usageApiKey,
-    jsParams: {
-      mode: "release",
-      pkpId: config.pkpId,
-      ciphertext: btoa(fabricatedCiphertext),
-      commitment,
-      grantId: fabricatedBinding.grantId,
-      owner: fabricatedBinding.owner,
-      expiresBlock: fabricatedBinding.expiresBlock.toString(10),
-      ref: fabricatedBinding.ref,
-    },
+  // Not a bare `client.invokeAction` call: the live account's action cache
+  // is in memory and can be cold (a fresh action, or one evicted by a
+  // restart) — see docs/stories/H-69.md's amendments. This is the same
+  // cache-miss-tolerant path a real `protect`/`release` call takes, so this
+  // probe proves the adapter's actual behavior, not a narrower stand-in for it.
+  const response = await invokeActionWithCacheMissRetry(client, config, {
+    mode: "release",
+    pkpId: config.pkpId,
+    ciphertext: btoa(fabricatedCiphertext),
+    commitment,
+    grantId: fabricatedBinding.grantId,
+    owner: fabricatedBinding.owner,
+    expiresBlock: fabricatedBinding.expiresBlock.toString(10),
+    ref: fabricatedBinding.ref,
   })
   if (response.authorized) {
     failed(
@@ -184,11 +186,15 @@ try {
   }
   console.log(`stage 5/5  release correctly refused for a nonexistent Arkiv entity — ${response.error ?? "authorized: false"}`)
 } catch (error) {
+  // A CID mismatch between this build's bundled `chipotle-action.js` and the
+  // registered action is its own named stage, distinct from an ordinary
+  // invoke failure — see the module doc's amendments paragraph.
+  const stage = error instanceof ChipotleUnavailableError ? error.stage : "invoke"
   const message = error instanceof Error ? error.message : String(error)
   if (NETWORK_FAILURE_PATTERN.test(message)) {
-    blocked("invoke", error)
+    blocked(stage, error)
   }
-  failed("invoke", error)
+  failed(stage, error)
 }
 
 console.log("\nLIVE: the endpoint resolved and answered, the group permits exactly the one configured action and")

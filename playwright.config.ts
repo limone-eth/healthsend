@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test"
 import { checkoutId, isOwnedByCheckout, resolveServerTarget } from "./lib/e2e-server-select.ts"
+import { CHIPOTLE_TEST_ENV } from "./e2e/helpers/chipotle-test-config.ts"
 
 /**
  * The recipient is the thing worth testing in a browser, and the thing worth
@@ -67,6 +68,14 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer,
     timeout: 60_000,
+    // H-69: fake, non-secret Chipotle config so `archive-send-chipotle-
+    // recipient.spec.ts`'s v3 grant releases against this suite's own
+    // mocked Chipotle endpoint — never Lit's real service, and merged into
+    // this spawned `next dev` process's env only, not the wider shell (see
+    // `./e2e/helpers/chipotle-test-config.ts`). Releasing is chosen by the
+    // grant's own descriptor, not this flag (`lib/key-release/index.ts`), so
+    // no other spec is affected by Chipotle reading as "enabled" here.
+    env: CHIPOTLE_TEST_ENV,
   },
   projects: [
     { name: "offline", grepInvert: /@live/ },

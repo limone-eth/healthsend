@@ -58,13 +58,31 @@
  * group. The account's master key is a different thing entirely — it can
  * register actions and mint or revoke usage keys, and never appears in this
  * file, in any `NEXT_PUBLIC_*` variable, or in a commit. See `.env.example`.
+ *
+ * docs/stories/H-69.md's amendments, observed against the live account
+ * 2026-09-12: Lit's `POST /lit_action` action cache is in memory and can
+ * miss — a `code`-registered CID that was never invoked yet, or one evicted
+ * by a server restart, answers `HTTP 400 No cached code found. Submit the
+ * action code at least once before referencing it by IPFS ID.` rather than
+ * running. `invokeActionWithCacheMissRetry` retries **exactly once**, and
+ * **only** on that exact response, resubmitting with `code` set to
+ * `chipotle-action-source.ts`'s bundled copy of `chipotle-action.js` — never
+ * on any other 400. Lit computes the CID of whatever `code` is submitted and
+ * refuses to run it unless that CID is the group's one permitted action, so
+ * this retry cannot execute anything but the already-registered action; this
+ * adapter still checks its own bundled copy against
+ * `NEXT_PUBLIC_CHIPOTLE_ACTION_CID` first (`ensureBundledActionSourceMatches`,
+ * via `POST /get_lit_action_ipfs_id`) and refuses rather than submit code it
+ * cannot confirm is the same, because a mismatch there means this build's copy
+ * of the action has drifted from what is actually registered.
  */
 
 import { keccak256, stringToBytes } from "viem"
 import { encodeGrantBinding, toHex } from "../crypto"
-import type { GrantBinding, KeyReleaseProvider } from "./types"
+import { CHIPOTLE_ACTION_SOURCE } from "./chipotle-action-source"
+import type { GrantBinding, KeyReleaseProvider, ProtectedKeyShare } from "./types"
 
-export type ChipotleStage = "credentials" | "reachable" | "single-action" | "invoke"
+export type ChipotleStage = "credentials" | "reachable" | "single-action" | "action-source" | "invoke"
 
 /**
  * Every non-success outcome of this provider, named after the stage that
@@ -136,7 +154,21 @@ export type ChipotleClient = {
     actionCid: string
     usageApiKey: string
     jsParams: Record<string, unknown>
+    /**
+     * Set only for the cache-miss retry (see the module doc's amendments
+     * paragraph) — everywhere else this action runs by `actionCid` alone, as
+     * an `ipfs_id`, never by submitting code.
+     */
+    code?: string
   }) => Promise<ChipotleActionResponse>
+  /**
+   * `POST /get_lit_action_ipfs_id` — the CID Lit computes for a given source
+   * string. Used only to confirm the bundled retry source
+   * (`chipotle-action-source.ts`) is the same code registered under
+   * `NEXT_PUBLIC_CHIPOTLE_ACTION_CID`, before ever submitting it — see
+   * `ensureBundledActionSourceMatches`.
+   */
+  getActionIpfsId: (code: string) => Promise<string>
 }
 
 export type ChipotleConfig = {
@@ -298,9 +330,100 @@ async function ensureSingleAuthorizedAction(client: ChipotleClient, config: Chip
   return promise
 }
 
+/**
+ * Lit's own literal response body for a `POST /lit_action` submitted by
+ * `ipfs_id` whose code the enclave's in-memory cache does not currently hold
+ * — observed against the live account 2026-09-12, see the module doc's
+ * amendments paragraph. This is the ONLY 400 this adapter ever retries; any
+ * other 400 (a malformed request, a genuine refusal surfaced as an error
+ * string, and so on) is not a cache miss and must not be treated as one.
+ */
+const CACHE_MISS_MESSAGE =
+  "No cached code found. Submit the action code at least once before referencing it by IPFS ID."
+
+function isCacheMissError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("HTTP 400") && error.message.includes(CACHE_MISS_MESSAGE)
+}
+
+/**
+ * One promise per configured `actionCid`, shared across calls — the CID Lit
+ * computes for a fixed source string never changes, so this needs checking
+ * once per process, not once per retry. Cleared by
+ * `__resetChipotleAdapterStateForTests`, same as `singleActionCache`.
+ */
+let bundledActionSourceCache = new Map<string, Promise<void>>()
+
+/**
+ * Before ever submitting `chipotle-action-source.ts`'s bundled copy as a
+ * cache-miss retry's `code`, confirm Lit would compute the same CID for it
+ * that this build is configured to trust — refusing rather than submitting
+ * code that might not be the one actually registered. See the module doc's
+ * amendments paragraph.
+ */
+async function ensureBundledActionSourceMatches(client: ChipotleClient, config: ChipotleConfig): Promise<void> {
+  let promise = bundledActionSourceCache.get(config.actionCid)
+  if (!promise) {
+    promise = (async () => {
+      let computedCid: string
+      try {
+        computedCid = await client.getActionIpfsId(CHIPOTLE_ACTION_SOURCE)
+      } catch (error) {
+        throw new ChipotleUnavailableError("action-source", describeError(error), { cause: error })
+      }
+      if (computedCid !== config.actionCid) {
+        throw new ChipotleUnavailableError(
+          "action-source",
+          `The bundled chipotle-action.js source computes to CID ${computedCid}, not the configured ` +
+            `NEXT_PUBLIC_CHIPOTLE_ACTION_CID (${config.actionCid}) — refusing to submit code that may not be ` +
+            "the one actually registered",
+        )
+      }
+    })().catch((error: unknown) => {
+      bundledActionSourceCache.delete(config.actionCid)
+      throw error
+    })
+    bundledActionSourceCache.set(config.actionCid, promise)
+  }
+  return promise
+}
+
+/**
+ * Invoke the action by `ipfs_id`, and on that one exact cache-miss response —
+ * never any other failure — retry exactly once with `code` set to the
+ * bundled action source, after confirming that source's CID actually matches
+ * what is configured. See the module doc's amendments paragraph.
+ *
+ * Exported so `scripts/chipotle-live-probe.mjs` exercises the same retry a
+ * real `protect`/`release` call would, rather than a second, narrower copy of
+ * it — a cold cache on the live account is exactly the case that probe's
+ * stage 5 is most likely to hit first.
+ */
+export async function invokeActionWithCacheMissRetry(
+  client: ChipotleClient,
+  config: ChipotleConfig,
+  jsParams: Record<string, unknown>,
+): Promise<ChipotleActionResponse> {
+  try {
+    return await client.invokeAction({ actionCid: config.actionCid, usageApiKey: config.usageApiKey, jsParams })
+  } catch (error) {
+    if (!isCacheMissError(error)) throw error
+    await ensureBundledActionSourceMatches(client, config)
+    // Exactly once: this call is never itself wrapped in the same retry, so a
+    // second cache-miss response here surfaces as a plain "invoke" failure
+    // rather than looping.
+    return client.invokeAction({
+      actionCid: config.actionCid,
+      usageApiKey: config.usageApiKey,
+      jsParams,
+      code: CHIPOTLE_ACTION_SOURCE,
+    })
+  }
+}
+
 /** Test-only: clears memoized single-action state between proof scenarios. Never call from app code. */
 export function __resetChipotleAdapterStateForTests(): void {
   singleActionCache = new Map()
+  bundledActionSourceCache = new Map()
 }
 
 /** SHA-256 of the grant binding's canonical bytes — see the module doc, failure mode 2. */
@@ -383,12 +506,14 @@ async function protectShare(
   const commitment = await computeCommitment(binding)
   let response: ChipotleActionResponse
   try {
-    response = await client.invokeAction({
-      actionCid: config.actionCid,
-      usageApiKey: config.usageApiKey,
-      jsParams: { mode: "protect", payload: toBase64(heldShare), commitment, ...bindingJsParams(binding, config) },
+    response = await invokeActionWithCacheMissRetry(client, config, {
+      mode: "protect",
+      payload: toBase64(heldShare),
+      commitment,
+      ...bindingJsParams(binding, config),
     })
   } catch (error) {
+    if (error instanceof ChipotleUnavailableError) throw error
     throw new ChipotleUnavailableError("invoke", describeError(error), { cause: error })
   }
   if (!response.authorized || !response.result) {
@@ -425,17 +550,14 @@ async function releaseShare(
 
   let response: ChipotleActionResponse
   try {
-    response = await client.invokeAction({
-      actionCid: config.actionCid,
-      usageApiKey: config.usageApiKey,
-      jsParams: {
-        mode: "release",
-        ciphertext: envelope.ciphertext,
-        commitment: envelope.commitment,
-        ...bindingJsParams(binding, config),
-      },
+    response = await invokeActionWithCacheMissRetry(client, config, {
+      mode: "release",
+      ciphertext: envelope.ciphertext,
+      commitment: envelope.commitment,
+      ...bindingJsParams(binding, config),
     })
   } catch (error) {
+    if (error instanceof ChipotleUnavailableError) throw error
     throw new ChipotleUnavailableError("invoke", describeError(error), { cause: error })
   }
   if (!response.authorized || !response.result) {
@@ -455,20 +577,22 @@ export type ChipotleProviderOptions = {
 /**
  * Build a `KeyReleaseProvider` backed by Lit Chipotle.
  *
- * `types.ts`'s `ProtectedKeyShare.provider`/`.domain` are literal `"taco"` /
- * `"lynx"` — written before a second provider existed, and out of scope for
- * this story to widen (`docs/stories/H-65.md`: "implement it, do not change
- * it"). This adapter's real `descriptor` names `"chipotle"` honestly at
- * runtime; the cast below only tells the type checker to trust that, the
- * same way it would once `types.ts` is generalized to a real union. See this
- * story's report, "Choices", for why a cast rather than a `types.ts` edit.
- * `ritualId` has no Chipotle equivalent — there is no DKG ritual, only one
- * PKP — and is fixed at `0` rather than repurposed to mean something else.
+ * `types.ts`'s `ProtectedKeyShare.provider`/`.domain` now include `"chipotle"`
+ * alongside the parked `"taco"` (H-69 widened the union that H-67 had cast
+ * through `unknown` around, since real Chipotle grants must type-check
+ * honestly rather than lie about their own provider — see this story's
+ * report, "Choices"). `ritualId` has no Chipotle equivalent — there is no DKG
+ * ritual, only one PKP — and is fixed at `0` rather than repurposed to mean
+ * something else.
  */
 export function createChipotleKeyReleaseProvider(options: ChipotleProviderOptions = {}): KeyReleaseProvider {
   const config = readChipotleConfig(options.config)
   const client = options.client ?? createHttpChipotleClient(config)
-  const descriptor = { provider: "chipotle", domain: "chipotle", ritualId: 0 } as unknown as KeyReleaseProvider["descriptor"]
+  const descriptor: Pick<ProtectedKeyShare, "provider" | "domain" | "ritualId"> = {
+    provider: "chipotle",
+    domain: "chipotle",
+    ritualId: 0,
+  }
   return {
     descriptor,
     protect(heldShare: Uint8Array, binding: GrantBinding) {
@@ -610,13 +734,14 @@ export function createHttpChipotleClient(config: ChipotleConfig): ChipotleClient
         ),
       }
     },
-    async invokeAction({ actionCid, usageApiKey, jsParams }) {
+    async invokeAction({ actionCid, usageApiKey, jsParams, code }) {
       const body = await callChipotle("/lit_action", {
         method: "POST",
         headers: authHeaders(usageApiKey),
-        // ipfs_id, never code — only the one action registered under this
-        // CID may run. See the module doc.
-        body: JSON.stringify({ ipfs_id: actionCid, js_params: jsParams }),
+        // ipfs_id, never code, except for the cache-miss retry (`code` set) —
+        // see the module doc's amendments paragraph and
+        // `invokeActionWithCacheMissRetry`.
+        body: JSON.stringify(code !== undefined ? { code, js_params: jsParams } : { ipfs_id: actionCid, js_params: jsParams }),
       })
       const { response, has_error, logs } = body as { response: unknown; has_error: boolean; logs: string }
       if (has_error) {
@@ -627,6 +752,25 @@ export function createHttpChipotleClient(config: ChipotleConfig): ChipotleClient
         throw new Error(`Lit Action execution failed: ${logs || "no logs returned"}`)
       }
       return response as ChipotleActionResponse
+    },
+    async getActionIpfsId(code: string) {
+      // Not `callChipotle`: that helper treats any bare-string response body
+      // as `ErrMessage` (see its own doc comment), but this endpoint's
+      // *success* response is itself a bare string — the computed CID.
+      const res = await fetch(`${CHIPOTLE_API_BASE}/get_lit_action_ipfs_id`, {
+        method: "POST",
+        headers: authHeaders(config.usageApiKey),
+        body: JSON.stringify(code),
+      })
+      const responseBody: unknown = await res.json()
+      if (!res.ok || typeof responseBody !== "string") {
+        throw new Error(
+          `Chipotle /get_lit_action_ipfs_id failed: HTTP ${res.status}${
+            typeof responseBody !== "string" ? ` ${JSON.stringify(responseBody)}` : ""
+          }`,
+        )
+      }
+      return responseBody
     },
   }
 }
