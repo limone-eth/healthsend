@@ -71,8 +71,14 @@ export default function Home() {
     <main className="mx-auto w-full max-w-2xl px-6 py-16">
       <header className="mb-10">
         <h1 className="text-2xl font-semibold tracking-tight">HealthSend</h1>
+        {/* "Then the key is gone" stood here until it was checked. It was the same
+            overreach the README retracted and the landing page was corrected for: the
+            document stays on Swarm, and a reader who opened it keeps what they read.
+            What actually happens is narrower, and saying the narrower thing costs
+            nothing. See README.md, "What expiry does and does not do". */}
         <p className="mt-1 text-sm text-muted">
-          Share a document with someone for exactly as long as you mean to. Then the key is gone.
+          Share a document with someone for exactly as long as you mean to. When the window closes,
+          the half of the key we hold is deleted.
         </p>
       </header>
 
