@@ -610,8 +610,9 @@ function ScopeSection({
 // see the file-level comment and `## Choices`.
 // ---------------------------------------------------------------------------
 
-const CONSEQUENCE_LINE =
-  "A PDF you share here goes to the link as issued, including any name or date of birth printed on it."
+// The operator's own required sentence (docs/stories/H-64.md, "Say the
+// consequence"), copied verbatim rather than paraphrased.
+const CONSEQUENCE_LINE = "The document is shared as issued, including any name or date of birth printed on it."
 
 function ArchiveDocumentsGroup({
   archive,

@@ -169,9 +169,9 @@ test("New share lists archived PDFs with multi-select, no file picker touched", 
     visibleText(page, "Blood test, March.pdf and Thyroid panel, June.pdf — 2 of your 2 documents"),
   ).toBeVisible()
 
-  // The consequence, stated before any link exists.
+  // The operator's own required sentence, stated before any link exists.
   await expect(
-    visibleText(page, /goes to the link as issued, including any name or date of birth printed on it/),
+    visibleText(page, "The document is shared as issued, including any name or date of birth printed on it."),
   ).toBeVisible()
 })
 
