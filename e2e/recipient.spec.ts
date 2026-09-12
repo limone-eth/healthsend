@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext } from "@playwright/test"
 import { buildShareFixture } from "./helpers/fixture"
 import {
   blockUnstubbedNetwork,
+  isAllowedOffline,
   mockArkiv,
   mockHolderUnlock,
   mockHolderUnreachable,
@@ -84,7 +85,7 @@ test.describe("the five ways a share link resolves, offline", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, () => ({
       status: 200,
       body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
     }))
@@ -130,7 +131,7 @@ test.describe("the five ways a share link resolves, offline", () => {
       expiresBlock: share.currentBlock + 1,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, () => ({
       status: 200,
       body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
     }))
@@ -165,7 +166,7 @@ test.describe("the five ways a share link resolves, offline", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, () => ({
       status: 503,
       body: { error: "Could not reach the holder", retryable: true },
     }))
@@ -191,7 +192,7 @@ test.describe("the five ways a share link resolves, offline", () => {
     })
     // The holder tells a revoke apart from a lapsed grant with the same 410 plus
     // a `revoked` flag — see lib/unlock.ts and app/api/holder/unlock/route.ts.
-    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, () => ({
       status: 410,
       body: { error: "expired", revoked: true },
     }))
@@ -221,18 +222,14 @@ test.describe("the five ways a share link resolves, offline", () => {
       currentBlock: share.currentBlock,
     })
     // The holder compares the presented auth key's hash against the grant's
-    // commitment; a wrong fragment derives a wrong auth key, and any wrong auth
-    // key gets the same answer, so the stub does not need to replay the HMAC.
-    // It does need to check that the request actually carries a *different*
-    // key than the real one, though — otherwise this stub would return 403 for
-    // the correct fragment too, and the test would never notice the app had
-    // stopped deriving a distinct key per fragment.
-    await mockHolderUnlock(context, share.entityKeyHex, (body) => {
-      expect(
-        body.authKey,
-        "a wrong fragment must derive a different auth key than the real one",
-      ).not.toBe(share.authKeyB64)
-      return { status: 403, body: { error: "Not authorised for this grant" } }
+    // commitment; a wrong fragment derives a wrong auth key, and `mockHolderUnlock`
+    // already refuses any key but the real `share.authKeyB64` before `respond`
+    // runs at all (H-58/R3-005). So `respond` here should never actually be
+    // reached: if it is, the app derived the *same* key for a wrong fragment as
+    // for the real one, which is its own distinct bug — worth failing loudly on
+    // rather than quietly returning the 403 this test otherwise expects to see.
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, () => {
+      throw new Error("a wrong fragment must never derive the real auth key")
     })
 
     // A fragment that is well-formed but is not the one that seals this share.
@@ -254,8 +251,14 @@ test.describe("a coded share, offline (H-7)", () => {
    * "wrong code", and only then serve the share. This is what makes the test
    * below exercise the actual two-step flow rather than assuming it.
    */
-  async function mockCodedHolder(context: BrowserContext, entityKeyHex: string, codeHash: string, heldShare: string) {
-    await mockHolderUnlock(context, entityKeyHex, (body) => {
+  async function mockCodedHolder(
+    context: BrowserContext,
+    entityKeyHex: string,
+    authKeyB64: string,
+    codeHash: string,
+    heldShare: string,
+  ) {
+    await mockHolderUnlock(context, entityKeyHex, authKeyB64, (body) => {
       if (!body.codeProof) return { status: 401, body: { error: "A code is required to open this", codeRequired: true } }
       if (body.codeProof !== codeHash) {
         return { status: 401, body: { error: "That code is not right", wrongCode: true } }
@@ -277,7 +280,7 @@ test.describe("a coded share, offline (H-7)", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockCodedHolder(context, share.entityKeyHex, share.codeHash!, share.heldShare)
+    await mockCodedHolder(context, share.entityKeyHex, share.authKeyB64, share.codeHash!, share.heldShare)
 
     for (const width of [400, 1440]) {
       await page.setViewportSize({ width, height: 900 })
@@ -308,7 +311,7 @@ test.describe("a coded share, offline (H-7)", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockCodedHolder(context, share.entityKeyHex, share.codeHash!, share.heldShare)
+    await mockCodedHolder(context, share.entityKeyHex, share.authKeyB64, share.codeHash!, share.heldShare)
     await mockSwarmGateway(context, share.reference, share.blob)
 
     await page.goto(`/s/${share.packedKey}#${share.fragment}`)
@@ -351,7 +354,7 @@ test.describe("a coded share, offline (H-7)", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, share.entityKeyHex, (body) => {
+    await mockHolderUnlock(context, share.entityKeyHex, share.authKeyB64, (body) => {
       if (!body.codeProof) return { status: 401, body: { error: "required", codeRequired: true } }
       return {
         status: 401,
@@ -422,6 +425,32 @@ test.describe("infrastructure failures are never dressed up as expiry", () => {
     await expect(page.getByText("Temporarily unavailable")).toBeVisible()
     await expect(page.getByText("Could not open this send")).toHaveCount(0)
     await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
+  })
+})
+
+test.describe("the offline guard's own classification (H-58/R3-010)", () => {
+  // Deliberately no `blockUnstubbedNetwork` here: `isAllowedOffline` is the
+  // guard's decision function, and this test captures a real Playwright
+  // `Request` for a `navigator.sendBeacon` call to check it against — running
+  // that under the guard's own live route would trip its hard failure (any
+  // request it disallows fails the test that registered it), which is the
+  // right behaviour in a real recipient test but the wrong tool for testing
+  // the classification itself in isolation.
+  test("a same-origin sendBeacon is not classified as a page asset", async ({ page, baseURL }) => {
+    await page.goto(baseURL!)
+
+    const [request] = await Promise.all([
+      page.waitForRequest((req) => req.url().includes("/api/review3-beacon")),
+      page.evaluate(() => navigator.sendBeacon("/api/review3-beacon", "should never reach a real endpoint")),
+    ])
+
+    // Direct browser evidence, not an assumption about how Playwright labels
+    // the request — see R3-010's own probe.
+    expect(request.resourceType(), "a beacon must not be classified as a page asset").toBe("ping")
+    expect(
+      isAllowedOffline(request, baseURL!),
+      "the offline guard must not let a same-origin beacon through unstubbed",
+    ).toBe(false)
   })
 })
 

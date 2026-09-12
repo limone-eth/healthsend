@@ -52,9 +52,10 @@ globalThis.fetch = async (url, init) => {
     return new Response(JSON.stringify({ funded: true }), { status: 200 })
   }
   if (requestPath === "/api/holder/share") {
-    // `preflightHolder` probes with an empty body first and expects 400 —
-    // see lib/sends.ts.
-    if (!body.entityKey) return new Response(JSON.stringify({ error: "empty" }), { status: 400 })
+    // `preflightHolder` probes with GET first — see lib/sends.ts.
+    if ((init?.method ?? "GET") === "GET") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
     capturedShare = body
     return new Response(JSON.stringify({ ok: true }), { status: 200 })
   }

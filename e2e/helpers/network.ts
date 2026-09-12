@@ -142,14 +142,24 @@ export async function mockArkiv(
  * `entityKeyHex` is the entity the caller is expected to name. Asserting it
  * here means a request for the wrong entity fails the test outright, rather
  * than silently receiving this scenario's fixture data — the same fixture
- * would otherwise answer for any entity key at all. `respond` still gets the
- * full body, so a test that needs to check `authKey` too (a wrong-fragment
- * request must carry a *different* key, not just get an unconditional 403)
- * can do that itself.
+ * would otherwise answer for any entity key at all.
+ *
+ * `expectedAuthKeyB64` is the real holder's other gate, reproduced here —
+ * H-58/R3-005. A live holder never runs its business logic (serve the share,
+ * check a code, report locked-out) until the presented auth key matches the
+ * grant's commitment; a request carrying any other key gets refused before
+ * `respond` is even consulted. Without this, a stub that only ever answers
+ * `respond` regardless of what `authKey` it was sent cannot tell a correct
+ * unlock apart from a broken `deriveAuthKey` that sends the same wrong key for
+ * every fragment — the offline suite passed in full with exactly that
+ * mutation applied. `respond` still gets the full body, so a test with its own
+ * multi-step protocol (a code gate, a lockout counter) can build that on top,
+ * once the key itself is already known to be right.
  */
 export async function mockHolderUnlock(
   context: BrowserContext,
   entityKeyHex: string,
+  expectedAuthKeyB64: string,
   respond: (body: {
     entityKey: string
     authKey: string
@@ -163,6 +173,10 @@ export async function mockHolderUnlock(
       body.entityKey?.toLowerCase(),
       "the recipient must ask the holder for the entity key the grant actually names",
     ).toBe(entityKeyHex.toLowerCase())
+    if (body.authKey !== expectedAuthKeyB64) {
+      await route.fulfill({ status: 403, json: { error: "Not authorised for this grant" } })
+      return
+    }
     const { status, body: json } = respond(body)
     await route.fulfill({ status, json })
   })
@@ -205,16 +219,23 @@ export async function mockSwarmGateway(context: BrowserContext, reference: strin
  * `mockArkiv` and `mockSwarmGateway` register their own, more specific routes
  * on top of this one.
  */
-function isAllowedOffline(request: Request, baseURL: string): boolean {
+/**
+ * Exported for direct testing (H-58/R3-010) — the classification itself is
+ * what a same-origin `sendBeacon` slipped past: Playwright reports it as
+ * resource type `ping`, which this list did not block, so the guard treated
+ * it as a page asset and let it continue to the real server.
+ */
+export function isAllowedOffline(request: Request, baseURL: string): boolean {
   const url = request.url()
   if (!url.startsWith(baseURL)) return false
   if (url.startsWith(`${baseURL}/api/holder/unlock`)) return true
   // A page asset — document, script, stylesheet, font, image — never a
-  // same-origin API call. This is deliberately narrower than "every
-  // same-origin route": a bug that made the recipient path call some other
-  // route on our own server must fail here too, not pass silently because it
-  // happened to share an origin with the page.
-  return !["fetch", "xhr", "websocket"].includes(request.resourceType())
+  // same-origin API call or a beacon. This is deliberately narrower than
+  // "every same-origin route": a bug that made the recipient path call some
+  // other route on our own server, or fire a beacon at one, must fail here
+  // too, not pass silently because it happened to share an origin with the
+  // page.
+  return !["fetch", "xhr", "websocket", "ping"].includes(request.resourceType())
 }
 
 /**
