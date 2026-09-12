@@ -82,15 +82,18 @@ export function getSwarmClient(): Promise<SwarmIdClient> {
         ...(SUBSIDISED_GATEWAY ? { subsidisedGatewayUrl: SUBSIDISED_GATEWAY } : {}),
         containerId: CONNECT_CONTAINER_ID,
         buttonConfig: {
-          connectText: "Continue with Swarm ID",
+          // Verbatim from frames BsnX6 (desktop) / GdIlc (mobile) "Sign in" —
+          // see docs/stories/H-21.md. The iframe paints the button, so our
+          // stylesheet cannot reach it; background colour, text colour and
+          // radius are the only knobs, matched here to the frame's Primary
+          // slot ($ink fill, $surface text, 14px radius) rather than kept as
+          // a distinct third-party style.
+          connectText: "Continue with Face ID",
           disconnectText: "Sign out",
           loadingText: "Opening…",
-          // The iframe paints the button, so our stylesheet cannot reach it —
-          // these are the only knobs. Kept close to our own Button so it does
-          // not read as a third-party widget dropped into the page.
-          backgroundColor: "#ece9e3",
-          color: "#1a1815",
-          borderRadius: "8px",
+          backgroundColor: "#15161A",
+          color: "#FFFFFF",
+          borderRadius: "14px",
         },
         // A sized popup rather than a full browser tab. Passkey creation cannot
         // happen inside the embedded iframe — WebAuthn in a cross-origin frame

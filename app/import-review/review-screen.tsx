@@ -18,8 +18,10 @@ export type MarkerRow = {
   unit: string
   /** The line in the sender's own file this reading came from. */
   snippet: string
+  /** The lab's own out-of-range call (e.g. `HIGH`, `LOW`). Data about the result, not a reason to flag it. */
+  labFlag?: string
   flagged: boolean
-  /** Only set when `flagged` — what the file itself said, not what to do about it. */
+  /** Only set when `flagged` — why import is unsure of the parse, never what the lab called the result. */
   flagReason?: string
 }
 
@@ -299,12 +301,14 @@ function MarkerRowView({ marker }: { marker: MarkerRow }) {
         <span className="text-[14.5px] font-semibold text-ink md:text-[15px] md:font-medium">{marker.name}</span>
         <span className="text-[14px] font-semibold text-ink md:hidden">
           {marker.value} {marker.unit}
+          {marker.labFlag && <span className="ml-1 text-[11px] font-medium text-muted">{marker.labFlag}</span>}
         </span>
       </div>
 
       <div className="hidden h-11 w-[150px] shrink-0 items-center gap-1.5 rounded-control border border-hairline bg-surface px-3 md:flex">
         <span className="flex-1 text-[15px] font-semibold text-ink">{marker.value}</span>
         <span className="text-[12.5px] text-muted">{marker.unit}</span>
+        {marker.labFlag && <span className="text-[11px] font-medium text-muted">{marker.labFlag}</span>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 md:w-[330px] md:shrink-0 md:flex-nowrap">
