@@ -205,9 +205,20 @@ const STEPS = [
   {
     n: 1,
     title: "Bring it together",
+    // The frame's copy is "Your name and date of birth are set aside as they
+    // come in, so they are never part of anything you send." That is the
+    // intended end state and it is not true yet: `createSend` reads each file
+    // straight into the envelope, so nothing strips identifiers on the way out
+    // (H-36). The screens audit filed it as F-01, critical — a public page
+    // telling a sender their identifiers are removed is the one claim in this
+    // product that could cause someone to send identifying health data they
+    // would otherwise have withheld.
+    //
+    // Restore the frame's sentence verbatim, at both sizes, when H-36 lands.
     desktopBody:
-      "Drop in an export from your watch and a lab result. Your name and date of birth are set aside as they come in, so they are never part of anything you send.",
-    mobileBody: "Drop in an export and a lab result. Your name is set aside as it comes in.",
+      "Drop in an export from your watch and a lab result. Setting your name and date of birth aside is built and tested, but not yet wired into sending — for now a file is sent exactly as it is.",
+    mobileBody:
+      "Drop in an export and a lab result. Setting your name aside is built, but not yet wired into sending.",
   },
   {
     n: 2,
