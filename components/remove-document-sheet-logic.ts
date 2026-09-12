@@ -91,13 +91,15 @@ export function shouldShowSharesCard(shares: LiveShareView[], indexUnknown: bool
 }
 
 /**
- * Shares made before the share index existed cannot be checked: this
- * archive's index has no entries at all, yet the sender has other live
- * shares that came from this same archive. Say that plainly rather than
- * implying the document is in none of them.
+ * Some live shares have no share-index entry — made before the index existed,
+ * sent straight from a file, or a failed index write — so the archive cannot
+ * say what they hold. Say that plainly, and point at the one place they can be
+ * ended, rather than implying the document is in none of them.
  */
+export const UNKNOWN_SHARES_HEADLINE = "Some open shares can't be checked"
+
 export const UNKNOWN_SHARES_NOTE =
-  "This archive has no record of shares made before this list existed. If an older share still includes this PDF, end it from Your shares instead."
+  "Shares made before this list, or sent straight from a file, aren't tracked here. If one of them includes this PDF, end it in Your shares."
 
 export type RemoveDocumentOutcome =
   | { outcome: "removed"; endedShares: string[] }

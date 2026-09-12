@@ -23,6 +23,7 @@ import {
   shareLabel,
   sharesHeadline,
   shouldShowSharesCard,
+  UNKNOWN_SHARES_HEADLINE,
   UNKNOWN_SHARES_NOTE,
   type LiveShareView,
 } from "./remove-document-sheet-logic"
@@ -104,16 +105,21 @@ export function RemoveDocumentSheet({
               <div className="flex items-center gap-[9px]">
                 <PaperPlaneTilt size={17} weight="light" className="text-umber" />
                 <span className="text-[15px] font-semibold tracking-[-0.1px] text-umber">
-                  {indexUnknown ? "Some shares can't be checked" : sharesHeadline(shares.length)}
+                  {shares.length > 0 ? sharesHeadline(shares.length) : UNKNOWN_SHARES_HEADLINE}
                 </span>
               </div>
-              <p className="text-[13px] leading-[1.5] text-umber">
-                {indexUnknown
-                  ? UNKNOWN_SHARES_NOTE
-                  : "Removing it here keeps it out of any new share. Each share below sealed its own copy when you made it, so that copy stays openable until the share ends — unless you end them now. Ending a share ends everything in it, not only this PDF."}
-              </p>
+              {/* Known shares and untracked ones are independent: a sender can have
+                  both, so the tracked list and checkbox never hide behind the note. */}
+              {shares.length > 0 && (
+                <p className="text-[13px] leading-[1.5] text-umber">
+                  Removing it here keeps it out of any new share. Each share below sealed its own copy when you
+                  made it, so that copy stays openable until the share ends — unless you end them now. Ending a
+                  share ends everything in it, not only this PDF.
+                </p>
+              )}
+              {indexUnknown && <p className="text-[13px] leading-[1.5] text-umber">{UNKNOWN_SHARES_NOTE}</p>}
 
-              {!indexUnknown &&
+              {shares.length > 0 &&
                 shares.map((share) => (
                   <div
                     key={share.entityKey}
@@ -135,7 +141,7 @@ export function RemoveDocumentSheet({
                   </div>
                 ))}
 
-              {!indexUnknown && shares.length > 0 && (
+              {shares.length > 0 && (
                 <label className="flex items-center gap-[11px] pt-1">
                   <input
                     type="checkbox"

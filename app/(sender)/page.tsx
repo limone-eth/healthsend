@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowDown, Eye, FileText, Trash } from "@phosphor-icons/react"
+import { ArrowDown, Eye, FileText, FileX } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { loadMyArchive } from "@/lib/archive-store"
 import type { ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
@@ -336,7 +336,7 @@ function DocumentRow({ document, onRemove }: { document: DocumentRecord; onRemov
         aria-label={`Remove ${document.name} from your archive`}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-glyph text-muted hover:bg-grouped hover:text-error"
       >
-        <Trash size={17} weight="light" />
+        <FileX size={17} weight="light" />
       </button>
     </div>
   )
@@ -377,7 +377,7 @@ function DocumentRowMobile({ document, onRemove }: { document: DocumentRecord; o
         aria-label={`Remove ${document.name} from your archive`}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-glyph text-muted"
       >
-        <Trash size={16} weight="light" />
+        <FileX size={16} weight="light" />
       </button>
     </div>
   )
