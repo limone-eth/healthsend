@@ -94,26 +94,65 @@ function parseBloodPanelMarkers(text: string): BloodMarker[] | null {
     const cells = line.split(",").map((cell) => cell.trim())
     if (cells.length < 5) continue
     const [name, valueText, unit, refLowText, refHighText, labFlag] = cells
-    const value = Number(valueText)
-    if (!name || !Number.isFinite(value)) continue
+    if (!name) continue
 
-    const referenceRange: ReferenceRange = {}
-    const refLow = refLowText ? Number(refLowText) : undefined
-    const refHigh = refHighText ? Number(refHighText) : undefined
-    if (refLow !== undefined && Number.isFinite(refLow)) referenceRange.min = refLow
-    if (refHigh !== undefined && Number.isFinite(refHigh)) referenceRange.max = refHigh
+    // A row that named a marker always earns a place in the review — a
+    // blank value, a qualified reading (`<5`, `>100`) or an unreadable
+    // range must never vanish the way an unrecognised row does.
+    const { value, qualifier } = parseMarkerValue(valueText)
+    const { referenceRange, rangeUnreadable } = parseReferenceRange(refLowText, refHighText)
 
     markers.push({
       id: `marker:${slugify(name)}`,
       name,
       value,
+      ...(qualifier ? { qualifier } : {}),
       unit,
       referenceRange,
       ...(labFlag ? { labFlag } : {}),
-      ...parseConfidence(unit, referenceRange),
+      ...parseConfidence({ valueText, value, unit, referenceRange, rangeUnreadable }),
     })
   }
   return markers.length > 0 ? markers : null
+}
+
+const QUALIFIED_VALUE = /^([<>])\s*(-?\d+(?:\.\d+)?)$/
+
+/**
+ * A blank cell is missing, never zero. A lab-style qualifier (`<0.3`,
+ * `>100`) is a confident, conventional reading, not parse uncertainty — it
+ * keeps its qualifier as data and is never flagged for carrying one. Any
+ * other non-numeric text is a value import could not read at all.
+ */
+function parseMarkerValue(valueText: string): { value: number; qualifier?: "<" | ">" } {
+  if (valueText === "") return { value: NaN }
+  const qualified = QUALIFIED_VALUE.exec(valueText)
+  if (qualified) return { value: Number(qualified[2]), qualifier: qualified[1] as "<" | ">" }
+  return { value: Number(valueText) }
+}
+
+/**
+ * A bound that is present but not a number (`not-a-number`) is dropped from
+ * `referenceRange` exactly as before — but `rangeUnreadable` says so, so the
+ * row is flagged instead of read as if that bound were simply absent.
+ */
+function parseReferenceRange(
+  refLowText: string,
+  refHighText: string,
+): { referenceRange: ReferenceRange; rangeUnreadable: boolean } {
+  const referenceRange: ReferenceRange = {}
+  let rangeUnreadable = false
+  if (refLowText) {
+    const refLow = Number(refLowText)
+    if (Number.isFinite(refLow)) referenceRange.min = refLow
+    else rangeUnreadable = true
+  }
+  if (refHighText) {
+    const refHigh = Number(refHighText)
+    if (Number.isFinite(refHigh)) referenceRange.max = refHigh
+    else rangeUnreadable = true
+  }
+  return { referenceRange, rangeUnreadable }
 }
 
 /**
@@ -123,20 +162,37 @@ function parseBloodPanelMarkers(text: string): BloodMarker[] | null {
  *
  * This CSV shape carries no per-row date (a panel's `takenOn` is supplied by
  * the caller, not read from the file — see `ImportParams`) and no unit
- * conversion or marker-name canon exists yet, so "an ambiguous date", "a
- * converted unit" and "an unrecognised marker name" cannot be detected here
- * today. Only the two conditions this parser can actually observe are
- * checked; see H-38's `## Choices` for the rest.
+ * conversion or marker-name canon exists yet, so "an ambiguous date" and "a
+ * converted unit" cannot be detected here today. Only the conditions this
+ * parser can actually observe are checked; see H-38's `## Choices` for the
+ * rest.
  */
-function parseConfidence(
-  unit: string,
-  referenceRange: ReferenceRange,
-): { flaggedAtImport: boolean; flagReason?: string } {
+function parseConfidence(params: {
+  valueText: string
+  value: number
+  unit: string
+  referenceRange: ReferenceRange
+  rangeUnreadable: boolean
+}): { flaggedAtImport: boolean; flagReason?: string } {
+  const { valueText, value, unit, referenceRange, rangeUnreadable } = params
   const reasons: string[] = []
+  if (valueText === "") reasons.push("No value in the file")
+  else if (!Number.isFinite(value)) reasons.push("Could not read this value")
+
   if (!unit) reasons.push("No unit in the file")
-  if (referenceRange.min === undefined && referenceRange.max === undefined) {
+
+  if (rangeUnreadable) {
+    reasons.push("Reference range could not be read")
+  } else if (referenceRange.min === undefined && referenceRange.max === undefined) {
     reasons.push("No reference range in the file")
+  } else if (
+    referenceRange.min !== undefined &&
+    referenceRange.max !== undefined &&
+    referenceRange.min > referenceRange.max
+  ) {
+    reasons.push("Reference range is reversed")
   }
+
   if (reasons.length === 0) return { flaggedAtImport: false }
   return { flaggedAtImport: true, flagReason: reasons.join(" · ") }
 }

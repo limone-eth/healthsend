@@ -6,7 +6,7 @@ information.
 
 | File | Kind | Exercises |
 |---|---|---|
-| `thyroid-panel.csv` | csv | The CSV table view. Three rows the lab itself called HIGH or LOW — carried as data, never as an import flag — plus two rows import cannot confidently place (a missing unit, a missing reference range), which are the only two that flag. |
+| `thyroid-panel.csv` | csv | The CSV table view — the fixed 32-marker dataset `DESIGN.md` demos ("29 of 32 read cleanly · 3 need a look"). Three rows the lab itself called HIGH or LOW, carried as data and never as an import flag; one row with a lab-style qualifier (`<0.3`) that keeps its qualifier and stays clean; and three rows import cannot confidently place (a missing unit, a missing reference range, a reversed reference range), which are the only three that flag. |
 | `sleep-60-days.csv` | csv | A wider, longer CSV — 60 rows, 7 columns. Scrolling and header stickiness. |
 | `consult-notes.txt` | text | The monospace text view. |
 | `training-log.json` | text | JSON through the text path (classified as `text`, not a special case). |

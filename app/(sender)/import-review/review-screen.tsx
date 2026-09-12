@@ -14,7 +14,10 @@ import type { SetAsideIdentifiers } from "@/lib/archive"
 export type MarkerRow = {
   id: string
   name: string
+  /** `NaN` when import found no value to read at all — render via `formatMarkerValue`, never directly. */
   value: number
+  /** A lab-style qualifier the reading was reported with (`<0.3`, `>100`) — kept as data, not a flag. */
+  qualifier?: "<" | ">"
   unit: string
   /** The line in the sender's own file this reading came from. */
   snippet: string
@@ -294,19 +297,25 @@ function FlagChip({
   )
 }
 
+/** `NaN` means import found no value at all — the one place that must never render as a number. */
+function formatMarkerValue(marker: MarkerRow): string {
+  if (Number.isNaN(marker.value)) return "Missing"
+  return `${marker.qualifier ?? ""}${marker.value}`
+}
+
 function MarkerRowView({ marker }: { marker: MarkerRow }) {
   return (
     <div className="flex w-full flex-col gap-[7px] p-3.5 md:h-[66px] md:flex-row md:items-center md:gap-4 md:p-0 md:px-5">
       <div className="flex items-center justify-between gap-3 md:flex-1 md:justify-start">
         <span className="text-[14.5px] font-semibold text-ink md:text-[15px] md:font-medium">{marker.name}</span>
         <span className="text-[14px] font-semibold text-ink md:hidden">
-          {marker.value} {marker.unit}
+          {formatMarkerValue(marker)} {marker.unit}
           {marker.labFlag && <span className="ml-1 text-[11px] font-medium text-muted">{marker.labFlag}</span>}
         </span>
       </div>
 
       <div className="hidden h-11 w-[150px] shrink-0 items-center gap-1.5 rounded-control border border-hairline bg-surface px-3 md:flex">
-        <span className="flex-1 text-[15px] font-semibold text-ink">{marker.value}</span>
+        <span className="flex-1 text-[15px] font-semibold text-ink">{formatMarkerValue(marker)}</span>
         <span className="text-[12.5px] text-muted">{marker.unit}</span>
         {marker.labFlag && <span className="text-[11px] font-medium text-muted">{marker.labFlag}</span>}
       </div>
