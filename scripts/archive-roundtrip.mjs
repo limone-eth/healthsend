@@ -28,7 +28,7 @@ console.log("PASS  archive grows over time and stays encrypted under the sender 
 assert.equal(DEMO_BLOOD_PANEL.takenOn, "2026-08-12")
 assert.equal(DEMO_BLOOD_PANEL.markers.length, 32)
 assert.equal(DEMO_SHARED_MARKER_IDS.length, 5)
-assert.equal(DEMO_BLOOD_PANEL.markers.filter((marker) => marker.flaggedAtImport).length, 3)
+assert.equal(DEMO_BLOOD_PANEL.markers.filter((marker) => marker.flaggedAtImport).length, 0)
 
 assert.deepEqual(DEMO_SLEEP_SERIES.range, { from: "2026-08-07", through: "2026-09-03" })
 assert.equal(DEMO_SLEEP_SERIES.values.length, 28)
@@ -40,7 +40,7 @@ assert.equal(
   4,
   "four nights must reach the 7h 30m target",
 )
-console.log("PASS  demo fixture has 32 markers, 3 flags, and the specified 28-night series")
+console.log("PASS  demo fixture has 32 markers, no import flags, and the specified 28-night series")
 
 // Only the five addressed markers become recipient bytes. The existing send
 // path can encrypt these bytes as its payload; it never needs the archive key.

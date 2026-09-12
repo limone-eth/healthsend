@@ -15,7 +15,8 @@
  * greyed out. See docs/stories/H-37.md `## Choices`.
  */
 
-import { useState } from "react"
+import { useState, type FormEvent } from "react"
+import { useRouter } from "next/navigation"
 import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
 import {
   BookOpen,
@@ -27,8 +28,9 @@ import {
   Pill,
   UserCircle,
 } from "@phosphor-icons/react"
-import { SenderChrome } from "@/components/chrome"
 import { Action, Card, Field, InsetNote, ScreenHeader, inputClass } from "@/components/ui"
+import { recordsFromUpload } from "@/lib/archive-input"
+import { addRecordsToMyArchive } from "@/lib/archive-store"
 
 type ArchiveKind = "blood-panel" | "wearable-series"
 
@@ -48,26 +50,26 @@ const KINDS: Kind[] = [
     title: "Lab or test result",
     icon: FirstAidKit,
     archiveKind: "blood-panel",
-    accept: "application/pdf,image/*",
+    accept: ".csv,text/csv",
     desktop: {
-      description: "A PDF or a photo of the report your lab sent you.",
+      description: "A CSV export of the report your lab sent you.",
       kindLabel: "A file",
-      after: "We read the markers and their ranges, then show you what we read.",
+      after: "Use marker,value,unit,ref_low,ref_high,flag as the header.",
     },
-    mobile: { description: "A PDF or a photo", kindLabel: "A file" },
+    mobile: { description: "A CSV export from your lab", kindLabel: "A file" },
   },
   {
     id: "wearable-export",
     title: "Wearable export",
     icon: Heartbeat,
     archiveKind: "wearable-series",
-    accept: ".csv,.json,.xml,.zip",
+    accept: ".json,application/json",
     desktop: {
-      description: "The export file from the Health app, or from your ring.",
+      description: "A JSON export from the Health app, or from your ring.",
       kindLabel: "A file",
-      after: "Sleep, training and heart rate over time all land in Wearables.",
+      after: "Each series needs a metric, a unit and dated numeric values.",
     },
-    mobile: { description: "From the Health app or your ring", kindLabel: "A file" },
+    mobile: { description: "A JSON export from your device", kindLabel: "A file" },
   },
   {
     id: "medications",
@@ -120,7 +122,7 @@ const KINDS: Kind[] = [
 ]
 
 const NOTE =
-  "Files are read here in your browser and never reach us. Your name and date of birth are lifted out as they are read, and kept apart from everything else. Anything you type yourself skips the checking step — you already know what it says."
+  "Files are read here in your browser and never reach us. HealthSend stores only the readings it can place in the archive model. It encrypts those readings before it uploads them to Swarm. The original file is not kept."
 
 function DesktopKindCard({ kind, onSelect }: { kind: Kind; onSelect: () => void }) {
   const available = kind.archiveKind !== undefined
@@ -197,31 +199,81 @@ function MobileKindRow({ kind, onSelect }: { kind: Kind; onSelect: () => void })
 }
 
 function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
+  const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
+  const [takenOn, setTakenOn] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!file || !kind.archiveKind || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const records = await recordsFromUpload({
+        file,
+        kind: kind.archiveKind,
+        ...(kind.archiveKind === "blood-panel" ? { takenOn } : {}),
+      })
+      await addRecordsToMyArchive(records)
+      router.replace("/")
+    } catch (cause) {
+      setError((cause as Error).message)
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="flex w-full flex-col gap-6">
-      <Action variant="tertiary" icon={CaretLeft} onClick={onBack}>
+      <Action variant="tertiary" icon={CaretLeft} onClick={onBack} disabled={saving}>
         Choose a different kind
       </Action>
-      <Card className="flex flex-col gap-5">
-        <ScreenHeader title={kind.title} lede={kind.desktop.description} />
-        {file ? (
-          <InsetNote icon={CloudSlash}>
-            &ldquo;{file.name}&rdquo; is chosen. Reading and checking it is not built on this
-            screen yet — that is H-15.
-          </InsetNote>
-        ) : (
+      <form onSubmit={submit}>
+        <Card className="flex flex-col gap-5">
+          <ScreenHeader title={kind.title} lede={kind.desktop.description} />
+          {kind.archiveKind === "blood-panel" && (
+            <Field label="Date of test" assistive="The date shown on the result.">
+              <input
+                type="date"
+                aria-label="Date of test"
+                required
+                value={takenOn}
+                className={inputClass}
+                onChange={(event) => setTakenOn(event.target.value)}
+              />
+            </Field>
+          )}
           <Field label="File" assistive={kind.desktop.after}>
             <input
               type="file"
+              aria-label="File"
+              required
               accept={kind.accept}
               className={inputClass}
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
           </Field>
-        )}
-      </Card>
+          {file && (
+            <InsetNote icon={CloudSlash}>
+              &ldquo;{file.name}&rdquo; stays in this browser. Only its parsed readings are encrypted
+              and stored.
+            </InsetNote>
+          )}
+          {error && (
+            <p role="alert" className="text-sm text-error">
+              Could not add this file: {error}
+            </p>
+          )}
+          <Action
+            type="submit"
+            fullWidth
+            disabled={!file || (kind.archiveKind === "blood-panel" && !takenOn) || saving}
+          >
+            {saving ? "Adding…" : "Add to archive"}
+          </Action>
+        </Card>
+      </form>
     </div>
   )
 }
@@ -229,41 +281,37 @@ function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
 export default function WhatAreYouAdding() {
   const [selected, setSelected] = useState<Kind | null>(null)
 
-  return (
-    <SenderChrome active="archive">
-      {selected ? (
-        <FilePicker kind={selected} onBack={() => setSelected(null)} />
-      ) : (
-        <div className="flex w-full flex-col gap-3.5 md:gap-6">
-          <div className="md:hidden">
-            <ScreenHeader
-              title="What are you adding?"
-              lede="The kind decides how we read it and where it lands."
-            />
-          </div>
-          <div className="hidden md:block">
-            <ScreenHeader
-              title="What are you adding?"
-              lede="Pick the kind of thing first. It decides how we read it, which group it lands in, and whether you need to check anything afterwards."
-            />
-          </div>
+  return selected ? (
+    <FilePicker kind={selected} onBack={() => setSelected(null)} />
+  ) : (
+    <div className="flex w-full flex-col gap-3.5 md:gap-6">
+      <div className="md:hidden">
+        <ScreenHeader
+          title="What are you adding?"
+          lede="The kind decides how we read it and where it lands."
+        />
+      </div>
+      <div className="hidden md:block">
+        <ScreenHeader
+          title="What are you adding?"
+          lede="Pick the kind of thing first. It decides how we read it, which group it lands in, and whether you need to check anything afterwards."
+        />
+      </div>
 
-          <div className="flex flex-col gap-[9px] md:hidden">
-            {KINDS.map((kind) => (
-              <MobileKindRow key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
-            ))}
-          </div>
-          <div className="hidden md:grid md:grid-cols-2 md:gap-5 xl:grid-cols-3">
-            {KINDS.map((kind) => (
-              <DesktopKindCard key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
-            ))}
-          </div>
+      <div className="flex flex-col gap-[9px] md:hidden">
+        {KINDS.map((kind) => (
+          <MobileKindRow key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
+        ))}
+      </div>
+      <div className="hidden md:grid md:grid-cols-2 md:gap-5 xl:grid-cols-3">
+        {KINDS.map((kind) => (
+          <DesktopKindCard key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
+        ))}
+      </div>
 
-          <div className="hidden md:block">
-            <InsetNote>{NOTE}</InsetNote>
-          </div>
-        </div>
-      )}
-    </SenderChrome>
+      <div className="hidden md:block">
+        <InsetNote>{NOTE}</InsetNote>
+      </div>
+    </div>
   )
 }

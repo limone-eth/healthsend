@@ -8,8 +8,10 @@
  * an app-scoped secret derived inside its iframe, and every key below hangs off
  * it under a distinct label:
  *
- *   arkiv/v1  → the signing key that owns the user's grant entities
- *   blind/v1  → the HMAC key that makes queryable attributes opaque
+ *   arkiv/v1        → the signing key that owns the user's grant entities
+ *   blind/v1        → the HMAC key that makes queryable attributes opaque
+ *   archive/v1      → the key that seals the sender's archive
+ *   archive-feed/v1 → the private topic that locates its latest Swarm chunk
  *
  * Sign in on a second device and the same keys come back, which is what makes
  * "my sends are waiting for me" work without a server remembering anything.
@@ -26,6 +28,10 @@ export type Identity = {
   address: Hex
   /** HMAC key for blinding attribute values. */
   blindKey: Uint8Array
+  /** AES-256 key for the sender's encrypted archive. */
+  archiveKey: Uint8Array
+  /** Identity-derived Swarm feed topic for the current archive reference. */
+  archiveTopic: Uint8Array
 }
 
 let cached: Identity | null = null
@@ -34,14 +40,18 @@ export async function getIdentity(): Promise<Identity> {
   if (cached) return cached
 
   const arkivSeed = await deriveAppSecret("healthsend/arkiv/v1")
-  const blindKey = await deriveAppSecret("healthsend/blind/v1")
+  const [blindKey, archiveKey, archiveTopic] = await Promise.all([
+    deriveAppSecret("healthsend/blind/v1"),
+    deriveAppSecret("healthsend/archive/v1"),
+    deriveAppSecret("healthsend/archive-feed/v1"),
+  ])
 
   // keccak of the derived secret gives a well-formed 32-byte scalar without
   // handing the raw app secret to a library that might log or persist it.
   const privateKey = keccak256(arkivSeed as Uint8Array)
   const address = privateKeyToAccount(privateKey).address
 
-  cached = { privateKey, address, blindKey }
+  cached = { privateKey, address, blindKey, archiveKey, archiveTopic }
   return cached
 }
 

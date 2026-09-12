@@ -3,7 +3,7 @@
 `lib/archive.ts` defines the record archive. It does not replace the current file-send path.
 `packEnvelope` and `unpackEnvelope` remain authoritative for live file-based sends.
 The archive module is authoritative for stored health records and scoped record payloads.
-No application screen uses the archive yet.
+`/add` parses supported files into records, and the signed-in archive screen opens those records after reload.
 
 ## Shapes
 
@@ -35,8 +35,21 @@ The binary format is `HSAR`, one version byte, a 12-byte nonce, and authenticate
 The format publishes no record metadata. It reveals only the total ciphertext length.
 The caller can open, add records, and reseal it over time.
 
-A stored archive is one encrypted period chunk. A later manifest can address several chunks.
-This keeps range reads bounded as the archive grows. The manifest is outside this model.
+Each successful update uploads the resealed archive as a new immutable Swarm blob. An identity-owned
+Swarm epoch feed is the manifest: its latest update contains only that blob's raw Swarm reference.
+The archive key and feed topic come from separate Swarm ID app-secret labels. A sender can therefore
+recover both from the signed-in identity alone, including in a fresh browser context. No local storage,
+user database, or additional service is part of the address path.
+
+`/add` reads supported source files in the browser and retains only fields represented by an
+`ArchiveRecord`. The original file and filename are not retained. Record metadata stays inside the
+encrypted blob; the feed exposes only its current reference. The update path uploads replacement
+ciphertext before moving the feed reference, so a failed blob upload leaves the previous archive
+readable.
+
+The current update is a read-modify-write operation over the complete archive. Two tabs that start
+from the same feed value can overwrite one another; the last successful feed update wins. The model
+does not yet provide compare-and-swap or merge-on-conflict behavior.
 
 Selections use two address forms:
 
@@ -58,5 +71,8 @@ The selection must stay inside that encrypted payload. Arkiv can hold only opaqu
 No record ID, marker name, value, unit, range, metric, or selection belongs in an Arkiv attribute.
 Only required timestamps can remain plaintext for range queries.
 
-`scripts/archive-roundtrip.mjs` uses the design fixture. It selects five markers from 32 and opens the result.
-It also checks every unselected marker ID and name against the complete recipient byte sequence.
+`scripts/archive-roundtrip.mjs` uses `lib/archive-demo.ts` as a proof-only fixture. No application
+module imports the fixture, and the archive screen never seeds itself with demo records. The proof
+selects five markers from 32 and opens the result. It also checks every unselected marker ID and name
+against the complete recipient byte sequence. Because the handwritten fixture has no parser input,
+none of its markers claims `flaggedAtImport` uncertainty.

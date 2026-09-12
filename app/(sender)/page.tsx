@@ -18,6 +18,7 @@ import { useSenderIdentity } from "@/components/use-sender-identity"
 import { listMySends } from "@/lib/sends"
 import { getIdentity } from "@/lib/identity"
 import { accessLogMessage } from "@/lib/access-log"
+import { loadMyArchive } from "@/lib/archive-store"
 import type { ArchiveRecord, BloodPanelRecord, WearableSeriesRecord } from "@/lib/archive"
 
 /**
@@ -26,11 +27,9 @@ import type { ArchiveRecord, BloodPanelRecord, WearableSeriesRecord } from "@/li
  *
  * Groups read from `lib/archive.ts` (H-13), which defines only two record
  * kinds — `blood-panel` and `wearable-series`. Medications and Notes have no
- * archive model yet, so those two groups are permanently empty until a later
- * story adds one; this is stated, not hidden, in `## Choices`. There is also
- * no loader wired from storage to this screen yet (no manifest, see
- * `docs/archive-model.md`), so `records` starts empty rather than reading a
- * fixture — the honest state of a real sign-in today.
+ * archive model yet, so those two groups remain empty until a later story adds
+ * one. Signed-in senders load their encrypted archive through its identity-owned
+ * Swarm feed. The screen keeps loading, empty and failure states distinct.
  */
 
 const isoDayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" })
@@ -58,6 +57,13 @@ function wearablesMeta(records: WearableSeriesRecord[]): string | null {
   const noun = records.length === 1 ? "kind" : "kinds"
   return `${records.length} ${noun} · latest ${formatIsoDate(latest.range.through)}`
 }
+
+type ArchiveLoadState =
+  | { status: "loading" }
+  | { status: "ready"; records: ArchiveRecord[] }
+  | { status: "error"; message: string }
+
+const ARCHIVE_LOAD_TIMEOUT_MS = 15_000
 
 type FocusData = {
   count: number
@@ -96,7 +102,35 @@ export default function ArchivePage() {
 }
 
 function ArchiveScreen() {
+  const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
   const [focus, setFocus] = useState<FocusData | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error("The archive request took too long. Try again.")),
+        ARCHIVE_LOAD_TIMEOUT_MS,
+      )
+    })
+
+    void Promise.race([loadMyArchive(), deadline])
+      .then((loaded) => {
+        if (!cancelled) setArchive({ status: "ready", records: loaded.records })
+      })
+      .catch((cause) => {
+        if (!cancelled) setArchive({ status: "error", message: (cause as Error).message })
+      })
+      .finally(() => {
+        if (timeout) clearTimeout(timeout)
+      })
+
+    return () => {
+      cancelled = true
+      if (timeout) clearTimeout(timeout)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -124,9 +158,7 @@ function ArchiveScreen() {
     }
   }, [])
 
-  // No loader exists yet from Swarm storage into this model — see the file
-  // header — so every group starts from an empty record set.
-  const records: ArchiveRecord[] = []
+  const records = archive.status === "ready" ? archive.records : []
   const bloodPanels = records.filter((r): r is BloodPanelRecord => r.kind === "blood-panel")
   const wearables = records.filter((r): r is WearableSeriesRecord => r.kind === "wearable-series")
 
@@ -136,34 +168,46 @@ function ArchiveScreen() {
 
       {focus && focus.count > 0 && <FocusSurface focus={focus} />}
 
-      <div className="flex flex-col gap-2">
-        <span className="text-eyebrow uppercase text-muted">Five groups · four you can send</span>
-        <div className="h-px w-full bg-hairline" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-[9px] md:grid-cols-2 md:gap-5 xl:grid-cols-4">
-        <BucketCard
-          icon={FirstAidKit}
-          name="Blood panels"
-          meta={bloodPanelsMeta(bloodPanels)}
-          addLabel="Add a panel"
-        />
-        <BucketCard
-          icon={Heartbeat}
-          name="Wearables"
-          meta={wearablesMeta(wearables)}
-          addLabel="Add wearable data"
-        />
-        <BucketCard icon={Pill} name="Medications" meta={null} addLabel="Add a medication" />
-        <BucketCard icon={BookOpen} name="Notes" meta={null} addLabel="Write a note" />
-        <div className="md:hidden">
-          <IdentityRow />
+      {archive.status === "loading" ? (
+        <div role="status" className="rounded-inset bg-grouped p-[18px] text-[15px] text-secondary">
+          Opening your archive…
         </div>
-      </div>
+      ) : archive.status === "error" ? (
+        <div role="alert" className="rounded-inset border border-error/20 bg-grouped p-[18px] text-[15px] text-error">
+          Could not load your archive: {archive.message}
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-col gap-2">
+            <span className="text-eyebrow uppercase text-muted">Five groups · four you can send</span>
+            <div className="h-px w-full bg-hairline" />
+          </div>
 
-      <div className="hidden md:block">
-        <IdentityInset />
-      </div>
+          <div className="grid grid-cols-1 gap-[9px] md:grid-cols-2 md:gap-5 xl:grid-cols-4">
+            <BucketCard
+              icon={FirstAidKit}
+              name="Blood panels"
+              meta={bloodPanelsMeta(bloodPanels)}
+              addLabel="Add a panel"
+            />
+            <BucketCard
+              icon={Heartbeat}
+              name="Wearables"
+              meta={wearablesMeta(wearables)}
+              addLabel="Add wearable data"
+            />
+            <BucketCard icon={Pill} name="Medications" meta={null} addLabel="Add a medication" />
+            <BucketCard icon={BookOpen} name="Notes" meta={null} addLabel="Write a note" />
+            <div className="md:hidden">
+              <IdentityRow />
+            </div>
+          </div>
+
+          <div className="hidden md:block">
+            <IdentityInset />
+          </div>
+        </>
+      )}
     </div>
   )
 }
