@@ -9,10 +9,10 @@
 | 3 | Critical | F-03 | `/import-review` | “Looks right — add to archive” only adds a document ID to local React state. The success message says “Added to archive — ready to include in a share.” Refresh removes it, and New share cannot read it. Evidence: `app/import-review/review-screen.tsx:63-74`, `app/import-review/review-screen.tsx:419-425`. | Do not show the success claim. Disable or relabel the action as a preview until confirmation writes a durable record that Archive and New share can read. Add reload and cross-route tests before restoring “Added”. |
 | 4 | High | F-04 | `/landing` | Landing advertises an assistant that reads a scoped archive and loses access on the selected date. The sender Assistant navigation item is inert, and New share omits assistant controls because no backing path exists. Evidence: `app/landing/page.tsx:291-297`, `app/(sender)/layout.tsx:34-38`, `app/(sender)/new/page.tsx:36-45`. | Mark assistant access as planned or remove it from the shipped landing page until the complete assistant flow exists. |
 | 5 | High | F-05 | `/landing` at 400px | The mobile copy weakens two personal-data promises: it drops “and date of birth” from the set-aside claim and omits “Signing in takes one tap and creates nothing we can read.” The build matches the mobile frame, but the design rules identify both omissions as defects. Evidence: `app/landing/page.tsx:195-200`, `app/landing/page.tsx:308-313`, `DESIGN.md:1407-1412`. | Give mobile readers the same personal-data promise as desktop, or remove the unsupported promise at both sizes as required by F-01. |
-| 6 | High | F-06 | `/landing`, `/`, `/new` | Landing describes a persistent, five-group archive and record-level selection. The real Archive has no storage loader, and New share scopes only the files selected in the current compose flow. Evidence: `app/(sender)/page.tsx:27-33`, `app/(sender)/page.tsx:127-130`, `app/(sender)/new/page.tsx:20-29`. | Present this as future behavior until Add → Review → Archive → New share works across navigation and reload. Keep the current file-based New share behavior; do not fabricate archive records. |
+| 6 | High | F-06 | `/landing`, `/`, `/new` | Landing promises group and record-level selection, and Archive presents five imported groups. The real Archive has no storage loader. New share scopes only the files selected in the current compose flow. Evidence: `app/landing/page.tsx:203-207`, `app/(sender)/page.tsx:27-33`, `app/(sender)/page.tsx:127-130`, `app/(sender)/new/page.tsx:20-29`. | Present the grouped archive behavior as future behavior until Add → Review → Archive → New share works across navigation and reload. Keep the current file-based New share behavior; do not fabricate archive records. |
 | 7 | High | F-07 | `/add` | Medications, Health history, and Notes look like supported choices but are disabled and have no “Later” or “Not available” label. Only Letter/report says “Later.” The screen also says typed items skip review although no typed-item flow opens. Evidence: `app/add/page.tsx:122-133`, `app/add/page.tsx:163-172`. | Label every unavailable choice directly, and replace capability descriptions with future-tense copy until those buttons work. |
 | 8 | Medium | F-08 | `/`, `/new`, `/shares` | A build-only `HealthSend` introduction, identity card, and protocol footer sit inside all sender pages. They move the frame title and primary task down substantially. On mobile, the archive content starts below two extra blocks. Evidence: `app/(sender)/layout.tsx:42-73`. | Remove this second page header from the sender layout or redesign the frames to include it. Keep identity/account controls in compact chrome that does not displace the task. |
-| 9 | Medium | F-09 | `/shares` | The frame promises named recipients, roles, structured scopes, assistant activity, locations, and “On their device.” The shipped history stores only file kind/count and times, so the build can only show generic names such as `CSV share`. Evidence: `app/(sender)/shares/local-history.ts:27-37`, `app/(sender)/shares/page.tsx:186-200`, `app/(sender)/shares/page.tsx:235-239`. | Treat the richer frame as future behavior. Add only fields that the product can derive truthfully; do not infer recipient identity, location, device binding, or assistant activity. |
+| 9 | Medium | F-09 | `/shares` | The frame promises named recipients, roles, structured scopes, assistant activity, locations, and “On their device.” Local history stores file/share metadata and lifecycle flags, but no recipient, role, scope, location, device, or assistant semantics. The build can only show generic names such as `CSV share`. Evidence: `app/(sender)/shares/local-history.ts:27-38`, `app/(sender)/shares/page.tsx:186-200`, `app/(sender)/shares/page.tsx:235-239`. | Treat the richer frame as future behavior. Add only fields that the product can derive truthfully; do not infer recipient identity, location, device binding, or assistant activity. |
 | 10 | Medium | F-10 | Recipient outcome states | Expired, revoked, unavailable, no-key, and error use an old 672px card with no recipient header. They expose implementation terms (`grant`, `Arkiv`, `Swarm`, `decryption key`, `link secret`) even though the design rules ban those terms in flows. Unavailable and error also print raw backend messages. Evidence: `app/s/[key]/page.tsx:355-455`, `DESIGN.md:1169-1173`. | Use the branded outcome family and plain language. Keep revoked separate from natural expiry. Log raw errors; do not render them to the recipient. |
 | 11 | Medium | F-11 | `/new` at 400px | The extra sender header, identity card, and large truthful demo notice dominate the first viewport. The fixed summary bar overlays the notice, while the first selectable scope begins below it. | Keep the warning, but make it short and place detail behind disclosure. Reserve bottom padding equal to the fixed summary bar and move the task before account detail. |
 | 12 | Low | F-12 | `/add`, `/import-review` at 400px | Both mobile frames begin with `healthsend`; neither build does. Their desktop rail has the brand, but the mobile top edge has no product identity. | Add the compact mobile brand header or update the frames consistently. |
@@ -24,7 +24,7 @@
 - Branch: `story/screens-audit`
 - Audited revision: `bc185b6b4ea6fcb2fa19cdd732550fdf51b1dfb4` (`board: file H-44 — the archive is never written and never read`)
 - Viewports: `1440x1024` and `400x900`
-- Design source: every desktop and mobile frame was read independently from `healthsend.pen` through read-only Pencil calls. The design file was not changed.
+- Design source: every desktop and mobile frame was read independently from `healthsend.pen` through read-only Pencil calls. I refreshed three extracted frames after the live file changed during the retry. The final hashes match the live text. The design file was not changed.
 - Browser source: Playwright ran the actual Next.js app on `http://localhost:3107`. Recipient outcomes used the existing encrypted fixture and offline Arkiv, holder, and Swarm stubs.
 - Sender authentication: `/`, `/new`, and `/shares` require a passkey that headless Playwright cannot complete. A temporary `/audit-preview/[screen]` route supplied deterministic data to the real screen components under the real sender layout. The preview route, exports, fixture identity injection, and audit spec were removed after capture. No product-code change remains.
 - Dynamic fixture strings such as `Audit fixture`, its address, dates, filenames, counts, and recipient labels are listed in the string audit because they were visible. They are evidence data, not fixed product copy.
@@ -205,21 +205,19 @@ The final desktop screenshot visibly contains the frame fixture value `Elena Ros
 
 **Frame → build**
 
-- `A label just for you. It never appears on her page.` → `A label just for you. It never appears on their page.`
-- `How she opens it` → `How they open it`.
-- `She opens it once and it stops working anywhere else. You'll see when she did.` → `Not available in this build.`
+- `They open it once and it stops working anywhere else. You'll see when they did.` → `Not available in this build.`
 - `Twelve weeks from today.` → `Custom — ends when you pick a date and time.`
-- `On 4 December her access ends on its own. There is nothing for you to remember and nothing for her to give back.` → `On 4 December 2026 their access ends on its own. There is nothing for you to remember and nothing for them to give back.`
+- `On 4 December their access ends on its own. There is nothing for you to remember and nothing for them to give back.` → `On 4 December 2026 their access ends on its own. There is nothing for you to remember and nothing for them to give back.`
 
-The gender-neutral `they/their` changes are correct because a label does not establish a person’s gender.
+The current frame and build use gender-neutral `they/their` copy because a label does not establish a person’s gender.
 
 **Frame only: unsupported future controls**
 
 - `Add a PIN`
-- `Send it to her in a different app, not with the link.`
-- `Let her assistant read it too`
-- `She can connect the assistant she already uses.`
-- `What her assistant can see`
+- `Send it to them in a different app, not with the link.`
+- `Let their assistant read it too`
+- `They can connect the assistant they already use.`
+- `What their assistant can see`
 
 **Build only**
 
@@ -231,7 +229,7 @@ The gender-neutral `they/their` changes are correct because a label does not est
 - `2 min`; `10 min`; `1 hr`; `7 days`; `12 wks`.
 - The browser’s visible native custom input also shows `04/12/2026, 08:00`.
 
-`Elena Rossi`, `4 December 2026`, `Anyone with the link`, its risk explanation, and `Create the link` match the frame. All other desktop strings match.
+`Elena Rossi`, `A label just for you. It never appears on their page.`, `How they open it`, `4 December 2026`, `Anyone with the link`, its risk explanation, and `Create the link` match the frame. All other desktop strings match.
 
 ### Complete mobile string differences (`ammIs`)
 
@@ -642,6 +640,7 @@ None.
 
 Entries are in ascending confidence order.
 
-1. **Choice:** Report missing mobile `healthsend` branding as a low visual finding. **Gap:** The brief did not set a severity for brand-only drift. **Reach:** A later story can fix the mobile shell without changing data behavior. **Verdict:** sound. **Confidence:** 92.
-2. **Choice:** List dynamic fixture text, but do not treat fixture-value differences as fixed product-copy defects. **Gap:** The brief required every string difference but did not classify runtime data. **Reach:** Future audits can change fixtures without filing false copy regressions. **Verdict:** sound. **Confidence:** 96.
-3. **Choice:** Map natural expiry to the ended frames. Do not map revoked, no-key, or error to them. **Gap:** The design has no dedicated frames for those three outcomes. **Reach:** Later outcome designs must preserve each state’s different cause and recovery step. **Verdict:** sound. **Confidence:** 99.
+1. **Choice:** Refresh extracted frame text when the live Pencil file changed during the retry. **Gap:** The brief did not pin a design revision. **Reach:** The final string audit follows the current design source instead of the first extraction. **Verdict:** sound. **Confidence:** 90.
+2. **Choice:** Report missing mobile `healthsend` branding as a low visual finding. **Gap:** The brief did not set a severity for brand-only drift. **Reach:** A later story can fix the mobile shell without changing data behavior. **Verdict:** sound. **Confidence:** 92.
+3. **Choice:** List dynamic fixture text, but do not treat fixture-value differences as fixed product-copy defects. **Gap:** The brief required every string difference but did not classify runtime data. **Reach:** Future audits can change fixtures without filing false copy regressions. **Verdict:** sound. **Confidence:** 96.
+4. **Choice:** Map natural expiry to the ended frames. Do not map revoked, no-key, or error to them. **Gap:** The design has no dedicated frames for those three outcomes. **Reach:** Later outcome designs must preserve each state’s different cause and recovery step. **Verdict:** sound. **Confidence:** 99.
