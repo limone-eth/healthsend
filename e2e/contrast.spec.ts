@@ -1,24 +1,29 @@
 import { test, expect } from "@playwright/test"
 
 /**
- * H-27: a regression guard for the exact bug this story fixes — a token
- * that flips paired with one that does not, resolving to two near-identical
+ * A regression guard for the exact bug H-27 found and H-40 fixed: a token
+ * that flipped paired with one that did not, resolving to two near-identical
  * colours (near-black ink on a near-black surface, or the reverse). This is
  * a loose net, not a WCAG audit: the threshold is set to catch genuinely
  * invisible text, not to flag `secondary`/`muted`'s deliberately lower
  * contrast against paper.
  *
+ * The app now has one palette, drawn in DESIGN.md, and no `@media
+ * (prefers-color-scheme: dark)` block to switch it. `colorScheme: "dark"` is
+ * still forced here on purpose: it is the regression case — if a dark token
+ * block ever comes back, this proves the light palette held anyway, because
+ * the OS asking for dark is exactly the condition that used to change these
+ * colours and now must not.
+ *
  * `/landing`, `/kitchen-sink` and `/chrome-preview` render with no network
  * dependency, so they need no route stubbing — unlike `recipient.spec.ts`.
- * `colorScheme` is forced here rather than left to the project, so this
- * check always exercises dark mode regardless of which project runs it.
  */
 test.use({ colorScheme: "dark" })
 
 const PAGES = ["/landing", "/kitchen-sink", "/chrome-preview"]
 
 for (const path of PAGES) {
-  test(`${path} has no near-invisible text in dark mode`, async ({ page }) => {
+  test(`${path} has no near-invisible text with the OS set to dark`, async ({ page }) => {
     await page.goto(path)
 
     const offenders = await page.evaluate(() => {

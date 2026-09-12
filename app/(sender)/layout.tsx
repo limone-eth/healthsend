@@ -62,7 +62,7 @@ export default function SenderLayout({ children }: { children: ReactNode }) {
 
         {children}
 
-        <footer className="mt-16 border-t border-line pt-6 text-xs text-muted">
+        <footer className="mt-16 border-t border-hairline pt-6 text-xs text-muted">
           {/* This described the v1 architecture, where the grant carried the wrapped
               key. It no longer does — that was the whole point of the rewrite, and
               a grant now carries a reference and a commitment and nothing else. */}
@@ -111,7 +111,7 @@ function ConnectionPanel({
           {signedIn && booting && <p className="mt-2 text-xs text-muted">Deriving your keys…</p>}
 
           {signedIn && error && (
-            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+            <p className="mt-2 text-xs text-red-600">
               Could not derive your grant key: {error}
             </p>
           )}

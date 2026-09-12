@@ -31,7 +31,7 @@ export function DemoNotice() {
   return (
     <div
       role="note"
-      className="mb-4 rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+      className="mb-4 rounded-lg border border-amber-400 bg-amber-50 p-4 text-sm text-amber-900"
     >
       <p className="font-medium">This is a hackathon demo.</p>
       <p className="mt-1">

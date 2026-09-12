@@ -69,7 +69,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             multiple
             accept=".pdf,.csv,.txt,.json,text/plain,text/csv,application/pdf"
             onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-            className="w-full text-sm file:mr-3 file:rounded-md file:border file:border-line file:bg-background file:px-3 file:py-1.5 file:text-sm"
+            className="w-full text-sm file:mr-3 file:rounded-md file:border file:border-hairline file:bg-canvas file:px-3 file:py-1.5 file:text-sm"
           />
           {files.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -116,7 +116,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
           {stage ?? "Create link"}
         </Button>
 
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
         {result && <ShareResult result={result} />}
       </div>
@@ -134,7 +134,7 @@ function ShareResult({ result }: { result: CreateSendResult }) {
   const [copied, setCopied] = useState(false)
 
   return (
-    <div className="rounded-lg border border-line bg-background p-4">
+    <div className="rounded-lg border border-hairline bg-canvas p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-muted">Share this link</p>
       <p className="mt-2 break-all font-mono text-xs">{result.url}</p>
       <div className="mt-3 flex items-center gap-2">

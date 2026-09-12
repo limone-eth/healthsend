@@ -98,8 +98,8 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
               onClick={() => setActive(index)}
               className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
                 index === active
-                  ? "border-accent bg-accent text-background"
-                  : "border-line hover:bg-line/40"
+                  ? "border-ink bg-ink text-canvas"
+                  : "border-hairline hover:bg-hairline/40"
               }`}
             >
               {f.header.name}
@@ -204,7 +204,7 @@ function PdfPreview({ file }: { file: PackedFile }) {
       // capture. That is the right fix and it is not a weekend's work.
       referrerPolicy="no-referrer"
       title={file.header.name}
-      className="h-[70vh] w-full rounded-lg border border-line"
+      className="h-[70vh] w-full rounded-lg border border-hairline"
     />
   )
 }
@@ -242,7 +242,7 @@ function CsvTable({ text }: { text: string }) {
     <div className="max-h-[70vh] overflow-auto">
       <table className="w-full text-left text-xs">
         <thead className="sticky top-0 bg-surface">
-          <tr className="border-b border-line">
+          <tr className="border-b border-hairline">
             {head?.map((cell, index) => (
               <th key={index} className="whitespace-nowrap px-2 py-1.5 font-medium">
                 {cell}
@@ -252,7 +252,7 @@ function CsvTable({ text }: { text: string }) {
         </thead>
         <tbody>
           {body.map((row, rowIndex) => (
-            <tr key={rowIndex} className="border-b border-line/60">
+            <tr key={rowIndex} className="border-b border-hairline/60">
               {row.map((cell, cellIndex) => (
                 <td key={cellIndex} className="whitespace-nowrap px-2 py-1.5 font-mono">
                   {cell}
