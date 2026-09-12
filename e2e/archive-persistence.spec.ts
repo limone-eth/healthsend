@@ -113,6 +113,11 @@ async function fulfillArchiveBackend(context: BrowserContext, backend: ArchiveBa
   })
 }
 
+// H-66 narrows this screen to PDFs: a blood-panel record must still round-trip through
+// the archive (proven independently by scripts/archive-roundtrip.mjs), but it must not
+// appear as a row here, and it must not stop the empty state from showing.
+// Broke by design: drop the `record.kind === "document"` filter in `ArchiveScreen`
+// (app/(sender)/page.tsx) and this panel starts rendering as if it were a PDF.
 test("a sender adds a panel and reads it after reload and in a fresh browser", async ({ browser, page, baseURL }) => {
   const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
   await fulfillArchiveBackend(page.context(), backend)
@@ -131,7 +136,8 @@ test("a sender adds a panel and reads it after reload and in a fresh browser", a
   await page.getByRole("button", { name: "Add to archive" }).click()
 
   await expect(page).toHaveURL(`${baseURL}/`)
-  await expect(page.getByText("1 panel · latest 12 September").and(page.locator(":visible"))).toBeVisible()
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
+  await expect(page.getByText(/Ferritin/)).toHaveCount(0)
   expect(backend.feedReference).toMatch(/^[0-9a-f]{64}$/)
   const encrypted = backend.blobs.get(backend.feedReference!)
   expect(encrypted).toBeDefined()
@@ -139,14 +145,14 @@ test("a sender adds a panel and reads it after reload and in a fresh browser", a
 
   const readsBeforeReload = backend.gatewayReads
   await page.reload()
-  await expect(page.getByText("1 panel · latest 12 September").and(page.locator(":visible"))).toBeVisible()
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
   expect(backend.gatewayReads).toBeGreaterThan(readsBeforeReload)
 
   const freshContext = await browser.newContext({ baseURL })
   await fulfillArchiveBackend(freshContext, backend)
   const freshPage = await freshContext.newPage()
   await freshPage.goto("/")
-  await expect(freshPage.getByText("1 panel · latest 12 September").and(freshPage.locator(":visible"))).toBeVisible()
+  await expect(freshPage.getByText("No blood test PDFs yet")).toBeVisible()
   await freshContext.close()
 })
 
@@ -173,22 +179,23 @@ test("a sender adds wearable data and reads it after reload", async ({ page }) =
   })
   await page.getByRole("button", { name: "Add to archive" }).click()
 
-  await expect(page.getByText("1 kind · latest 12 September").and(page.locator(":visible"))).toBeVisible()
+  // A wearable series is not a blood test PDF: the archive page must still show its
+  // empty state, not a "1 kind · latest ..." bucket summary (that group is gone).
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
   await page.reload()
-  await expect(page.getByText("1 kind · latest 12 September").and(page.locator(":visible"))).toBeVisible()
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
 })
 
+// Broke by design: change `eyebrowLabel`'s singular branch in app/(sender)/page.tsx from
+// "BLOOD TEST" to "BLOOD TESTS" and the singular assertion below goes red.
 test("a genuinely empty archive keeps the empty treatment", async ({ page }) => {
   const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
   await fulfillArchiveBackend(page.context(), backend)
 
   await page.goto("/")
-  // Five visible: Blood panels, Wearables, Medications, Notes, and H-63's Documents. The
-  // mobile `BucketRow` list and the desktop `BucketCard` grid (app/(sender)/page.tsx) both
-  // render "Nothing here yet" for each empty bucket, one of them always hidden via CSS
-  // rather than absent from the DOM (R3-020) — so count only what is visible.
-  await expect(page.getByText("Nothing here yet").and(page.locator(":visible"))).toHaveCount(5)
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
   await expect(page.getByText(/could not load your archive/i)).toHaveCount(0)
+  await expect(page.getByText(/BLOOD TEST/)).toHaveCount(0)
 })
 
 test("an archive load failure is not shown as an empty archive", async ({ page }) => {
@@ -201,7 +208,7 @@ test("an archive load failure is not shown as an empty archive", async ({ page }
 
   await page.goto("/")
   await expect(page.getByText(/could not load your archive/i)).toBeVisible()
-  await expect(page.getByText("Nothing here yet")).toHaveCount(0)
+  await expect(page.getByText("No blood test PDFs yet")).toHaveCount(0)
 })
 
 const isoDayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" })
@@ -224,18 +231,22 @@ test("a sender picks two PDFs in one go and reads both after reload", async ({ p
 
   await expect(page).toHaveURL(/\/$/)
   const today = isoDayMonth.format(new Date())
-  // Documents renders in both the mobile row list and the desktop card grid, one
-  // hidden by CSS (R3-020), so this meta text exists twice — assert the visible one.
-  await expect(page.getByText(`2 documents · latest ${today}`).filter({ visible: true })).toBeVisible()
-  await expect(page.getByText("Blood test, March.pdf")).toBeVisible()
-  await expect(page.getByText("Thyroid panel, June.pdf")).toBeVisible()
+  // H-66: the eyebrow counts real rows, not a bucket summary.
+  await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+  // Each row renders in both the mobile and desktop DOM, one hidden by CSS (R3-020), so
+  // the name text exists twice — narrow to the currently-visible copy before asserting.
+  await expect(page.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(
+    page.getByText(new RegExp(`added ${today}`)).filter({ visible: true }),
+  ).toHaveCount(2)
 
   // The whole pick is one archive upload, not one per file.
   expect(backend.blobs.size).toBe(blobsBeforeAdd + 1)
 
   await page.reload()
-  await expect(page.getByText("Blood test, March.pdf")).toBeVisible()
-  await expect(page.getByText("Thyroid panel, June.pdf")).toBeVisible()
+  await expect(page.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
 })
 
 test("a non-PDF renamed .pdf is rejected and nothing is uploaded", async ({ page }) => {
