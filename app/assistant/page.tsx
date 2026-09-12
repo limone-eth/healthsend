@@ -26,11 +26,13 @@ import { authCommitment, blindAttribute, generateContentKey } from "@/lib/crypto
 import { ensureFunded, getIdentity, type Identity } from "@/lib/identity"
 import { signedMessage } from "@/lib/revoke"
 import { disconnect, CONNECT_CONTAINER_ID } from "@/lib/swarm"
-import type { ArchiveRecord, ScopedShare, SharedRecord } from "@/lib/archive"
+import type { ArchiveRecord, BloodPanelRecord, ScopedShare, SharedRecord, WearableSeriesRecord } from "@/lib/archive"
 
 const DAY_SECONDS = 86_400
 
-type ScopeKind = ArchiveRecord["kind"]
+// Documents (H-63) have no scoped-share shape yet and are not offered here —
+// the assistant connector stays limited to the two kinds it already knew.
+type ScopeKind = "blood-panel" | "wearable-series"
 
 type MintInput = {
   share: ScopedShare
@@ -92,6 +94,7 @@ function scopeLabels(scope: ScopeKind[]): string[] {
  */
 function makeScopedShare(records: ArchiveRecord[], selected: Set<ScopeKind>): ScopedShare {
   const shared: SharedRecord[] = records
+    .filter((record): record is BloodPanelRecord | WearableSeriesRecord => record.kind !== "document")
     .filter((record) => selected.has(record.kind))
     .map((record) => {
       if (record.kind === "blood-panel") {
@@ -329,9 +332,18 @@ function ConsentScreen({
   records: ArchiveRecord[]
   onMint: (input: MintInput) => Promise<void>
 }) {
-  const initialKinds = useMemo(
-    () => new Set(records.map((record) => record.kind)),
+  // Documents (H-63) have no scoped-share shape yet, so this screen offers
+  // only the two kinds it already knew how to share.
+  const shareableRecords = useMemo(
+    () =>
+      records.filter(
+        (record): record is BloodPanelRecord | WearableSeriesRecord => record.kind !== "document",
+      ),
     [records],
+  )
+  const initialKinds = useMemo(
+    () => new Set(shareableRecords.map((record) => record.kind)),
+    [shareableRecords],
   )
   const [selected, setSelected] = useState<Set<ScopeKind>>(initialKinds)
   const [durationDays, setDurationDays] = useState(14)
@@ -343,16 +355,16 @@ function ConsentScreen({
 
   const counts = useMemo(() => {
     return {
-      "blood-panel": records.filter((record) => record.kind === "blood-panel").length,
-      "wearable-series": records.filter((record) => record.kind === "wearable-series").length,
+      "blood-panel": shareableRecords.filter((record) => record.kind === "blood-panel").length,
+      "wearable-series": shareableRecords.filter((record) => record.kind === "wearable-series").length,
     } satisfies Record<ScopeKind, number>
-  }, [records])
+  }, [shareableRecords])
 
   const expiresAt = customEnd
     ? Math.floor(new Date(`${customEnd}T23:59:59.000Z`).getTime() / 1000)
     : now + durationDays * DAY_SECONDS
   const ttlSeconds = Math.max(0, expiresAt - now)
-  const canConnect = records.length > 0 && selected.size > 0 && ttlSeconds > 0 && !submitting
+  const canConnect = shareableRecords.length > 0 && selected.size > 0 && ttlSeconds > 0 && !submitting
 
   function toggle(kind: ScopeKind) {
     if (counts[kind] === 0) return

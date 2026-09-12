@@ -1,9 +1,11 @@
 import type {
   BloodMarker,
   BloodPanelRecord,
+  DocumentRecord,
   ReferenceRange,
   WearableSeriesRecord,
 } from "./archive"
+import { toBase64Url } from "./crypto.ts"
 
 export const DEMO_SHARED_MARKER_IDS = [
   "marker:ferritin",
@@ -98,6 +100,22 @@ export const DEMO_SLEEP_SERIES: WearableSeriesRecord = {
     { date: "2026-09-02", value: 372 },
     { date: "2026-09-03", value: 396 },
   ],
+}
+
+export const DEMO_DOCUMENT_BYTES = new TextEncoder().encode(
+  "%PDF-1.4\n% HealthSend fixture — not a real report.\n%%EOF\n",
+)
+
+export const DEMO_DOCUMENT: DocumentRecord = {
+  id: "record:document:2026-08-20",
+  kind: "document",
+  name: "Thyroid panel, June.pdf",
+  size: DEMO_DOCUMENT_BYTES.length,
+  provenance: {
+    sourceId: "source:document:2026-08-20",
+    importedAt: "2026-08-20T09:00:00.000Z",
+  },
+  bytes: toBase64Url(DEMO_DOCUMENT_BYTES),
 }
 
 function marker(params: {

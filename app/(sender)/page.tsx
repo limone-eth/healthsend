@@ -6,6 +6,7 @@ import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
 import {
   ArrowDown,
   BookOpen,
+  FileText,
   FirstAidKit,
   Heartbeat,
   LockSimple,
@@ -19,17 +20,23 @@ import { listMySends } from "@/lib/sends"
 import { getIdentity } from "@/lib/identity"
 import { accessLogMessage } from "@/lib/access-log"
 import { loadMyArchive } from "@/lib/archive-store"
-import type { ArchiveRecord, BloodPanelRecord, WearableSeriesRecord } from "@/lib/archive"
+import type { ArchiveRecord, BloodPanelRecord, DocumentRecord, WearableSeriesRecord } from "@/lib/archive"
 
 /**
  * 2.1 "Your archive" — pen ids `ACUf3` (desktop) / `zsDfc` (mobile), read via
  * the pencil MCP tool against `healthsend.pen`, not a screenshot.
  *
- * Groups read from `lib/archive.ts` (H-13), which defines only two record
- * kinds — `blood-panel` and `wearable-series`. Medications and Notes have no
- * archive model yet, so those two groups remain empty until a later story adds
- * one. Signed-in senders load their encrypted archive through its identity-owned
- * Swarm feed. The screen keeps loading, empty and failure states distinct.
+ * Groups read from `lib/archive.ts`, which defines `blood-panel`,
+ * `wearable-series` and, since H-63, `document`. Medications and Notes have
+ * no archive model yet, so those two groups remain empty until a later story
+ * adds one. Signed-in senders load their encrypted archive through its
+ * identity-owned Swarm feed. The screen keeps loading, empty and failure
+ * states distinct.
+ *
+ * Documents are the one group whose bucket card is not the whole story: a
+ * PDF's name is itself the point of "see both listed" (H-63's evidence), so
+ * `DocumentRow` lists every one underneath the grid rather than leaving the
+ * card's summary count to stand in for it.
  */
 
 const isoDayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" })
@@ -56,6 +63,23 @@ function wearablesMeta(records: WearableSeriesRecord[]): string | null {
   const latest = records.reduce((a, b) => (a.range.through > b.range.through ? a : b))
   const noun = records.length === 1 ? "kind" : "kinds"
   return `${records.length} ${noun} · latest ${formatIsoDate(latest.range.through)}`
+}
+
+function documentsMeta(records: DocumentRecord[]): string | null {
+  if (records.length === 0) return null
+  const latest = records.reduce((a, b) =>
+    a.provenance.importedAt > b.provenance.importedAt ? a : b,
+  )
+  const noun = records.length === 1 ? "document" : "documents"
+  return `${records.length} ${noun} · latest ${formatIsoDate(latest.provenance.importedAt.slice(0, 10))}`
+}
+
+/** "240 KB" — mirrors `formatBytes` in `app/s/[key]/page.tsx`, kept local
+ * rather than imported since that directory belongs to another story. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 type ArchiveLoadState =
@@ -161,6 +185,7 @@ function ArchiveScreen() {
   const records = archive.status === "ready" ? archive.records : []
   const bloodPanels = records.filter((r): r is BloodPanelRecord => r.kind === "blood-panel")
   const wearables = records.filter((r): r is WearableSeriesRecord => r.kind === "wearable-series")
+  const documents = records.filter((r): r is DocumentRecord => r.kind === "document")
 
   return (
     <div className="flex w-full flex-col gap-7 md:gap-[30px]">
@@ -179,7 +204,7 @@ function ArchiveScreen() {
       ) : (
         <>
           <div className="flex flex-col gap-2">
-            <span className="text-eyebrow uppercase text-muted">Five groups · four you can send</span>
+            <span className="text-eyebrow uppercase text-muted">Six groups · five you can send</span>
             <div className="h-px w-full bg-hairline" />
           </div>
 
@@ -198,10 +223,18 @@ function ArchiveScreen() {
             />
             <BucketCard icon={Pill} name="Medications" meta={null} addLabel="Add a medication" />
             <BucketCard icon={BookOpen} name="Notes" meta={null} addLabel="Write a note" />
+            <BucketCard
+              icon={FileText}
+              name="Documents"
+              meta={documentsMeta(documents)}
+              addLabel="Add a document"
+            />
             <div className="md:hidden">
               <IdentityRow />
             </div>
           </div>
+
+          {documents.length > 0 && <DocumentList documents={documents} />}
 
           <div className="hidden md:block">
             <IdentityInset />
@@ -226,7 +259,7 @@ function ArchiveHeader() {
         <div className="flex flex-col gap-1.5">
           <h1 className="text-display-mobile text-ink">Your archive</h1>
           <p className="text-[15px] leading-[1.45] text-secondary">
-            Everything you have imported, in five groups.
+            Everything you have imported, in six groups.
           </p>
         </div>
         <AddToArchiveButton className="w-full" />
@@ -236,7 +269,7 @@ function ArchiveHeader() {
         <div className="flex flex-col gap-2">
           <h1 className="text-display text-ink">Your archive</h1>
           <p className="max-w-[760px] text-[17px] leading-[1.45] tracking-[-0.25px] text-secondary">
-            Everything you have imported, in five groups. Nothing leaves this page unless you send
+            Everything you have imported, in six groups. Nothing leaves this page unless you send
             it.
           </p>
         </div>
@@ -382,6 +415,39 @@ function BucketCard({
 }
 
 // ---------------------------------------------------------------------------
+// Document list — no pen frame; H-63 introduces the group. The bucket card
+// above gives the count and latest date, same as every other group. This
+// list is what makes an individual PDF findable: its evidence is "see both
+// listed", not "see the count go up".
+// ---------------------------------------------------------------------------
+
+function DocumentList({ documents }: { documents: DocumentRecord[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[13px] font-semibold uppercase tracking-[0.4px] text-muted">Documents</span>
+      <div className="flex w-full flex-col overflow-hidden rounded-card border border-hairline">
+        {documents.map((document) => (
+          <DocumentRow key={document.id} document={document} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DocumentRow({ document }: { document: DocumentRecord }) {
+  const added = formatIsoDate(document.provenance.importedAt.slice(0, 10))
+  return (
+    <div className="flex h-14 w-full items-center gap-3 border-b border-hairline bg-surface px-[18px] last:border-b-0">
+      <FileText size={18} weight="light" className="shrink-0 text-secondary" />
+      <span className="flex-1 truncate text-[15px] text-ink">{document.name}</span>
+      <span className="shrink-0 text-[13px] text-muted">
+        Added {added} · {formatBytes(document.size)}
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Identity — pen id `z2DL5o` (desktop, an inset note below the grid) and
 // `iSyOR` (mobile, the fifth row inside the same list as the other groups).
 // Never opens, never gets an Add: locked per DESIGN.md's scope-row rule for
@@ -419,9 +485,13 @@ function IdentityInset() {
         <span className="text-[13px] leading-[1.45] text-secondary">
           {/* Frame `whPAl`. True since H-36: `createSend` runs every upload
               through `importDocument` before anything is encrypted — see
-              lib/sends.ts, `importForSend`. */}
-          Your name and date of birth were separated from the rest the moment you imported. They
-          stay on this page — no share has ever included them, and none can.
+              lib/sends.ts, `importForSend`. A PDF (H-63) does not go through
+              that step — it is kept whole, including anything printed on it —
+              so the claim is scoped to panels and wearable data rather than
+              "everything you imported". */}
+          Your name and date of birth are separated from the rest the moment you import a panel or
+          wearable file. They stay on this page. A PDF is different: it is kept exactly as you added
+          it, and nothing can share it yet.
         </span>
       </div>
       <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-capsule border border-silver bg-surface px-3 text-[12.5px] font-semibold text-muted">

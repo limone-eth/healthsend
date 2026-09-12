@@ -19,6 +19,13 @@ Separate metrics use separate record IDs.
 Both shapes have archive-only provenance. The provenance points to an opaque source ID.
 It does not contain a filename. Scoped shares remove provenance before they encode recipient bytes.
 
+A PDF is one `DocumentRecord` (H-63). It holds the whole file as base64url bytes, plus its display
+name and size; `provenance.importedAt` doubles as its added date, the same way the other two shapes
+have no separate "added" field. Unlike the other two shapes, a document's provenance carries no
+`setAside` step and cannot be stripped for a scoped share — a document cannot enter a scoped share at
+all yet. `validateRecord` rejects it outright whenever `needsProvenance` is false, rather than
+allowing a provenance-free document through. Sharing a document is H-64, not this shape.
+
 Provenance also carries `setAside`: name, date of birth, address and any patient or
 record identifier that `lib/import.ts` found and held back at import, before a record
 is ever archived. Neither `BloodPanelRecord` nor `WearableSeriesRecord` has a field for
@@ -42,10 +49,14 @@ recover both from the signed-in identity alone, including in a fresh browser con
 user database, or additional service is part of the address path.
 
 `/add` reads supported source files in the browser and retains only fields represented by an
-`ArchiveRecord`. The original file and filename are not retained. Record metadata stays inside the
-encrypted blob; the feed exposes only its current reference. The update path uploads replacement
-ciphertext before moving the feed reference, so a failed blob upload leaves the previous archive
-readable.
+`ArchiveRecord`. For a CSV or JSON file, the original file and filename are not retained — only the
+readings `lib/archive-input.ts` can parse into a record. For a PDF, the opposite is true by design
+(H-62's operator decision): the file itself, including its display name, is what the archive keeps.
+Record metadata stays inside the encrypted blob; the feed exposes only its current reference. The
+update path uploads replacement ciphertext before moving the feed reference, so a failed blob upload
+leaves the previous archive readable. Picking several PDFs in one step still produces one update: all
+the resulting records go through a single `addArchiveRecords` call and a single upload, never one
+upload per file.
 
 The current update is a read-modify-write operation over the complete archive. Two tabs that start
 from the same feed value can overwrite one another; the last successful feed update wins. The model

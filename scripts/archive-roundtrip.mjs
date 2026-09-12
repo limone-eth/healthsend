@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 
 const { addArchiveRecords, createArchive, openArchive, openScopedShare, scopeArchive } =
   await import("../lib/archive.ts")
-const { DEMO_BLOOD_PANEL, DEMO_SHARED_MARKER_IDS, DEMO_SLEEP_SERIES } =
+const { DEMO_BLOOD_PANEL, DEMO_DOCUMENT, DEMO_DOCUMENT_BYTES, DEMO_SHARED_MARKER_IDS, DEMO_SLEEP_SERIES } =
   await import("../lib/archive-demo.ts")
+const { fromBase64Url, toBase64Url } = await import("../lib/crypto.ts")
 
 const senderKey = crypto.getRandomValues(new Uint8Array(32))
 
@@ -134,5 +135,82 @@ const sparseShare = openScopedShare(sparseBytes)
 assert.deepEqual(sparseShare.records[0].range, sparseSeries.range)
 assert.deepEqual(sparseShare.records[0].values, sparseSeries.values)
 console.log("PASS  wearable ranges preserve missing nights without invalid recipient bytes")
+
+// H-63: a document record (a PDF, stored whole) round-trips through
+// createArchive / addArchiveRecords / openArchive alongside the other kinds,
+// and picking two PDFs in one step still lands as one archive update.
+const SECOND_DOCUMENT_BYTES = new TextEncoder().encode("%PDF-1.4\n% second fixture\n%%EOF\n")
+const SECOND_DOCUMENT = {
+  id: "record:document:2026-09-01",
+  kind: "document",
+  name: "Blood test, March.pdf",
+  size: SECOND_DOCUMENT_BYTES.length,
+  provenance: { sourceId: "source:document:2026-09-01", importedAt: "2026-09-01T09:00:00.000Z" },
+  bytes: toBase64Url(SECOND_DOCUMENT_BYTES),
+}
+
+let documentArchive = await createArchive(senderKey, [DEMO_BLOOD_PANEL])
+documentArchive = await addArchiveRecords(documentArchive, senderKey, [DEMO_DOCUMENT, SECOND_DOCUMENT])
+const opened = await openArchive(documentArchive, senderKey)
+const documents = opened.records.filter((record) => record.kind === "document")
+assert.equal(documents.length, 2, "both PDFs picked in one step must both land in the archive")
+assert.deepEqual(
+  documents.map((record) => record.name).sort(),
+  ["Blood test, March.pdf", "Thyroid panel, June.pdf"],
+)
+const reopenedDocument = documents.find((record) => record.id === DEMO_DOCUMENT.id)
+console.log("PASS  two PDFs picked at once both round-trip through addArchiveRecords in one call")
+
+// The stored bytes decode back to exactly the original PDF — not just a
+// same-length stand-in.
+assert.deepEqual(fromBase64Url(reopenedDocument.bytes), DEMO_DOCUMENT_BYTES)
+console.log("PASS  a stored document's bytes decode back to the exact original PDF")
+
+// Malformed documents are rejected by validation, each for the specific
+// reason named in docs/stories/H-63.md.
+await assert.rejects(
+  createArchive(senderKey, [{ ...DEMO_DOCUMENT, size: DEMO_DOCUMENT.size + 1 }]),
+  /Document size does not match its bytes/,
+  "a document whose declared size disagrees with its bytes must be rejected",
+)
+const notPdfBytes = new TextEncoder().encode("not a pdf at all")
+await assert.rejects(
+  createArchive(senderKey, [{ ...DEMO_DOCUMENT, bytes: toBase64Url(notPdfBytes), size: notPdfBytes.length }]),
+  /Document is not a PDF/,
+  "bytes that do not start with %PDF- must be rejected even with a matching size",
+)
+await assert.rejects(
+  createArchive(senderKey, [{ ...DEMO_DOCUMENT, name: undefined }]),
+  /Invalid document name/,
+  "a document with no display name must be rejected",
+)
+console.log("PASS  a malformed document (bad size, non-PDF bytes, missing name) is rejected by validation")
+
+// A document never carries its provenance — or itself — into a share. H-64
+// gives documents a real share path; until then the archive refuses both a
+// scoped-share document (even provenance-free) and a document selection.
+const provenanceFreeDocument = Object.fromEntries(
+  Object.entries(DEMO_DOCUMENT).filter(([key]) => key !== "provenance"),
+)
+assert.throws(
+  () =>
+    openScopedShare(
+      new TextEncoder().encode(
+        JSON.stringify({
+          v: 1,
+          kind: "healthsend-scoped-share",
+          records: [provenanceFreeDocument],
+        }),
+      ),
+    ),
+  /Documents cannot enter a scoped share yet/,
+  "a document must not enter a scoped share even without its provenance",
+)
+await assert.rejects(
+  scopeArchive(documentArchive, senderKey, [{ kind: "document", recordId: DEMO_DOCUMENT.id }]),
+  /Unsupported selection/,
+  "scopeArchive must not have an address form that can select a document",
+)
+console.log("PASS  a document cannot enter a scoped share, with or without its provenance")
 
 console.log("\nArchive round trip passed.")

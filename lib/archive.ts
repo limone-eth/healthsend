@@ -1,4 +1,5 @@
 import type { SetAsideIdentifiers } from "./deident.ts"
+import { fromBase64Url } from "./crypto.ts"
 
 const ARCHIVE_MAGIC = new Uint8Array([0x48, 0x53, 0x41, 0x52]) // HSAR
 const ARCHIVE_VERSION = 1
@@ -77,7 +78,25 @@ export type WearableSeriesRecord = {
   values: WearableValue[]
 }
 
-export type ArchiveRecord = BloodPanelRecord | WearableSeriesRecord
+/**
+ * A PDF, stored whole. This deliberately breaks from the other two kinds:
+ * `provenance` still records an opaque source and the import time, but there
+ * is no `setAside` step — the document is kept exactly as issued, including
+ * any name or date of birth printed on it (see docs/stories/H-62.md, "The
+ * consequence that must be said"). `bytes` is the raw PDF, base64url-encoded
+ * so it survives the archive's `JSON.stringify`; the archive's own AES-GCM
+ * seal is the only encryption it gets, same as every other record's fields.
+ */
+export type DocumentRecord = {
+  id: string
+  kind: "document"
+  name: string
+  size: number
+  provenance: RecordProvenance
+  bytes: string
+}
+
+export type ArchiveRecord = BloodPanelRecord | WearableSeriesRecord | DocumentRecord
 
 export type Archive = {
   v: 1
@@ -407,7 +426,46 @@ function validateRecord(record: ArchiveRecord | SharedRecord, needsProvenance: b
     return
   }
 
+  if (record.kind === "document") {
+    // Documents cannot enter a scoped share yet (H-64) — not even a
+    // provenance-free one. `assertOnlyKeys` alone would let a well-formed
+    // provenance-free document through, so the ban is unconditional here.
+    if (!needsProvenance) throw new Error("Documents cannot enter a scoped share yet")
+    assertOnlyKeys(record, ["id", "kind", "name", "size", "provenance", "bytes"], "document")
+    assertText(record.name, "document name")
+    if (typeof record.size !== "number" || !Number.isInteger(record.size) || record.size <= 0) {
+      throw new Error(`Invalid document size: ${record.id}`)
+    }
+    assertText(record.bytes, "document bytes")
+    let decoded: Uint8Array
+    try {
+      decoded = fromBase64Url(record.bytes)
+    } catch {
+      throw new Error(`Document is not valid base64: ${record.id}`)
+    }
+    if (decoded.length !== record.size) {
+      throw new Error(`Document size does not match its bytes: ${record.id}`)
+    }
+    if (!looksLikePdf(decoded)) throw new Error(`Document is not a PDF: ${record.id}`)
+    return
+  }
+
   throw new Error("Unknown record kind")
+}
+
+/**
+ * Does this actually start with a PDF header? The sender controls the whole
+ * file, so neither the filename nor a declared MIME type is evidence of
+ * anything — see the identical check on the recipient side in
+ * `app/s/[key]/page.tsx`, which this mirrors rather than imports from.
+ */
+export function looksLikePdf(bytes: Uint8Array): boolean {
+  const magic = "%PDF-"
+  if (bytes.length < magic.length) return false
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[i] !== magic.charCodeAt(i)) return false
+  }
+  return true
 }
 
 function validateProvenance(provenance: RecordProvenance): void {
