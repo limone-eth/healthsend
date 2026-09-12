@@ -1,12 +1,15 @@
-import type {
-  ArchiveRecord,
-  BloodMarker,
-  BloodPanelRecord,
-  RecordProvenance,
-  ReferenceRange,
-  WearableSeriesRecord,
-  WearableValue,
+import {
+  looksLikePdf,
+  type ArchiveRecord,
+  type BloodMarker,
+  type BloodPanelRecord,
+  type DocumentRecord,
+  type RecordProvenance,
+  type ReferenceRange,
+  type WearableSeriesRecord,
+  type WearableValue,
 } from "./archive"
+import { toBase64Url } from "./crypto.ts"
 
 export type UploadArchiveKind = ArchiveRecord["kind"]
 
@@ -15,6 +18,10 @@ export async function recordsFromUpload(params: {
   kind: UploadArchiveKind
   takenOn?: string
 }): Promise<ArchiveRecord[]> {
+  if (params.kind === "document") {
+    throw new Error("Use recordsFromPdfFiles for documents")
+  }
+
   const text = await params.file.text()
   const provenance: RecordProvenance = {
     sourceId: `source:${crypto.randomUUID()}`,
@@ -26,6 +33,33 @@ export async function recordsFromUpload(params: {
     return [parseBloodPanel(text, params.takenOn, provenance)]
   }
   return parseWearableExport(text, provenance)
+}
+
+/**
+ * One or more PDFs picked in a single step. All-or-nothing: if any file is
+ * not a PDF, the whole pick is rejected and named, rather than silently
+ * archiving the rest — see docs/stories/H-63.md.
+ */
+export async function recordsFromPdfFiles(files: File[]): Promise<DocumentRecord[]> {
+  if (files.length === 0) throw new Error("Pick at least one PDF")
+
+  const read = await Promise.all(
+    files.map(async (file) => ({ file, bytes: new Uint8Array(await file.arrayBuffer()) })),
+  )
+  const notPdf = read.filter(({ bytes }) => !looksLikePdf(bytes)).map(({ file }) => file.name)
+  if (notPdf.length > 0) {
+    throw new Error(`Not a PDF: ${notPdf.join(", ")}`)
+  }
+
+  const importedAt = new Date().toISOString()
+  return read.map(({ file, bytes }) => ({
+    id: `record:${crypto.randomUUID()}`,
+    kind: "document",
+    name: file.name,
+    size: bytes.length,
+    provenance: { sourceId: `source:${crypto.randomUUID()}`, importedAt },
+    bytes: toBase64Url(bytes),
+  }))
 }
 
 const BLOOD_HEADER = "marker,value,unit,ref_low,ref_high,flag"

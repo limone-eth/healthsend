@@ -183,12 +183,11 @@ test("a genuinely empty archive keeps the empty treatment", async ({ page }) => 
   await fulfillArchiveBackend(page.context(), backend)
 
   await page.goto("/")
-  // Four visible: the mobile `BucketRow` list and the desktop `BucketCard` grid
-  // (app/(sender)/page.tsx) both render "Nothing here yet" for each empty bucket, one of
-  // them always hidden via CSS rather than absent from the DOM (R3-020) — `getByText`
-  // does not filter on visibility the way `getByRole` does, so an unfiltered count would
-  // see all eight.
-  await expect(page.getByText("Nothing here yet").and(page.locator(":visible"))).toHaveCount(4)
+  // Five visible: Blood panels, Wearables, Medications, Notes, and H-63's Documents. The
+  // mobile `BucketRow` list and the desktop `BucketCard` grid (app/(sender)/page.tsx) both
+  // render "Nothing here yet" for each empty bucket, one of them always hidden via CSS
+  // rather than absent from the DOM (R3-020) — so count only what is visible.
+  await expect(page.getByText("Nothing here yet").and(page.locator(":visible"))).toHaveCount(5)
   await expect(page.getByText(/could not load your archive/i)).toHaveCount(0)
 })
 
@@ -203,4 +202,54 @@ test("an archive load failure is not shown as an empty archive", async ({ page }
   await page.goto("/")
   await expect(page.getByText(/could not load your archive/i)).toBeVisible()
   await expect(page.getByText("Nothing here yet")).toHaveCount(0)
+})
+
+const isoDayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "UTC" })
+function fakePdf(label: string): Buffer {
+  return Buffer.from(`%PDF-1.4\n% ${label}\n%%EOF\n`)
+}
+
+test("a sender picks two PDFs in one go and reads both after reload", async ({ page }) => {
+  const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
+  await fulfillArchiveBackend(page.context(), backend)
+
+  await page.goto("/add")
+  await page.getByRole("button", { name: /A letter or report/ }).click()
+  await page.getByLabel("File").setInputFiles([
+    { name: "Blood test, March.pdf", mimeType: "application/pdf", buffer: fakePdf("march") },
+    { name: "Thyroid panel, June.pdf", mimeType: "application/pdf", buffer: fakePdf("june") },
+  ])
+  const blobsBeforeAdd = backend.blobs.size
+  await page.getByRole("button", { name: "Add to archive" }).click()
+
+  await expect(page).toHaveURL(/\/$/)
+  const today = isoDayMonth.format(new Date())
+  await expect(page.getByText(`2 documents · latest ${today}`)).toBeVisible()
+  await expect(page.getByText("Blood test, March.pdf")).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf")).toBeVisible()
+
+  // The whole pick is one archive upload, not one per file.
+  expect(backend.blobs.size).toBe(blobsBeforeAdd + 1)
+
+  await page.reload()
+  await expect(page.getByText("Blood test, March.pdf")).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf")).toBeVisible()
+})
+
+test("a non-PDF renamed .pdf is rejected and nothing is uploaded", async ({ page }) => {
+  const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
+  await fulfillArchiveBackend(page.context(), backend)
+
+  await page.goto("/add")
+  await page.getByRole("button", { name: /A letter or report/ }).click()
+  await page.getByLabel("File").setInputFiles({
+    name: "not-really-a-pdf.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("just some text, not a PDF"),
+  })
+  await page.getByRole("button", { name: "Add to archive" }).click()
+
+  await expect(page.getByText(/not-really-a-pdf\.pdf/)).toBeVisible()
+  await expect(page).toHaveURL(/\/add$/)
+  expect(backend.blobs.size).toBe(0)
 })

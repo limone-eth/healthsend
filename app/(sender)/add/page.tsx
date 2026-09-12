@@ -6,13 +6,17 @@
  * comes first because it decides the parser, the destination group, and
  * whether a review step exists at all (DESIGN.md § Adding data).
  *
- * Only "blood-panel" and "wearable-series" exist in lib/archive.ts (H-13), so
- * only those two kinds are selectable — that split is unchanged from H-13/H-14.
- * The badge is a kind descriptor, not an availability flag, though: every
- * card keeps its own `kindLabel` ("You type it", "A questionnaire", "10
- * minutes") regardless of whether it is selectable yet. Only "A letter or
- * report" is genuinely "Later" — that is the one card gxi6Y/TdVX6 draw
- * greyed out. See docs/stories/H-37.md `## Choices`.
+ * "blood-panel", "wearable-series" and, since H-63, "document" exist in
+ * lib/archive.ts, so only those three kinds are selectable — the first two
+ * unchanged from H-13/H-14. The badge is a kind descriptor, not an
+ * availability flag, though: every card keeps its own `kindLabel` ("You type
+ * it", "A questionnaire", "10 minutes") regardless of whether it is
+ * selectable yet. See docs/stories/H-37.md `## Choices`.
+ *
+ * "A letter or report" is the PDF card (H-63) — it used to be the one card
+ * greyed out as genuinely "Later"; scope is PDFs only for now (H-62 operator
+ * decision), so it accepts `multiple` and routes to `recordsFromPdfFiles`
+ * rather than `recordsFromUpload`.
  */
 
 import { useState, type FormEvent } from "react"
@@ -29,10 +33,10 @@ import {
   UserCircle,
 } from "@phosphor-icons/react"
 import { Action, Card, Field, InsetNote, ScreenHeader, inputClass } from "@/components/ui"
-import { recordsFromUpload } from "@/lib/archive-input"
+import { recordsFromPdfFiles, recordsFromUpload } from "@/lib/archive-input"
 import { addRecordsToMyArchive } from "@/lib/archive-store"
 
-type ArchiveKind = "blood-panel" | "wearable-series"
+type ArchiveKind = "blood-panel" | "wearable-series" | "document"
 
 type Kind = {
   id: string
@@ -111,18 +115,19 @@ const KINDS: Kind[] = [
     id: "letter-or-report",
     title: "A letter or report",
     icon: BookOpen,
-    accept: "",
+    archiveKind: "document",
+    accept: "application/pdf,.pdf",
     desktop: {
-      description: "A discharge summary, an imaging report, a specialist letter.",
-      kindLabel: "Later",
-      after: "Kept as written, with its date and who wrote it. Nothing is read out of it.",
+      description: "A discharge summary, an imaging report, a specialist letter — as a PDF.",
+      kindLabel: "One or more files",
+      after: "Pick one or more PDFs at once. Each one is encrypted and stored as itself, not as text read out of it.",
     },
-    mobile: { description: "Discharge summary, imaging", kindLabel: "Later" },
+    mobile: { description: "Discharge summary, imaging (PDF)", kindLabel: "One or more files" },
   },
 ]
 
 const NOTE =
-  "Files are read here in your browser and never reach us. HealthSend stores only the readings it can place in the archive model. It encrypts those readings before it uploads them to Swarm. The original file is not kept."
+  "Files are read here in your browser and never reach us. For a CSV or JSON file, HealthSend stores only the readings it can place in the archive model, and the original file is not kept. For a PDF, the document itself is what gets stored. Either way, it is encrypted before it uploads to Swarm."
 
 function DesktopKindCard({ kind, onSelect }: { kind: Kind; onSelect: () => void }) {
   const available = kind.archiveKind !== undefined
@@ -198,24 +203,47 @@ function MobileKindRow({ kind, onSelect }: { kind: Kind; onSelect: () => void })
   )
 }
 
+/**
+ * The one non-goal-adjacent copy fix H-63 owns: a PDF is not "parsed
+ * readings" — the file itself is what gets encrypted and stored (H-62's
+ * consequence section). CSV/JSON kinds keep the original claim, which stays
+ * true for them.
+ */
+function fileNote(files: File[], isDocument: boolean): string {
+  if (!isDocument) {
+    return `“${files[0].name}” stays in this browser. Only its parsed readings are encrypted and stored.`
+  }
+  if (files.length === 1) {
+    return `“${files[0].name}” is encrypted and stored as the document itself, not just its text.`
+  }
+  return `These ${files.length} PDFs are encrypted and stored as the documents themselves, not just their text.`
+}
+
 function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
   const router = useRouter()
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [takenOn, setTakenOn] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isDocument = kind.archiveKind === "document"
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!file || !kind.archiveKind || saving) return
+    if (files.length === 0 || !kind.archiveKind || saving) return
     setSaving(true)
     setError(null)
     try {
-      const records = await recordsFromUpload({
-        file,
-        kind: kind.archiveKind,
-        ...(kind.archiveKind === "blood-panel" ? { takenOn } : {}),
-      })
+      // One upload for the whole pick either way: both helpers return every
+      // record from this submit in one array, and `addRecordsToMyArchive`
+      // reseals and uploads once for the array it is given — see
+      // lib/archive-store.ts.
+      const records = isDocument
+        ? await recordsFromPdfFiles(files)
+        : await recordsFromUpload({
+            file: files[0],
+            kind: kind.archiveKind,
+            ...(kind.archiveKind === "blood-panel" ? { takenOn } : {}),
+          })
       await addRecordsToMyArchive(records)
       router.replace("/")
     } catch (cause) {
@@ -249,26 +277,24 @@ function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
               type="file"
               aria-label="File"
               required
+              multiple={isDocument}
               accept={kind.accept}
               className={inputClass}
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
             />
           </Field>
-          {file && (
-            <InsetNote icon={CloudSlash}>
-              &ldquo;{file.name}&rdquo; stays in this browser. Only its parsed readings are encrypted
-              and stored.
-            </InsetNote>
+          {files.length > 0 && (
+            <InsetNote icon={CloudSlash}>{fileNote(files, isDocument)}</InsetNote>
           )}
           {error && (
             <p role="alert" className="text-sm text-error">
-              Could not add this file: {error}
+              {isDocument ? "Could not add these PDFs" : "Could not add this file"}: {error}
             </p>
           )}
           <Action
             type="submit"
             fullWidth
-            disabled={!file || (kind.archiveKind === "blood-panel" && !takenOn) || saving}
+            disabled={files.length === 0 || (kind.archiveKind === "blood-panel" && !takenOn) || saving}
           >
             {saving ? "Adding…" : "Add to archive"}
           </Action>
