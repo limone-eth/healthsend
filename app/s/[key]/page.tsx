@@ -12,6 +12,15 @@
  * This page is the only place both halves ever meet, and they meet in the
  * recipient's browser rather than on a server that could be asked to keep
  * serving.
+ *
+ * H-53 adds a third grant shape behind the same `openSend` call: a v3 grant
+ * has no holder at all, and asks TACo for its half instead, gated on Arkiv's
+ * own live state. Nothing here changes for it. `openSend` resolves a v3 open
+ * into exactly the same `OpenedSend | OpenFailure` shape v1/v2 already
+ * produce — "unavailable" when TACo cannot answer, "expired" from the same
+ * head-boundary check every grant gets, "ok" once both halves join — so this
+ * page's six resolutions and their copy stay exactly as they are. See
+ * `docs/stories/H-53.md`.
  */
 
 import { use, useEffect, useRef, useState, type KeyboardEvent } from "react"

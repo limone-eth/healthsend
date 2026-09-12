@@ -29,6 +29,8 @@
     "verify:e2e-server-select": "node --experimental-strip-types scripts/playwright-server-select-proof.mjs",
     "verify:taco-adapter": "node --experimental-strip-types scripts/taco-adapter-proof.mjs",
     "verify:taco-adapter-live": "node --experimental-strip-types scripts/taco-adapter-live-probe.mjs",
+    "verify:single-upload-grants": "node --experimental-strip-types scripts/single-upload-grants-proof.mjs",
+    "verify:taco-unlock": "node --experimental-strip-types scripts/taco-unlock-proof.mjs",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm verify:e2e-server-select && pnpm e2e",
