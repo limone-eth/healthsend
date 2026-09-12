@@ -57,6 +57,47 @@ export type CreateSendResult = {
 
 export type SendProgress = (stage: string) => void
 
+type CreateSendDependencies = {
+  fetch: typeof fetch
+  getIdentity: typeof getIdentity
+  uploadEncryptedBlob: typeof uploadEncryptedBlob
+  createGrant: typeof createGrant
+}
+
+const defaultCreateSendDependencies: CreateSendDependencies = {
+  fetch,
+  getIdentity,
+  uploadEncryptedBlob,
+  createGrant,
+}
+
+/**
+ * Reach the holder route before any send work starts.
+ *
+ * The empty submission is intentionally invalid. A configured route rejects it
+ * with 400 before it can read Arkiv or write Redis. A missing configuration is
+ * reported by the route's earlier 501 guard, and a dead route rejects fetch.
+ */
+async function preflightHolder(request: typeof fetch): Promise<void> {
+  let response: Response
+  try {
+    response = await request("/api/holder/share", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+  } catch (error) {
+    throw new Error(`The key-share holder is unavailable: ${(error as Error).message}`)
+  }
+
+  if (response.status === 400) return
+
+  const detail = await response.json().catch(() => ({}))
+  throw new Error(
+    `The key-share holder is unavailable: ${detail?.error ?? `HTTP ${response.status}`}`,
+  )
+}
+
 /**
  * Encrypt → Swarm → grant → link.
  *
@@ -65,15 +106,23 @@ export type SendProgress = (stage: string) => void
  * written. Our own origin is never in the path of the plaintext, which is the
  * claim the README makes and the reason this app has no upload endpoint.
  */
-export async function createSend(params: {
-  files: File[]
-  recipientLabel: string
-  ttlSeconds: number
-  onProgress?: SendProgress
-}): Promise<CreateSendResult> {
+export async function createSend(
+  params: {
+    files: File[]
+    recipientLabel: string
+    ttlSeconds: number
+    onProgress?: SendProgress
+  },
+  dependencyOverrides: Partial<CreateSendDependencies> = {},
+): Promise<CreateSendResult> {
   const progress = params.onProgress ?? (() => {})
-  const identity = await getIdentity()
   if (params.files.length === 0) throw new Error("Pick at least one document")
+
+  const dependencies = { ...defaultCreateSendDependencies, ...dependencyOverrides }
+  progress("Checking key-share holder")
+  await preflightHolder(dependencies.fetch)
+
+  const identity = await dependencies.getIdentity()
 
   progress(params.files.length > 1 ? `Reading ${params.files.length} files` : "Reading file")
   const packed: PackedFile[] = await Promise.all(
@@ -100,7 +149,7 @@ export async function createSend(params: {
   blob.set(sealed.ciphertext, sealed.iv.length)
 
   progress("Uploading to Swarm")
-  const { reference } = await uploadEncryptedBlob(blob)
+  const { reference } = await dependencies.uploadEncryptedBlob(blob)
 
   progress("Splitting key")
   // The content key is split, never wrapped-and-published. One half is derived
@@ -115,7 +164,7 @@ export async function createSend(params: {
 
   progress("Writing grant to Arkiv")
   const fileKind = classifyBundle(params.files)
-  const grant = await createGrant({
+  const grant = await dependencies.createGrant({
     privateKey: identity.privateKey,
     payload: { v: 2, ref: reference, authCommitment: commitment },
     fileKind,
@@ -138,7 +187,7 @@ export async function createSend(params: {
   const shareSignature = await privateKeyToAccount(identity.privateKey).signMessage({
     message: shareMessage(grant.entityKey, shareTimestamp),
   })
-  const handoff = await fetch("/api/holder/share", {
+  const handoff = await dependencies.fetch("/api/holder/share", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

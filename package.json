@@ -13,6 +13,7 @@
     "verify:log": "node --experimental-strip-types scripts/access-log-proof.mjs",
     "verify:archive": "node --experimental-strip-types scripts/archive-roundtrip.mjs",
     "verify:deident": "node --experimental-strip-types scripts/deident-proof.mjs",
+    "verify:holder": "node --experimental-strip-types scripts/holder-preflight-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm e2e",
