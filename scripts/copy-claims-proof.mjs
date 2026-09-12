@@ -61,24 +61,23 @@ assert.ok(
 
 const newSharePage = read("app/(sender)/new/page.tsx")
 
-// The Link ready screen's summary row and footnote assumed a gendered
-// recipient ("she"/"her"), missed when the chip vocabulary was de-gendered
-// on 2026-09-12. Matched as live JSX props/text, not as the doc comment's
-// historical quotes of what the frame used to say.
-for (const stale of [
-  'label="She sees about you"',
-  'desktopLabel="What she sees about you"',
-  "and she loses access straight away",
-]) {
-  assert.ok(!newSharePage.includes(stale), `app/(sender)/new/page.tsx must not still read "${stale}"`)
-}
-for (const current of [
-  'label="They see about you"',
-  'desktopLabel="What they see about you"',
-  "and they lose access straight away",
-]) {
-  assert.ok(newSharePage.includes(current), `app/(sender)/new/page.tsx must read "${current}"`)
-}
+// The Link ready screen's footnote assumed a gendered recipient ("she"),
+// missed when the chip vocabulary was de-gendered on 2026-09-12. Matched as
+// live JSX text, not as the doc comment's historical quotes of what the
+// frame used to say.
+//
+// H-47's other pair here checked the summary row's own "she"/"they" wording
+// ("She sees about you" / "What she sees about you"). H-71 dropped that row
+// entirely (the operator did not want it), so there is no longer a label to
+// regress to "she" in — the guard for that pair is obsolete, not renamed.
+assert.ok(
+  !newSharePage.includes("and she loses access straight away"),
+  'app/(sender)/new/page.tsx must not still read "and she loses access straight away"',
+)
+assert.ok(
+  newSharePage.includes("and they lose access straight away"),
+  'app/(sender)/new/page.tsx must read "and they lose access straight away"',
+)
 
 // H-64 — a PDF is no longer set aside like a CSV/JSON record (H-62's
 // operator decision). `components/demo-notice.tsx` renders inside `/new`'s
@@ -96,5 +95,5 @@ assert.ok(
   "demo-notice.tsx must say a PDF goes out as issued",
 )
 
-console.log("PASS  README and the Link ready screen no longer carry the six stale claims.")
+console.log("PASS  README and the Link ready screen no longer carry their stale claims.")
 console.log("PASS  demo-notice.tsx no longer claims a PDF's identifiers are set aside")
