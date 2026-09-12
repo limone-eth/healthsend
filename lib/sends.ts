@@ -40,6 +40,7 @@ import {
 } from "./arkiv"
 import { getIdentity, ensureFunded } from "./identity"
 import { revokeMessage } from "./revoke"
+import { shareMessage } from "./share"
 import { privateKeyToAccount } from "viem/accounts"
 
 const IV_BYTES = 12
@@ -126,7 +127,16 @@ export async function createSend(params: {
   // The share goes to the holder only once the grant exists, so the holder can
   // always resolve an entity key to a live grant. If this fails the send is
   // unreadable by anyone — including us — which is the correct failure.
+  //
+  // Proof of ownership is the same signed-entity-key scheme "End access now"
+  // uses, with its own "share" action string — see lib/share.ts — so this
+  // signature cannot be replayed against revoke or the access log, or vice
+  // versa.
   progress("Handing the key share to the holder")
+  const shareTimestamp = Math.floor(Date.now() / 1000)
+  const shareSignature = await privateKeyToAccount(identity.privateKey).signMessage({
+    message: shareMessage(grant.entityKey, shareTimestamp),
+  })
   const handoff = await fetch("/api/holder/share", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -135,6 +145,8 @@ export async function createSend(params: {
       share: toBase64Url(heldShare),
       commitment,
       ttlSeconds: params.ttlSeconds,
+      signature: shareSignature,
+      timestamp: shareTimestamp,
     }),
   })
   if (!handoff.ok) {

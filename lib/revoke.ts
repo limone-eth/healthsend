@@ -93,8 +93,8 @@ export async function recoverSigner(action: string, req: SignedEntityRequest): P
 }
 
 export type RevokeDeps = {
-  getGrant: (entityKey: string) => Promise<{ sender: string } | null>
-  deleteShare: (entityKey: string) => Promise<void>
+  getGrant: (entityKey: string) => Promise<{ sender: string; expiresAt: number } | null>
+  tombstoneShare: (entityKey: string, ttlSeconds: number) => Promise<void>
 }
 
 export type RevokeResult = { ok: true } | { ok: false; status: number; error: string }
@@ -104,7 +104,7 @@ export async function performRevoke(req: RevokeRequest, deps: RevokeDeps): Promi
     return { ok: false, status: 401, error: "Signature has expired" }
   }
 
-  let grant: { sender: string } | null
+  let grant: { sender: string; expiresAt: number } | null
   try {
     grant = await deps.getGrant(req.entityKey)
   } catch (error) {
@@ -135,8 +135,14 @@ export async function performRevoke(req: RevokeRequest, deps: RevokeDeps): Promi
     return { ok: false, status: 403, error: "Not authorised to end this grant" }
   }
 
-  // Idempotent: deleting an already-deleted key is not an error, so a second
-  // revoke from the rightful owner still reports the share ended.
-  await deps.deleteShare(req.entityKey)
+  // Idempotent: tombstoning an already-tombstoned key is not an error, so a
+  // second revoke from the rightful owner still reports the share ended.
+  //
+  // The tombstone's TTL matches the grant's own remaining life (floored at
+  // zero for a grant that is about to lapse anyway), so a re-POST of the
+  // share stays refused for exactly as long as the grant could otherwise be
+  // read — never less.
+  const ttlSeconds = Math.max(0, grant.expiresAt - Math.floor(Date.now() / 1000))
+  await deps.tombstoneShare(req.entityKey, ttlSeconds)
   return { ok: true }
 }

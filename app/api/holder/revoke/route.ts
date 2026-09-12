@@ -7,7 +7,7 @@
  */
 
 import { NextResponse } from "next/server"
-import { holderConfigured, deleteShare } from "@/lib/holder-store"
+import { holderConfigured, tombstoneShare } from "@/lib/holder-store"
 import { getGrant } from "@/lib/arkiv"
 import { performRevoke, validateRevokeRequest } from "@/lib/revoke"
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid revoke request" }, { status: 400 })
   }
 
-  const result = await performRevoke(parsed, { getGrant, deleteShare })
+  const result = await performRevoke(parsed, { getGrant, tombstoneShare })
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status })
   }
