@@ -27,7 +27,7 @@ One per share. Created when a sender makes a link; never updated, never deleted.
 | `kind` | `str` | `grant` | Room for other entity kinds later without a migration. |
 | `sender` | `addr` | `0x3579…682C` | The sender's Arkiv key, derived from their Swarm ID. |
 | `filetype` | `str` | `pdf` \| `csv` \| `text` \| `mixed` | Coarse and non-identifying, so it stays readable. `mixed` is a real answer, not a fallback. |
-| `file_count` | `u64` | `4` | How many documents the send carries. A count discloses nothing and gives the dashboard a range facet. |
+| `file_count` | `u64` | `4` | How many documents the send carries. Cheap metadata rather than no metadata — it gives the dashboard a range facet, and it is deliberately coarse. |
 | `recipient` | `str` | `9f2c…` (HMAC) | **Blinded.** Equality lookups still work; the value is opaque. |
 | `label` | `str` | `4be1…` (HMAC) | **Blinded.** The filename is itself disclosing. |
 | `created_at` | `u64` | `1757664000` | Plaintext so ranges and ordering work. |
@@ -101,18 +101,41 @@ result because they are gone from the index.
 **The recipient's read.** `getEntity(entityKey)` — and a `null` here is the
 normal steady state after the window closes, not an error.
 
-## Why `expires` is load-bearing
+## What `expires` actually gives us
 
-Expiry is the product, and `expires` is the whole of its enforcement:
+Expiry is the product, and it is worth being exact about which part of it Arkiv
+provides.
 
-- The wrapped content key lives **only** in the grant entity.
-- When the grant lapses, that key leaves the query surface.
-- The ciphertext on Swarm is then unopenable — by the recipient, by a later
-  visitor, and by us. We hold no copy of the key at any point.
+`expires` ends **availability through the index**. When the grant lapses:
 
-So "access ended" is not a check we run and could be compelled to stop running.
-It is the absence of a row. That is why the expiry window is chosen at share time
-and then never touched: there is no revoke button to press, and nothing to trust.
+- it stops appearing in the sender's dashboard query, with no delete call and
+  nothing to maintain;
+- the recipient's page can no longer assemble a key, so an ordinary reader
+  opening the link later finds nothing.
+
+That is a real property, and it is the one Mission 02 asks for: something in the
+app changes because data expired on its own.
+
+**What it is not is erasure.** Entities are created by transactions, and the
+payload travels in the calldata. Pruning removes the entity from the live query
+surface; the transaction stays. So the wrapped key remains public and permanent,
+and anyone who archived it — trivial, it is public while the grant lives — can
+pair it with the link fragment afterwards and decrypt.
+
+We believed otherwise for most of a day. `scripts/payload-survives.mjs`
+demonstrates the correction against one of our own expired grants, and the README
+has the full account under *What expiry does and does not do*.
+
+This is exactly the warning in Arkiv's own docs — *"it is not a confidentiality
+layer"* — and our error was subtler than ignoring it: we encrypted the document
+before it went in, then put the wrapped key in beside it and assumed pruning was
+destruction.
+
+**The fix, if we take this further:** keep the wrapped key out of Arkiv. Hold it
+behind something that can stop answering — a threshold share, or an ACT-gated
+blob on Swarm with a revoked grantee list — and let the entity carry only a
+commitment plus the typed attributes. That is the role the Arkiv docs describe,
+and it is what the index is genuinely good at.
 
 ## Trade-offs we accepted
 

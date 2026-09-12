@@ -15,9 +15,10 @@ Three synthetic health documents — a lab panel, a consult note, a sleep export
 shared for seven days from 12 September 2026. No account, no wallet, no
 extension. Open it in a private window and you are the recipient.
 
-Two things to notice: the countdown is a real block height, not a UI timer, and
-there is no download button anywhere. When the window closes the same URL shows
-an expired state and nobody will have done anything.
+Two things to notice: the countdown comes from a real block height rather than
+being invented in the page, and there is no download button anywhere. When the
+window closes the same URL shows an expired state and nobody will have done
+anything.
 
 > It dies earlier if the postage batch behind it lapses first — which is the
 > layered decay described in [§9 of the brief](./healthsend-brief.md), visible in
@@ -33,11 +34,15 @@ file is encrypted in your browser and the ciphertext goes straight to Swarm. The
 key that opens it is split in two: half travels in the URL fragment of the link
 you send, half is written into an Arkiv grant that carries an expiry. The
 recipient opens the link with no account and no wallet; the two halves meet in
-their browser and nowhere else. When the window closes, the grant lapses, its
-half of the key leaves the index, and what is left on Swarm is noise — to them,
-to a later visitor, and to us.
+their browser and nowhere else. When the window closes, the grant lapses and its
+half of the key leaves Arkiv's index, so the ordinary reader — the one who opens
+the link a month later — finds nothing to open.
 
 Nobody revokes anything. No job runs. The access simply runs out.
+
+That last sentence is the honest one. The stronger version we believed for most
+of a day — that expiry *destroys* the key — is **false**, and
+[we prove it is false below](#what-expiry-does-and-does-not-do).
 
 ## Why this shape
 
@@ -46,11 +51,14 @@ nutritionist you work with for twelve weeks has your labs in her inbox forever.
 The usual fix is a company that promises to stop serving the file — which is a
 promise, and a gatekeeper, and something that can be compelled.
 
-So the design constraint was: **no gatekeeper anywhere, including us.** That rules
-out an access check on a server, which in turn is what forces expiry to be key
-destruction rather than a policy decision. Arkiv's native entity lifetime turns
-out to be exactly that primitive, which is why the grant registry is the load-
-bearing piece rather than a nice-to-have index.
+So the design constraint was: **no gatekeeper anywhere, including us.** There is
+no server of ours in the read path at all, and so nothing we could be compelled
+to keep serving. Arkiv's native entity lifetime ends availability without anyone
+deciding to, which is why the grant registry is load-bearing rather than a
+nice-to-have index.
+
+What it does *not* do is destroy anything, and that difference matters enough to
+have [its own section](#what-expiry-does-and-does-not-do).
 
 ## How it works
 
@@ -73,18 +81,71 @@ bearing piece rather than a nice-to-have index.
            decrypt locally, render in place
 ```
 
-**Both halves are required.** Keep the link forever and you still cannot read
-anything after the grant expires. Scrape every Arkiv entity and you have wrapped
-keys that are indistinguishable from random without the fragments.
+**Both halves are required.** A link with no grant opens nothing; a grant with no
+link is indistinguishable from random. Neither half is useful alone.
 
-### What we never claim
+## What expiry does and does not do
+
+We got this wrong the first time, and the correction is the most useful thing in
+this repository, so it is stated plainly rather than buried.
+
+**What we believed:** the wrapped key lives only in the grant, so when the grant
+expires the key is destroyed and the ciphertext on Swarm becomes permanently
+unopenable — even to us.
+
+**What is actually true:** Arkiv entities are created by transactions, and the
+payload travels in the transaction's calldata. Expiry prunes the entity from the
+*live query surface*. It does not, and cannot, remove the transaction. The
+wrapped key stays public and permanent in chain history.
+
+Check it against a grant of ours that has already expired:
+
+```bash
+node scripts/payload-survives.mjs \
+  0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6 \
+  0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905
+```
+
+```
+status   gone from the query surface
+
+PAYLOAD RECOVERED FROM CALLDATA:
+  {"v":1,"ref":"demo-swarm-reference","wrap":{"iv":"x","ct":"y"}}
+```
+
+So the real guarantee is narrower than the one we set out to build:
+
+| Claim | True? |
+|---|---|
+| The document is encrypted client-side, and no server of ours receives plaintext | **Yes** |
+| Neither the link nor the grant alone reveals anything | **Yes** |
+| After expiry, an ordinary reader opening the link finds nothing | **Yes** |
+| After expiry, someone who archived the public payload and *later* obtains the link can still decrypt | **Yes — this is the hole** |
+| Expiry destroys the key | **No** |
+
+The archiving attack needs no privilege and no foresight about which link to
+target: the payload is public and enumerable while the grant lives, and permanent
+in calldata afterwards. Only the fragment is scarce. The two halves need never be
+captured at the same time, which is what our original claim assumed.
+
+Arkiv's own documentation says this in advance — *"it is not a confidentiality
+layer… encrypt your own data before it goes in."* We did encrypt the document
+before it went in. The mistake was putting the **wrapped key** in as well, and
+assuming pruning was erasure.
+
+**What would fix it,** and what we would build next: keep the wrapped key out of
+Arkiv entirely. Put it behind something that can stop answering — a threshold
+share held by a live share-holder, or an ACT-gated blob on Swarm whose grantee
+list is revoked — and let Arkiv hold only a commitment plus the typed attributes,
+which is the role its own docs describe. That trades against the no-server
+premise, which is exactly the unresolved tension
+[§7 of the brief](./healthsend-brief.md) flags.
+
+### What we never claimed
 
 Expiry governs *future retrieval*, not *past disclosure*. A recipient who
-screenshots the page during the window keeps the screenshot; a recipient who
-archives both the ciphertext and the wrapped key before expiry keeps their
-access. No system without a live gatekeeper does better, and we chose not to have
-one. What we do guarantee is that nobody who did not capture both halves during
-the window can ever read the document, and that includes us.
+screenshots the page during the window keeps the screenshot. No system without a
+live gatekeeper does better, and we chose not to have one.
 
 ## Running it
 
@@ -340,9 +401,11 @@ object, same expiry, tools that stop existing when the window closes.
 
 ## Notes on the two integrations
 
-**Swarm.** Every payload byte lives there; our origin never sees plaintext, a
-content key, or a link secret, and there is no user database anywhere in this
-app. Swarm ID is both sides of identity — the sender signs in with a passkey and
+**Swarm.** Every payload byte lives there. No server of ours receives plaintext,
+a content key, or a link secret — there is no upload endpoint and no user
+database. To be exact, we do serve the JavaScript that handles those values in
+the browser, so this is a claim about our servers rather than a proof against a
+malicious build of the client. Swarm ID is both sides of identity — the sender signs in with a passkey and
 signs their own postage stamps in the browser; the recipient needs no identity at
 all and reads by content hash from a public gateway. No Bee node of ours.
 

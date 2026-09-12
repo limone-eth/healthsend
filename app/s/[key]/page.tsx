@@ -9,7 +9,7 @@
  * browser rather than on a server that could be asked to keep serving.
  */
 
-import { use, useEffect, useMemo, useState } from "react"
+import { use, useEffect, useRef, useState } from "react"
 import { openSend, type OpenedSend } from "@/lib/sends"
 import { classify, type PackedFile } from "@/lib/envelope"
 import { Card, timeLeft } from "@/components/ui"
@@ -118,44 +118,57 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
  * download button quietly contradicts it.
  */
 function Preview({ file }: { file: PackedFile }) {
-  const kind = classify({ name: file.header.name, type: file.header.mime })
+  // Classified from the filename only. The sender's declared MIME type is never
+  // trusted and never reaches a Blob.
+  const kind = classify({ name: file.header.name, type: "" })
 
-  const blobUrl = useMemo(() => {
-    if (kind !== "pdf") return null
-    return URL.createObjectURL(
-      new Blob([file.body as BlobPart], { type: file.header.mime || "application/pdf" }),
-    )
-  }, [file, kind])
-
-  // Revoked with the component, so the bytes do not outlive the page.
-  useEffect(() => {
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
-    }
-  }, [blobUrl])
-
-  if (kind === "pdf") {
-    // `#toolbar=0` drops the built-in viewer's Download, Print and Save
-    // controls. It removes the affordance, not the capability — a determined
-    // reader can still save what their browser has rendered, and we never claim
-    // otherwise. What it avoids is a Download button sitting directly above the
-    // words "you were given access, not a copy".
-    return blobUrl ? (
-      <iframe
-        src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0`}
-        className="h-[70vh] w-full rounded-lg border border-line"
-      />
-    ) : (
-      <p className="text-sm text-muted">Rendering…</p>
-    )
-  }
+  if (kind === "pdf") return <PdfPreview file={file} />
 
   const text = new TextDecoder().decode(file.body)
-
   if (kind === "csv") return <CsvTable text={text} />
 
   return (
     <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap font-mono text-xs">{text}</pre>
+  )
+}
+
+/**
+ * A PDF, rendered in place and trusted with nothing.
+ *
+ * Two separate holes are closed here, and both matter because the sender
+ * controls this file completely — they encrypted it themselves.
+ *
+ * The Blob type is pinned to `application/pdf` rather than taken from the
+ * envelope. A file named `report.pdf` declaring `text/html` would otherwise
+ * render as a document; blob URLs inherit this page's origin, and this page
+ * holds the link secret in its fragment. A file that is not really a PDF now
+ * simply fails to display, which is the right outcome.
+ *
+ * The frame is then sandboxed with nothing granted at all — no scripts, no
+ * same-origin, no forms, no top-level navigation. The built-in PDF viewer is
+ * browser chrome rather than page script, so it still renders.
+ *
+ * The URL is set imperatively so that creating and revoking it belong to one
+ * effect: a discarded render cannot leak an allocation, and a replayed effect
+ * cannot revoke a URL still in use.
+ */
+function PdfPreview({ file }: { file: PackedFile }) {
+  const frame = useRef<HTMLIFrameElement>(null)
+
+  useEffect(() => {
+    const url = URL.createObjectURL(new Blob([file.body as BlobPart], { type: "application/pdf" }))
+    if (frame.current) frame.current.src = `${url}#toolbar=0&navpanes=0&scrollbar=0`
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  return (
+    <iframe
+      ref={frame}
+      sandbox=""
+      referrerPolicy="no-referrer"
+      title={file.header.name}
+      className="h-[70vh] w-full rounded-lg border border-line"
+    />
   )
 }
 
@@ -202,12 +215,19 @@ function Expired() {
     <Card>
       <h1 className="text-lg font-semibold">This link has expired</h1>
       <p className="mt-2 text-sm text-muted">
-        The grant that held the decryption key reached the end of its life and stopped existing. The
-        encrypted document is still on Swarm, and it is now noise — there is no key anywhere that
-        opens it, including ours.
+        The grant that carried the decryption key reached the end of its life and no longer appears
+        in Arkiv&rsquo;s index, so this page cannot put the key back together.
       </p>
-      <p className="mt-3 text-xs text-muted">
+      <p className="mt-3 text-sm text-muted">
         Nobody revoked this. No job ran. The access simply ran out.
+      </p>
+      {/* An earlier version of this page said there was "no key anywhere that
+          opens it, including ours". That was false, and it is not the kind of
+          thing to be vague about on the page a reader actually sees. */}
+      <p className="mt-4 text-xs text-muted">
+        To be precise about what that does and does not mean: the encrypted document is still on
+        Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Expiry ends
+        access through this app. It is not erasure.
       </p>
     </Card>
   )

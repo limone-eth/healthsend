@@ -92,10 +92,11 @@ of truth, which is what every viem-based app already reaches for.
 The README offers a key "for quick testing", hedged with *"funds may not always
 be available"*. Its balance is `0`, so the quick-start path does not run.
 
-The hedge is honest, but a key that is empty most of the time is worse than no
-key: it sends a new developer into debugging their own code when the real problem
-is an unfunded account. We burned a cycle confirming our transaction builder was
-fine before checking the balance.
+We found it empty. One observation does not establish how often that is true, so
+we will not claim it is empty *most* of the time — but a shared key that anyone
+may drain is unreliable by construction, and an unfunded one sends a new
+developer into debugging their own code when the real problem is a zero balance.
+We burned a cycle confirming our transaction builder was fine before checking.
 
 **Suggestion:** drop the shared key and make step one "claim at the faucet", or
 have the example check its own balance and print the faucet URL when it is zero.
@@ -106,7 +107,9 @@ have the example check its own balance and print the faucet URL when it is zero.
 
 `https://hub.arkiv.network/faucet` is a client-rendered page that requires an
 interactive wallet claim ("one claim per wallet, per cooldown window"). Fetching
-it without JS yields `Loading…`, and we found no documented HTTP endpoint.
+it without JS yields `Loading…`, and we found no documented HTTP endpoint — which
+is not proof that none exists, only that a developer reading the docs will not
+find one.
 
 Two consequences:
 
@@ -227,9 +230,12 @@ seemed to support.
 **Actual cause:** ours. Our `onConnectionChange` subscribed a listener but never
 constructed `SwarmIdClient`, so the iframe was never mounted. Probing the page
 found `document.querySelectorAll("iframe")` empty — nothing was there to report a
-session. `document.hasStorageAccess()` returned `true`, ruling out partitioning
-outright. Clicking connect "fixed" it only because `connect()` constructs the
-client as a side effect.
+session, which settled it on its own. (We also checked
+`document.hasStorageAccess()` and read `true` as ruling partitioning out. That
+reasoning was wrong: the API reports the *calling document's* cookie access, and a
+top-level `true` says nothing about a cross-origin frame. The empty iframe list
+was the actual evidence.) Clicking connect "fixed" it only because `connect()`
+constructs the client as a side effect.
 
 **Fix:** subscribing now starts the client. An existing session is restored by
 mounting the iframe, so a returning user lands signed in.
@@ -263,17 +269,27 @@ The cause is that a duration and a deadline are not the same thing:
 - Block production is not a clock either, so `n / 2` blocks is only `n` seconds
   if the chain holds exactly 2s/block.
 
-Both errors push the same way: **the enforced expiry is always ≥ the promised
-one, never earlier.** For a product whose entire claim is "access ends when I
-said it would", drifting late is the one direction that breaks it.
+Both errors pushed the same way in our testing: **the enforced expiry ran later
+than the promised one.** Being precise, the SDK's lower-bound guarantee is about
+*block height*, not wall-clock — a chain running fast could in principle produce
+the blocks sooner than the nominal 2s each and land the expiry early. What we
+observed, and what the inclusion delay guarantees on its own, is drift the other
+way. For a product whose claim is "access ends when I said it would", drifting
+late is the direction that breaks it.
 
 **Repro:** create with `fromSeconds(120)`, store `now + 120` as an attribute,
 query at `t+130s`. The entity is still there.
 
 **Fix on our side:** read the head, compute `expiresBlock = head + ceil(ttl /
 BLOCK_TIME)`, pin it with `ExpirationTime.atBlock(...)`, and store that height as
-the queryable attribute. Every countdown is now derived from block height, so the
-number on screen and the boundary the engine enforces are the same value.
+the queryable attribute. Countdowns are computed from the remaining blocks rather
+than from a wall-clock timestamp we invented.
+
+Being honest about the limit of that: the remaining blocks are converted to
+seconds *once* per read, and the recipient's countdown then ticks on `Date.now()`
+without following the head. If the chain runs slow, a freshly loaded page can
+still open a document another page has already declared expired. Pinning the
+deadline removed the inclusion-delay drift; it did not make blocks equal seconds.
 
 **Suggestion:** the lower-bound caveat is documented exactly once, on the return
 type, and is easy to miss because `fromDays(30)` reads like a deadline. Say it
@@ -317,13 +333,14 @@ dialog rather than a redirect. The storage step still opens its own tab.
 **Suggestion, in order of value:**
 
 1. Set `allow="publickey-credentials-create *; publickey-credentials-get *"` on
-   the proxy iframe and offer an in-frame consent UI. This is the difference
-   between "sign in with a passkey" and "connect a wallet", and it is a one-line
-   attribute plus a UI mode.
-2. Use the **Storage Access API** (`document.requestStorageAccess()`) for the
-   partitioning problem instead of a first-party tab visit. It exists for exactly
-   this, it is a permission prompt rather than a navigation, and it would remove
-   the third tab.
+   the proxy iframe and offer an in-frame consent UI. The attribute is one line;
+   the consent mode behind it is not, and we have not proven the whole flow works
+   in-frame across browsers. Offered as a direction, not a patch.
+2. Consider the **Storage Access API** (`document.requestStorageAccess()`) for
+   the partitioning problem instead of a first-party tab visit — a permission
+   prompt rather than a navigation. Its prompt behaviour and per-browser
+   requirements would need testing; we are not claiming it removes the third tab
+   for free.
 3. Failing both, detect the fresh-origin case *before* the consent screen and do
    the storage step first, so the user crosses one boundary rather than two.
 
@@ -333,3 +350,68 @@ first-party visit, where the identical flow succeeds on `http://localhost:3000`.
 We suspect `vercel.app` being on the Public Suffix List interacts with storage
 partitioning, but we have not proven it and are not reporting it as fact. Next
 test is a non-PSL custom domain.
+
+---
+
+## 13. Expiry is not erasure, and we built a product on believing it was — Arkiv
+
+**Severity:** none against Arkiv; total against us. The most useful thing we
+learned all weekend, and the reason it belongs here is that the documentation
+warned us and we still got it wrong.
+
+We designed around this claim: the wrapped content key exists *only* inside the
+grant entity, so when `expires` prunes the entity the key is destroyed and the
+ciphertext on Swarm becomes permanently unopenable — including to us. That
+sentence was in our README, our schema doc, and on the page recipients actually
+see.
+
+It is false. Entities are created by transactions, and the payload travels in the
+transaction's calldata. `expires` prunes the entity from the **live query
+surface**; it does not remove the transaction. We proved it against one of our
+own expired grants:
+
+```
+$ node scripts/payload-survives.mjs 0xb7f157f7… 0x5f9b5f13…
+
+entity   0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905
+status   gone from the query surface
+
+PAYLOAD RECOVERED FROM CALLDATA:
+  {"v":1,"ref":"demo-swarm-reference","wrap":{"iv":"x","ct":"y"}}
+```
+
+The entity is gone. The wrapped key is not, and never will be.
+
+**This is not an Arkiv bug.** Your own docs say *"it is not a confidentiality
+layer. Entities are public and verifiable by design, so secrets and personal data
+stay out. Store a hash or a commitment instead, or encrypt your own data before it
+goes in."* We read that, encrypted the document before it went in — and then put
+the wrapped **key** in beside it, which is the case the sentence does not quite
+name.
+
+**Where the documentation could stop the next team making this mistake:**
+
+1. `expires` is described in terms of entities no longer showing up in queries.
+   That is accurate and it is also exactly what a reader rounds to "gone". One
+   sentence — *"expiration removes an entity from queries; it does not remove the
+   transaction that created it, and payloads remain readable in chain history"* —
+   would close the gap. It is the single highest-value sentence you could add.
+2. The "not a confidentiality layer" warning is framed around *secrets in
+   payloads*. The trap we fell into is subtler: correctly-encrypted data whose
+   **key material** is in the payload, protected by a second factor held
+   elsewhere. Worth naming, because "encrypt before it goes in" reads as
+   permission to store the wrapper.
+3. A note that `$payload` is carried in calldata, near the payload docs rather
+   than only in the transaction decoder, would make the lifetime obvious to
+   anyone reasoning about deletion.
+
+**What we changed.** Rather than quietly restate the claim, the README now has a
+section titled *What expiry does and does not do* with a table of what is and is
+not true, the repro above, and the design that would actually fix it — keep the
+wrapped key out of Arkiv and behind something that can stop answering (a
+threshold share, or an ACT-gated blob with a revoked grantee list), leaving the
+entity holding a commitment plus typed attributes. That is the role your docs
+describe for the index, and we would have landed there had we read them better.
+
+Mission 02 is unaffected: it asks that something in the app change because data
+expired on its own, and that is precisely what still happens.

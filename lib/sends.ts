@@ -153,23 +153,24 @@ export async function openSend(
   try {
     grant = await getGrant(entityKey)
   } catch (error) {
+    // A transport failure is an error, not an expiry. Saying "expired" here
+    // would tell the reader their access ended when in fact we cannot tell.
     return { status: "error", message: (error as Error).message }
   }
   if (!grant) return { status: "expired" }
 
-  // Check the boundary the engine actually enforces, not a wall clock.
-  //
-  // The grant dies at a block height. Reading the head and comparing against it
-  // asks the same question the engine will ask, so "expired" here means the same
-  // thing it means on-chain. This is defence in depth rather than the guarantee:
-  // the guarantee is that a moment later the grant is gone and the wrapped key
-  // with it, so there is nothing left to refuse.
-  if (grant.expiresBlock > 0) {
-    const head = await getCurrentBlock()
-    if (Number(head) >= grant.expiresBlock) return { status: "expired" }
-  }
-
   try {
+    // Check the boundary the engine enforces, not a wall clock.
+    //
+    // Honest-client hygiene, not enforcement: a reader who controls their own
+    // browser can skip it, and anyone holding an archived copy of the grant
+    // payload never asks us at all. It keeps the ordinary case truthful; the
+    // cryptography does not depend on it.
+    if (grant.expiresBlock > 0) {
+      const head = await getCurrentBlock()
+      if (Number(head) >= grant.expiresBlock) return { status: "expired" }
+    }
+
     const linkSecret = fromBase64Url(linkSecretB64)
     const contentKey = await unwrapContentKey(
       {

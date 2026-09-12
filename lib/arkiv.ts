@@ -194,7 +194,14 @@ export async function listGrants(params: {
   return result.entities.map((e) => toGrant(e, head)).filter((g): g is Grant => g !== null)
 }
 
-/** The recipient's read. Absence here is what expiry looks like from outside. */
+/**
+ * The recipient's read. Absence here is what expiry looks like from outside.
+ *
+ * A missing entity and an unreachable node are not the same event and must not
+ * look the same: reporting "this expired" because an RPC timed out tells the
+ * reader something false about their access. Only a genuine not-found returns
+ * `null`; everything else throws and is surfaced as an error.
+ */
 export async function getGrant(entityKey: string): Promise<Grant | null> {
   const client = getPublicClient()
   try {
@@ -204,11 +211,23 @@ export async function getGrant(entityKey: string): Promise<Grant | null> {
     ])
     if (!entity) return null
     return toGrant(entity, head)
-  } catch {
-    // An expired or never-existing entity is not an error condition for us —
-    // it is the expected steady state after the window closes.
-    return null
+  } catch (error) {
+    if (isNotFound(error)) return null
+    throw error
   }
+}
+
+/**
+ * The engine reports an expired, pruned or never-created entity through the same
+ * error, which is exactly the condition we treat as "gone".
+ */
+function isNotFound(error: unknown): boolean {
+  const message = String((error as Error)?.message ?? error).toLowerCase()
+  return (
+    message.includes("no live entity") ||
+    message.includes("not found") ||
+    message.includes("does not exist")
+  )
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */

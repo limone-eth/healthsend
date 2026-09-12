@@ -83,11 +83,36 @@ await assert.rejects(
 )
 console.log("PASS  wrapped key is bound to its Swarm reference")
 
-// --- negative: grant expired (link alone is useless) ------------------------
-// After expiry the grant is simply absent, so the recipient has the fragment and
-// the ciphertext and nothing that turns one into the other.
-assert.ok(blob.length > 0 && fragment.length > 0)
-console.log("PASS  link + ciphertext alone yield no key once the grant is gone")
+// --- ciphertext is tamper-evident -------------------------------------------
+// AES-GCM authenticates, so a storage-side attacker cannot flip bits in the
+// blob without the open failing.
+const tampered = Uint8Array.from(blob)
+tampered[tampered.length - 1] ^= 0x01
+await assert.rejects(
+  open(contentKey, { iv: tampered.subarray(0, 12), ciphertext: tampered.subarray(12) }),
+  "a modified ciphertext must not decrypt",
+)
+console.log("PASS  tampered ciphertext is rejected")
+
+// --- what expiry does NOT do ------------------------------------------------
+// Worth asserting rather than claiming. The wrapped key is published to a public
+// chain, so "the grant expired" removes it from the query surface and from
+// nowhere else. Anyone who kept a copy of the payload — trivial, it is public —
+// can still pair it with the fragment and decrypt.
+//
+// This is the honest boundary of the design, and `scripts/payload-survives.mjs`
+// demonstrates it against a real expired grant on Tiramisu.
+const archivedGrant = structuredClone(grant)
+const stillOpens = await unwrapContentKey(
+  {
+    iv: fromBase64Url(archivedGrant.wrap.iv),
+    ciphertext: fromBase64Url(archivedGrant.wrap.ct),
+  },
+  fromBase64Url(fragment),
+  archivedGrant.ref,
+)
+assert.deepEqual(Buffer.from(stillOpens), Buffer.from(contentKey))
+console.log("PASS  an archived grant payload + the link still decrypt — expiry is not erasure")
 
 // --- blinded attributes are deterministic but opaque ------------------------
 const blindKey = generateContentKey()

@@ -66,7 +66,15 @@ const dashboardQuery = () =>
     .limit(50)
     .fetch()
 
+// Mirror the application exactly: pin an absolute block rather than ask for a
+// duration. A duration resolves against the block the transaction lands in, so
+// it drifts past the window the sender was shown — see friction.md 11.
+const head = await publicClient.getBlockNumber()
+const expiresBlock = head + BigInt(Math.ceil(TTL / 2))
+
 console.log(`\ncreating a grant with a ${TTL}s lifetime…`)
+console.log(`head     ${head}`)
+console.log(`expires  block ${expiresBlock}`)
 const { entityKey, txHash } = await wallet.createEntity({
   payload: jsonToPayload({ v: 1, ref: "demo-swarm-reference", wrap: { iv: "x", ct: "y" } }),
   contentType: "application/json",
@@ -78,9 +86,9 @@ const { entityKey, txHash } = await wallet.createEntity({
     recipient: str("blinded-recipient-hmac"),
     label: str("blinded-label-hmac"),
     created_at: u64(BigInt(now)),
-    expires_at: u64(BigInt(now + TTL)),
+    expires_block: u64(expiresBlock),
   },
-  expires: ExpirationTime.fromSeconds(Math.ceil(TTL / 2) * 2),
+  expires: ExpirationTime.atBlock(expiresBlock),
 })
 console.log(`entity   ${entityKey}`)
 console.log(`tx       https://tiramisu.explorer.arkiv.network/tx/${txHash}`)
@@ -109,4 +117,17 @@ console.log(`\n${gone ? "PASS" : "FAIL"}  the grant ${gone ? "expired on its own
 
 const direct = await publicClient.getEntity(entityKey).catch(() => null)
 console.log(`getEntity(${entityKey.slice(0, 12)}…) -> ${direct ? "still readable" : "not found"}`)
+
+// State plainly what this did and did not prove, because the difference is the
+// whole point. The grant left the query surface on its own — that is Mission 02.
+// It did not erase anything: the payload written by the creating transaction is
+// still in that transaction, readable by anyone, forever.
+console.log(`
+WHAT THIS PROVES      the grant left the live query surface with no delete call.
+WHAT IT DOES NOT      the payload is still in the creating transaction's calldata
+                      and remains public. Expiry ends availability through the
+                      index; it is not erasure. See README, "What expiry does
+                      and does not do".
+  verify for yourself: node scripts/payload-survives.mjs ${txHash}
+`)
 process.exit(gone ? 0 : 1)
