@@ -16,7 +16,8 @@
 
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { BookOpen, PaperPlaneTilt } from "@phosphor-icons/react"
+import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
+import { BookOpen, CloudSlash, LockSimple, PaperPlaneTilt } from "@phosphor-icons/react"
 import { openSend, type OpenedSend } from "@/lib/sends"
 import { classify, type PackedFile } from "@/lib/envelope"
 import { Card, Countdown, ListRow } from "@/components/ui"
@@ -48,19 +49,23 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
     }
   }, [key])
 
-  // The "ok" branch draws its own chrome (RecipientTopBar, no rail, no tabs)
-  // per H-5. Every other status is H-6's to restyle, so it keeps the plain
-  // centred wrapper this page always had rather than inheriting the new one.
+  // "ok" draws its own chrome (RecipientTopBar, no rail, no tabs) per H-5.
+  // "unavailable", "expired" and "revoked" are H-6's: full-bleed splash
+  // screens (RqJ31/f9lYQS, WtHlp/zHvvF), not the plain centred wrapper below —
+  // that wrapper is what is left for the states this story does not touch.
   if (state.status === "ok") {
     return <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
+  }
+  if (state.status === "unavailable") {
+    return <Unavailable message={state.message} />
+  }
+  if (state.status === "expired" || state.status === "revoked") {
+    return <Ended revoked={state.status === "revoked"} />
   }
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">
       {state.status === "loading" && <p className="text-sm text-muted">Opening…</p>}
-      {state.status === "expired" && <Expired />}
-      {state.status === "revoked" && <Revoked />}
-      {state.status === "unavailable" && <Unavailable message={state.message} />}
       {state.status === "no-key" && <NoKey />}
       {state.status === "error" && <Failed message={state.message} />}
     </main>
@@ -352,81 +357,160 @@ function CsvTable({ text }: { text: string }) {
   )
 }
 
-function Expired() {
-  return (
-    <Card>
-      <h1 className="text-lg font-semibold">This link has expired</h1>
-      <p className="mt-2 text-sm text-muted">
-        The grant reached the end of its life and no longer appears in Arkiv&rsquo;s index. The
-        holder checks for it before serving its half of the key, so there is no longer a second
-        half to put this one together with.
-      </p>
-      <p className="mt-3 text-sm text-muted">
-        Nobody ended this early. No job ran. The access simply ran out.
-      </p>
-      {/* An earlier version of this page said there was "no key anywhere that
-          opens it, including ours". That was false, and it is not the kind of
-          thing to be vague about on the page a reader actually sees. */}
-      <p className="mt-4 text-xs text-muted">
-        To be precise about what that does and does not mean: the encrypted document is still on
-        Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Expiry ends
-        access through this app. It is not erasure.
-      </p>
-    </Card>
-  )
-}
-
 /**
- * The sender ended access before the window closed on its own.
+ * The shared shell for 3.3 and 3.4 — pen ids `RqJ31`/`f9lYQS` (light, read via
+ * the pencil MCP tool) and `WtHlp`/`zHvvF` (dark). Both frames place a bare
+ * wordmark over a full-bleed canvas, one panel centred on it, and a footnote
+ * near the bottom edge — no bordered top bar (`RecipientTopBar`'s look does
+ * not appear in either frame). One component parameterised by `tone` rather
+ * than two copies, so 3.3 and 3.4 cannot drift into different spacing by
+ * accident — the drift this whole story exists to prevent.
  *
- * A revoke and a lapsed grant both leave the holder with no share, so they
- * surface through the same 410 (see `lib/unlock.ts`). But they are not the
- * same fact for the reader: nobody chose the one above, and someone did
- * choose this one. Neither reads as a failure — the sender ending a share
- * they made is the feature working, not an error — and neither may claim
- * more than expiry claims: the document still exists on Swarm and in chain
- * history, unreachable through this app rather than gone.
+ * `tone="dark"` is the one surface in this light-only product that inverts:
+ * `$panel-on-dark` / `$hairline-on-dark` per CLAUDE.md, and fixed `text-white`
+ * / `text-[#E4E5E7]` rather than themed `text-surface` — the same fixed-dark
+ * exception `FocusCard` already carries in `components/ui.tsx`, for the same
+ * reason: this gradient never themes, so its foreground must not either.
  */
-function Revoked() {
+function TerminalScreen({
+  tone,
+  icon: IconComponent,
+  headline,
+  body,
+  note,
+  extraNote,
+  debug,
+  foot,
+}: {
+  tone: "light" | "dark"
+  icon: PhosphorIcon
+  headline: string
+  body: string
+  note: string
+  extraNote?: string
+  debug?: string
+  foot?: string
+}) {
+  const dark = tone === "dark"
   return (
-    <Card>
-      <h1 className="text-lg font-semibold">Access to this send has ended</h1>
-      <p className="mt-2 text-sm text-muted">
-        The sender ended it early, before the window they set had closed. Nothing went wrong on
-        either side.
-      </p>
-      <p className="mt-4 text-xs text-muted">
-        To be precise about what that does and does not mean: the encrypted document is still on
-        Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Ending
-        access stops it being reopened through this app. It is not erasure.
-      </p>
-    </Card>
+    <div
+      className="flex min-h-screen w-full flex-col px-7 pb-10 pt-14 md:px-12 md:pb-16 md:pt-9"
+      style={
+        dark
+          ? {
+              background:
+                "linear-gradient(155deg, var(--color-grad-focus-from) 0%, var(--color-grad-focus-to) 100%)",
+            }
+          : { background: "var(--color-canvas)" }
+      }
+    >
+      <span
+        className={`text-[15px] font-semibold tracking-[-0.3px] md:text-[17px] md:tracking-[-0.35px] ${
+          dark ? "text-white" : "text-ink"
+        }`}
+      >
+        healthsend
+      </span>
+
+      <div className="flex flex-1 items-center justify-center py-10">
+        <div
+          className={`flex w-full flex-col gap-4 rounded-card border p-[26px] backdrop-blur-xl md:max-w-[560px] md:p-[30px] ${
+            dark ? "border-hairline-on-dark bg-panel-on-dark" : "border-hairline bg-surface"
+          }`}
+        >
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-control border md:h-[46px] md:w-[46px] ${
+              dark ? "border-hairline-on-dark bg-surface/12" : "border-hairline bg-grouped"
+            }`}
+          >
+            <IconComponent size={22} weight="light" className={dark ? "text-white" : "text-secondary"} />
+          </div>
+
+          <h1
+            className={`text-[26px] font-bold leading-[1.2] tracking-[-0.6px] md:text-[32px] md:leading-[1.15] md:tracking-[-0.8px] ${
+              dark ? "text-white" : "text-ink"
+            }`}
+          >
+            {headline}
+          </h1>
+
+          <p className={`text-[15px] leading-[1.5] md:text-[16px] ${dark ? "text-[#E4E5E7]" : "text-secondary"}`}>
+            {body}
+          </p>
+
+          <div className={`h-px w-full ${dark ? "bg-hairline-on-dark" : "bg-hairline"}`} />
+
+          <p className={`text-[13px] leading-[1.45] md:text-[14px] ${dark ? "text-silver" : "text-secondary"}`}>
+            {note}
+          </p>
+
+          {extraNote && (
+            <p className={`text-[13px] leading-[1.45] md:text-[14px] ${dark ? "text-silver" : "text-secondary"}`}>
+              {extraNote}
+            </p>
+          )}
+
+          {debug && <p className="font-mono text-[11px] text-muted">{debug}</p>}
+        </div>
+      </div>
+
+      {foot && <p className={`text-[12px] md:text-[13px] ${dark ? "text-silver" : "text-muted"}`}>{foot}</p>}
+    </div>
   )
 }
 
 /**
- * The holder could not be reached.
- *
- * This must never be dressed up as expiry. Expiry is a fact about the sender's
- * intention; this is a fact about our infrastructure, and the difference is the
- * price we pay for being able to expire anything at all. Telling someone their
- * access ended when it did not is the same class of lie as telling them it is
- * gone when it is not.
+ * 3.4 — the grant is gone from Arkiv's index, whether it lapsed on its own or
+ * the sender ended it early. Both draw `WtHlp`/`zHvvF`'s dark focus treatment
+ * — ending is the payoff, the one page in the product that flips — but the
+ * headline and body keep the wording `openSend` already earns them rather
+ * than the frame's generic "This has ended": e2e (`e2e/recipient.spec.ts`)
+ * pins the exact strings below because collapsing them is precisely the
+ * confusion this story exists to prevent, and an earlier version of this page
+ * did once collapse the natural-expiry case into a false, broader claim (see
+ * the git history on the copy below) — the distinction is load-bearing, not
+ * decorative.
+ */
+function Ended({ revoked }: { revoked: boolean }) {
+  return (
+    <TerminalScreen
+      tone="dark"
+      icon={LockSimple}
+      headline={revoked ? "Access to this send has ended" : "This link has expired"}
+      body={
+        revoked
+          ? "The sender ended it early, before the window they set had closed. Nothing went wrong on either side."
+          : "The grant reached the end of its life and no longer appears in Arkiv’s index. The holder checks for it before serving its half of the key, so there is no longer a second half to put this one together with. Nobody ended this early. No job ran. The access simply ran out."
+      }
+      note={
+        revoked
+          ? "To be precise about what that does and does not mean: the encrypted document is still on Swarm, and the grant’s contents remain in the transaction that created it. Ending access stops it being reopened through this app. It is not erasure."
+          : "To be precise about what that does and does not mean: the encrypted document is still on Swarm, and the grant’s contents remain in the transaction that created it. Expiry ends access through this app. It is not erasure."
+      }
+      extraNote="Still working together? Ask for a new link and you will get a fresh twelve weeks."
+    />
+  )
+}
+
+/**
+ * 3.3 — the holder could not be reached. This must never be dressed up as
+ * expiry: expiry is a fact about the sender's intention, this is a fact about
+ * our infrastructure, and the difference is the price paid for being able to
+ * expire anything at all. `RqJ31`/`f9lYQS` stay in the ordinary light chrome
+ * on purpose — see `TerminalScreen` — so a reader skimming this page cannot
+ * come away believing their access ended, because it has not.
  */
 function Unavailable({ message }: { message: string }) {
   return (
-    <Card>
-      <h1 className="text-lg font-semibold">Temporarily unavailable</h1>
-      <p className="mt-2 text-sm text-muted">
-        This link has <strong>not</strong> expired. The service that holds half of the decryption
-        key could not be reached just now, so the key cannot be put back together. Try again in a
-        moment.
-      </p>
-      <p className="mt-3 text-xs text-muted">
-        If it keeps failing, ask the sender — they still hold the document and can re-share it.
-      </p>
-      <p className="mt-3 font-mono text-xs text-muted">{message}</p>
-    </Card>
+    <TerminalScreen
+      tone="light"
+      icon={CloudSlash}
+      headline="Temporarily unavailable"
+      body="This has not ended. The service that holds half the key could not be reached just now, so this page cannot put it back together yet."
+      note="Try again in a moment. If it keeps failing, ask the sender — they still have the documents and can send a fresh link."
+      debug={message}
+      foot="Nothing is wrong with your link."
+    />
   )
 }
 
