@@ -35,10 +35,11 @@ const WINDOWS: { label: string; seconds: number }[] = [
 
 export default function Home() {
   const [info, setInfo] = useState<ConnectionInfo>({ canUpload: false })
-  const [identity, setIdentity] = useState<{ address: string | null; booting: boolean }>({
-    address: null,
-    booting: true,
-  })
+  const [identity, setIdentity] = useState<{
+    address: string | null
+    booting: boolean
+    error: string | null
+  }>({ address: null, booting: true, error: null })
   const { address, booting } = identity
 
   useEffect(() => onConnectionChange(setInfo), [])
@@ -50,14 +51,18 @@ export default function Home() {
     const resolve = async () => {
       if (!info.identity) {
         forgetIdentity()
-        if (!cancelled) setIdentity({ address: null, booting: false })
+        if (!cancelled) setIdentity({ address: null, booting: false, error: null })
         return
       }
       try {
         const derived = await getIdentity()
-        if (!cancelled) setIdentity({ address: derived.address, booting: false })
-      } catch {
-        if (!cancelled) setIdentity({ address: null, booting: false })
+        if (!cancelled) setIdentity({ address: derived.address, booting: false, error: null })
+      } catch (caught) {
+        // Swallowing this left the app signed in with no send form and no
+        // explanation — the worst of both states. Say what broke.
+        if (!cancelled) {
+          setIdentity({ address: null, booting: false, error: (caught as Error).message })
+        }
       }
     }
     resolve()
@@ -75,7 +80,12 @@ export default function Home() {
         </p>
       </header>
 
-      <ConnectionPanel info={info} address={address} booting={booting} />
+      <ConnectionPanel
+        info={info}
+        address={address}
+        booting={booting}
+        error={identity.error}
+      />
 
       {info.identity && address && (
         <>
@@ -96,10 +106,12 @@ function ConnectionPanel({
   info,
   address,
   booting,
+  error,
 }: {
   info: ConnectionInfo
   address: string | null
   booting: boolean
+  error: string | null
 }) {
   const [busy, setBusy] = useState(false)
 
@@ -149,6 +161,12 @@ function ConnectionPanel({
                 same key comes back.
               </p>
             </details>
+          )}
+          {booting && <p className="mt-2 text-xs text-muted">Deriving your keys…</p>}
+          {error && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              Could not derive your grant key: {error}
+            </p>
           )}
           {!info.canUpload && (
             <p className="mt-2 text-xs text-muted">
