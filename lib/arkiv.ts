@@ -77,6 +77,8 @@ export type Grant = {
   authCommitment: string
   /** True when this grant predates the split-key design. */
   legacy: boolean
+  /** The `ownedBy` address. Authorises "End access now" — see `lib/revoke.ts`. */
+  sender: string
   fileKind: FileKind
   createdAt: number
   /** The block the grant dies at. This is the authority — see `createGrant`. */
@@ -268,6 +270,7 @@ function toGrant(entity: any, head: bigint): Grant | null {
       payload,
       authCommitment: legacy ? "" : ((payload as GrantPayload).authCommitment ?? ""),
       legacy,
+      sender: String(attributes.sender ?? ""),
       fileKind: (attributes.filetype as FileKind) ?? "text",
       createdAt: Number(attributes.created_at ?? 0),
       expiresBlock,
