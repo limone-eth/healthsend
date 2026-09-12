@@ -25,6 +25,7 @@ import type { FileKind } from "@/lib/arkiv"
 import { Action, Card, Field, ScreenHeader, inputClass } from "@/components/ui"
 import { DemoNotice } from "@/components/demo-notice"
 import { useSenderIdentity } from "@/components/use-sender-identity"
+import { isExpiryValid, resolveCustomSeconds, resolveTtlSeconds } from "./expiry"
 
 /**
  * Frame `HMa4U` (desktop) / `ammIs` (mobile), read via the pencil MCP tool
@@ -145,14 +146,16 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   }, [])
   const previewNow = now ?? 0
 
-  const customSeconds = customValue
-    ? Math.max(1, Math.round((new Date(customValue).getTime() - previewNow) / 1000))
-    : null
-  const ttlSeconds = customEnabled && customSeconds ? customSeconds : windowSeconds
+  const customSeconds = resolveCustomSeconds(customValue, previewNow)
+  const ttlSeconds = resolveTtlSeconds({ customEnabled, customSeconds, windowSeconds })
   const expiresAt = Math.floor(previewNow / 1000) + ttlSeconds
+  // Custom enabled with nothing usable picked yet must block create, not fall
+  // back to whichever preset window was last selected — see R2-016 in
+  // docs/stories/H-49.md and expiry.ts's header comment.
+  const expiryValid = isExpiryValid({ customEnabled, customSeconds })
 
   const selectedFiles = files.filter((_, i) => selected.has(i))
-  const canCreate = selectedFiles.length > 0 && canUpload && stage === null
+  const canCreate = selectedFiles.length > 0 && canUpload && stage === null && expiryValid
 
   const onPickFiles = (fileList: FileList | null) => {
     setFiles(Array.from(fileList ?? []))
