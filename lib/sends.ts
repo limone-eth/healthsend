@@ -216,7 +216,11 @@ export async function createSend(
   const shareSignature = await privateKeyToAccount(identity.privateKey).signMessage({
     message: shareMessage(grant.entityKey, shareTimestamp, sharePayload),
   })
-  const handoff = await dependencies.fetch("/api/holder/share", {
+  // Called through a local reference, not `dependencies.fetch(...)` directly:
+  // native `fetch` is branded to its global object, and a real browser throws
+  // "Illegal invocation" when it is invoked as a method on any other object.
+  const doFetch = dependencies.fetch
+  const handoff = await doFetch("/api/holder/share", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -377,7 +381,11 @@ export async function createSendFromArchive(
   const shareSignature = await privateKeyToAccount(identity.privateKey).signMessage({
     message: shareMessage(grant.entityKey, shareTimestamp, sharePayload),
   })
-  const handoff = await dependencies.fetch("/api/holder/share", {
+  // Called through a local reference, not `dependencies.fetch(...)` directly:
+  // native `fetch` is branded to its global object, and a real browser throws
+  // "Illegal invocation" when it is invoked as a method on any other object.
+  const doFetch = dependencies.fetch
+  const handoff = await doFetch("/api/holder/share", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -870,7 +878,9 @@ export async function endSend(
   const account = privateKeyToAccount(identity.privateKey)
   const signature = await account.signMessage({ message: revokeMessage(entityKey, timestamp) })
 
-  const response = await dependencies.fetch("/api/holder/revoke", {
+  // See the handoff call above: a local reference, never `dependencies.fetch(...)` directly.
+  const doFetch = dependencies.fetch
+  const response = await doFetch("/api/holder/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ entityKey, signature, timestamp }),
