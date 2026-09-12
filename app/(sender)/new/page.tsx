@@ -14,12 +14,14 @@ import {
   Fingerprint,
   FirstAidKit,
   LinkSimple,
+  LockKey,
   PaperPlaneTilt,
   UploadSimple,
   UserCircle,
   type Icon as PhosphorIcon,
 } from "@phosphor-icons/react"
 import { createSend, type CreateSendResult } from "@/lib/sends"
+import { generateCode } from "@/lib/crypto"
 import { classifyBundle } from "@/lib/envelope"
 import type { FileKind } from "@/lib/arkiv"
 import { Action, Card, Field, ScreenHeader, inputClass } from "@/components/ui"
@@ -47,14 +49,21 @@ import { isExpiryValid, resolveCustomSeconds, resolveTtlSeconds } from "./expiry
  *
  * The frame's right column ("Settings Panel", `B6zXII`) is DESIGN.md's own
  * name for what this story calls the summary panel (see DESIGN.md's Layout
- * section: "a sticky summary panel right"). Its "Lock it to their phone",
- * "Add a PIN" and "Let their assistant read it too" controls have no backing
- * code path — `lib/sends.ts`'s `createSend` takes only files, a recipient
- * label and a TTL — and building them would mean inventing behaviour `lib/`
- * does not have, which this story's non-goals forbid touching. "How they open
- * it" is shown as the one true, current mode plus the device-lock mode
- * disabled, matching how `chrome.tsx` already marks the assistant nav item
- * inert; the PIN and assistant controls are left out rather than faked.
+ * section: "a sticky summary panel right"). Its "Lock it to their phone" and
+ * "Let their assistant read it too" controls still have no backing code path
+ * — `lib/sends.ts`'s `createSend` takes files, a recipient label, a TTL and
+ * (H-7) an optional code, nothing about device binding or an assistant — and
+ * building either would mean inventing behaviour `lib/` does not have, which
+ * this story's non-goals forbid touching. "How they open it" is shown as the
+ * one true, current mode plus the device-lock mode disabled, matching how
+ * `chrome.tsx` already marks the assistant nav item inert; the device-lock
+ * and assistant controls are left out rather than faked.
+ *
+ * "Add a PIN" is different: H-7 gives it a real code path end to end (see
+ * `ToggleRow`, `generateCode`, `lib/crypto.ts`, `lib/holder-store.ts`), so it
+ * is built here for real rather than shown disabled. No frame node backs this
+ * exact toggle — see `## Choices` — so its visual language follows
+ * `AccessModeRow` above rather than inventing a new one.
  *
  * The shared `(sender)` layout gives every route's content a wide column
  * (`layout.tsx`, off-limits to this story). At `md` and up this screen
@@ -117,6 +126,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   const [windowSeconds, setWindowSeconds] = useState(WINDOWS[1].seconds)
   const [customEnabled, setCustomEnabled] = useState(false)
   const [customValue, setCustomValue] = useState("")
+  const [codeEnabled, setCodeEnabled] = useState(false)
 
   const [mobileStep, setMobileStep] = useState<1 | 2>(1)
   const [stage, setStage] = useState<string | null>(null)
@@ -182,11 +192,17 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   const submit = async () => {
     if (!canCreate) return
     setError(null)
+    // Generated before createSend runs, not inside it: the code is this
+    // screen's concern (H-7 — "the compose flow must actually generate and
+    // show it, not imply it"), and a value fixed here is what gets sent to
+    // the holder and what gets shown back to the sender to relay separately.
+    const code = codeEnabled ? generateCode() : undefined
     try {
       const send = await createSend({
         files: selectedFiles,
         recipientLabel: recipient || "unnamed",
         ttlSeconds,
+        code,
         onProgress: setStage,
       })
       setResult(send)
@@ -195,10 +211,12 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         fileCount: selectedFiles.length,
         fileKind: classifyBundle(selectedFiles),
         ttlSeconds,
+        code,
       })
       setFiles([])
       setSelected(new Set())
       setRecipient("")
+      setCodeEnabled(false)
       setMobileStep(1)
     } catch (caught) {
       setError((caught as Error).message)
@@ -273,6 +291,8 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
               onCustomValue={setCustomValue}
               expiresAt={expiresAt}
               now={previewNow}
+              codeEnabled={codeEnabled}
+              onCodeEnabled={setCodeEnabled}
             />
           </div>
         )}
@@ -332,6 +352,8 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             onCustomValue={setCustomValue}
             expiresAt={expiresAt}
             now={previewNow}
+            codeEnabled={codeEnabled}
+            onCodeEnabled={setCodeEnabled}
           />
           <Action fullWidth icon={PaperPlaneTilt} disabled={!canCreate} onClick={submit}>
             {stage ?? "Create the link"}
@@ -523,10 +545,10 @@ function FileRow({ file, checked, onToggle }: { file: File; checked: boolean; on
 
 // ---------------------------------------------------------------------------
 // Summary panel — pen id `B6zXII` ("Settings Panel"; DESIGN.md's Layout
-// section names it "a sticky summary panel"). Recipient label and the window
-// control are wired to `lib/sends.ts`; "How they open it" is shown as the
-// one real mode, and the PIN/assistant controls are left out — see the
-// file-level comment.
+// section names it "a sticky summary panel"). Recipient label, the window
+// control and the code toggle are wired to `lib/sends.ts`; "How they open
+// it" is shown as the one real mode, and the device-lock/assistant controls
+// are left out — see the file-level comment.
 // ---------------------------------------------------------------------------
 
 function SettingsSection({
@@ -540,6 +562,8 @@ function SettingsSection({
   onCustomValue,
   expiresAt,
   now,
+  codeEnabled,
+  onCodeEnabled,
 }: {
   recipient: string
   onRecipient: (value: string) => void
@@ -551,6 +575,8 @@ function SettingsSection({
   onCustomValue: (value: string) => void
   expiresAt: number
   now: number
+  codeEnabled: boolean
+  onCodeEnabled: (value: boolean) => void
 }) {
   const expiresDate = new Date(expiresAt * 1000)
   const activeWindow = WINDOWS.find((w) => w.seconds === windowSeconds) ?? WINDOWS[1]
@@ -579,6 +605,23 @@ function SettingsSection({
           disabled
         />
       </div>
+
+      {/*
+        A four-digit code — H-7. Optional, chosen per send: this toggle is the
+        only place a sender decides. No design node backs this exact control
+        (see this file's ## Choices in the story); it follows AccessModeRow's
+        visual language above rather than inventing a new one.
+
+        The consequence line is not a footnote: a coded share genuinely cannot
+        be opened without the code, by anyone, including whoever is reading
+        this sentence right now.
+      */}
+      <ToggleRow
+        title="Add a four-digit code"
+        description="They enter it before anything opens, sent to them separately from the link. Nobody can open this without it — not even you, once it's sent."
+        checked={codeEnabled}
+        onChange={onCodeEnabled}
+      />
 
       <Field label="Ends on" assistive={windowAssistive(activeWindow.label, customEnabled)}>
         <div className="flex h-[54px] w-full items-center gap-2.5 rounded-control bg-surface px-4 text-[17px] text-ink shadow-control">
@@ -673,6 +716,45 @@ function AccessModeRow({
   )
 }
 
+/** A labelled on/off row — H-7's code toggle, the only caller so far. */
+function ToggleRow({
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  title: string
+  description: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex w-full items-start gap-3 rounded-control border border-hairline bg-surface p-3.5 text-left"
+    >
+      <span className="flex flex-1 flex-col gap-0.5">
+        <span className="text-[15px] font-semibold text-ink">{title}</span>
+        <span className="text-label text-secondary">{description}</span>
+      </span>
+      <span
+        className={`mt-0.5 flex h-6 w-10 shrink-0 items-center rounded-capsule p-0.5 transition-colors ${
+          checked ? "bg-ink" : "bg-grouped"
+        }`}
+      >
+        <span
+          className={`h-5 w-5 rounded-full bg-surface shadow-control transition-transform ${
+            checked ? "translate-x-4" : "translate-x-0"
+          }`}
+        />
+      </span>
+    </button>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // 2.5 Link ready — pen ids `LKFS1` (desktop) / `uQP20` (mobile), read via the
 // pencil MCP tool. The WeTransfer moment: the link, and four rows on what is
@@ -712,6 +794,8 @@ type SentSummary = {
   fileCount: number
   fileKind: FileKind
   ttlSeconds: number
+  /** H-7: shown once, here, so the sender can relay it separately from the link. Never stored. */
+  code?: string
 }
 
 const LINK_READY_FILE_KIND_LABEL: Record<FileKind, string> = {
@@ -773,6 +857,7 @@ function LinkReady({
   onMakeAnother: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
   const expiresDate = new Date(result.expiresAt * 1000)
 
   const copyLink = () => {
@@ -781,9 +866,23 @@ function LinkReady({
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const copyCode = () => {
+    if (!summary.code) return
+    navigator.clipboard.writeText(summary.code)
+    setCodeCopied(true)
+    setTimeout(() => setCodeCopied(false), 1500)
+  }
+
   const inItValue = whatsInIt(summary)
   const linkDisplay = truncateLink(result.url)
   const durationValue = durationLabel(summary.ttlSeconds)
+  // Real, not the frame's uncoded default (see the file-level comment): a
+  // coded share genuinely needs both, and this row is the wrong place to
+  // understate that.
+  const whoCanOpen = summary.code ? "Anyone with the link and the code" : "Anyone with the link"
+  const whoCanOpenDesktop = summary.code
+    ? "Anyone with the link and the code, until it ends"
+    : "Anyone with the link, until it ends"
 
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col gap-3.5 md:gap-[22px]">
@@ -807,13 +906,15 @@ function LinkReady({
 
       <LinkRow display={linkDisplay} copied={copied} onCopy={copyLink} />
 
+      {summary.code && <CodeRow code={summary.code} copied={codeCopied} onCopy={copyCode} />}
+
       <div className="w-full overflow-hidden rounded-inset border border-black/[0.05] bg-surface shadow-card md:rounded-card">
         <SummaryRow icon={FirstAidKit} label="What's in it" value={inItValue} />
         <SummaryRow
           icon={Fingerprint}
           label="Who can open it"
-          value="Anyone with the link"
-          desktopValue="Anyone with the link, until it ends"
+          value={whoCanOpen}
+          desktopValue={whoCanOpenDesktop}
         />
         <SummaryRow
           icon={CalendarBlank}
@@ -875,6 +976,48 @@ function LinkRow({
         <CopyIcon size={16} weight={copied ? "bold" : "regular"} className="hidden md:block" />
         {copied ? "Copied" : "Copy"}
       </button>
+    </div>
+  )
+}
+
+/**
+ * The code, shown once — H-7. Drawn as its own row rather than folded into
+ * `LinkRow`, so the two things read as two things: the design is explicit
+ * that the code travels away from the link, not beside it.
+ */
+function CodeRow({
+  code,
+  copied,
+  onCopy,
+}: {
+  code: string
+  copied: boolean
+  onCopy: () => void
+}) {
+  const CopyIcon = copied ? Check : Copy
+  const display = `${code.slice(0, 2)} ${code.slice(2)}`
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex h-14 w-full items-center gap-2.5 rounded-control bg-grouped py-0 pl-3.5 pr-2 md:h-15 md:gap-3 md:pl-[18px]">
+        <LockKey size={16} weight="light" className="shrink-0 text-muted md:hidden" />
+        <LockKey size={18} weight="light" className="hidden shrink-0 text-muted md:block" />
+        <span className="flex-1 truncate text-[14px] font-medium tracking-[2px] text-ink md:text-[16px]">
+          {display}
+        </span>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="flex h-10 shrink-0 items-center gap-1.5 rounded-[11px] bg-ink px-3.5 text-[13px] font-semibold text-surface md:h-11 md:gap-2 md:rounded-[12px] md:px-4 md:text-[14px]"
+        >
+          <CopyIcon size={14} weight={copied ? "bold" : "regular"} className="md:hidden" />
+          <CopyIcon size={16} weight={copied ? "bold" : "regular"} className="hidden md:block" />
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="text-[12.5px] leading-[1.45] text-muted md:text-[13px]">
+        Send this on its own, away from the link — a message, a call, anything but the same
+        channel. Nobody can open this without it, not even you.
+      </p>
     </div>
   )
 }

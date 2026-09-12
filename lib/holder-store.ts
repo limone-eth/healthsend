@@ -52,15 +52,29 @@ import { Redis } from "@upstash/redis"
  *   - `recordAccess` keeps `RPUSH` and `EXPIRE` together for old callers.
  *   - `tombstoneShare` deletes the share and creates its tombstone together,
  *     while it preserves the access history.
- *   - `putShare` checks the tombstone and claims the write-once slot together.
+ *   - `putShare` checks the tombstone and claims the write-once slot together,
+ *     and — H-7 — writes a share's code verifier in the same call, so a crash
+ *     between two separate writes can never leave a share stored with no code
+ *     guard at all.
  *   - `serveShare` checks the tombstone, reads the share, and records the open
  *     together. This is the final unlock operation.
+ *   - `checkCode` (H-7) checks a presented code's proof against the stored
+ *     verifier and counts the attempt in the same call, so concurrent guesses
+ *     cannot each observe room for one more try.
  *
- * See `scripts/access-log-proof.mjs`. Fengari runs the real Lua text against an
- * in-memory Redis command surface.
+ * See `scripts/access-log-proof.mjs` and `scripts/code-proof.mjs`. Fengari runs
+ * the real Lua text against an in-memory Redis command surface.
  */
 
 const TTL_GRACE_SECONDS = 60 * 60
+
+/**
+ * How many wrong codes a grant tolerates before it refuses every further
+ * attempt for the rest of its life. Four digits is a 10,000-entry space; five
+ * tries costs an attacker thousands of grants' worth of guessing to land one,
+ * and still leaves a legitimate reader room for a mistyped digit or two.
+ */
+export const MAX_CODE_ATTEMPTS = 5
 
 let client: Redis | null = null
 
@@ -90,6 +104,10 @@ const accessLogKey = (entityKey: string) => `healthsend:access:${entityKey.toLow
 const tombstoneKey = (entityKey: string) => `healthsend:revoked:${entityKey.toLowerCase()}`
 /** Set only when the older standalone log writer drops a write. */
 const degradedKey = (entityKey: string) => `healthsend:degraded:${entityKey.toLowerCase()}`
+/** The code verifier for a share that carries one. Absent for an uncoded send. */
+const codeHashKey = (entityKey: string) => `healthsend:codehash:${entityKey.toLowerCase()}`
+/** Wrong-code attempts against a coded share. Gone at expiry, same as the share itself. */
+const codeAttemptsKey = (entityKey: string) => `healthsend:codeattempts:${entityKey.toLowerCase()}`
 
 export type StoredShare = {
   /** The holder's half of the content key, base64url. */
@@ -124,19 +142,53 @@ redis.call("DEL", KEYS[1])
 return redis.call("SET", KEYS[2], ARGV[1], "EX", ARGV[2])
 `
 
-// KEYS[1] = share key, KEYS[2] = tombstone key.
-// ARGV[1] = share JSON, ARGV[2] = ttl seconds.
-// One call: the tombstone check and the write happen in the same atomic step,
-// so nothing can tombstone the entity in the gap between them — there is no
-// gap.
+// KEYS[1] = share key, KEYS[2] = tombstone key, KEYS[3] = code-hash key.
+// ARGV[1] = share JSON, ARGV[2] = ttl seconds, ARGV[3] = code proof to verify
+// future attempts against ("" when this send carries no code).
+// One call: the tombstone check, the write-once share, and the code guard all
+// happen in the same atomic step — there is no gap for a revoke to land in,
+// and no gap that could leave a coded share stored with its guard missing.
 export const PUT_SHARE_SCRIPT = `
 if redis.call("EXISTS", KEYS[2]) == 1 then
   return 0
 end
 if redis.call("SET", KEYS[1], ARGV[1], "NX", "EX", ARGV[2]) then
+  if ARGV[3] ~= "" then
+    redis.call("SET", KEYS[3], ARGV[3], "EX", ARGV[2])
+  end
   return 1
 end
 return 0
+`
+
+// KEYS[1] = code-hash key, KEYS[2] = attempt-counter key.
+// ARGV[1] = presented proof ("" to ask only whether a code is required, never
+// counted as a guess), ARGV[2] = max attempts, ARGV[3] = counter ttl seconds.
+// One call: the attempt limit is read and consumed together, so concurrent
+// guesses against the same grant cannot each observe room for one more try.
+export const CHECK_CODE_SCRIPT = `
+local codeHash = redis.call("GET", KEYS[1])
+if not codeHash then
+  return "NONE"
+end
+if ARGV[1] == "" then
+  return "REQUIRED"
+end
+local attempts = tonumber(redis.call("GET", KEYS[2]) or "0")
+if attempts >= tonumber(ARGV[2]) then
+  return "LOCKED"
+end
+if ARGV[1] ~= codeHash then
+  local updated = redis.call("INCR", KEYS[2])
+  if updated == 1 then
+    redis.call("EXPIRE", KEYS[2], ARGV[3])
+  end
+  if updated >= tonumber(ARGV[2]) then
+    return "LOCKED"
+  end
+  return "WRONG"
+end
+return "OK"
 `
 
 // KEYS[1] = share key, KEYS[2] = tombstone key, KEYS[3] = access log key.
@@ -172,12 +224,14 @@ export async function putShareWith(
   entityKey: string,
   value: StoredShare,
   ttlSeconds: number,
+  /** The code proof to require on future unlocks — H-7. Omit for an uncoded send. */
+  codeHash?: string,
 ): Promise<boolean> {
   const ex = Math.max(60, Math.floor(ttlSeconds) + TTL_GRACE_SECONDS)
   const result = await client.eval(
     PUT_SHARE_SCRIPT,
-    [key(entityKey), tombstoneKey(entityKey)],
-    [JSON.stringify(value), ex],
+    [key(entityKey), tombstoneKey(entityKey), codeHashKey(entityKey)],
+    [JSON.stringify(value), ex, codeHash ?? ""],
   )
   return result === 1
 }
@@ -186,8 +240,60 @@ export async function putShare(
   entityKey: string,
   value: StoredShare,
   ttlSeconds: number,
+  codeHash?: string,
 ): Promise<boolean> {
-  return putShareWith(redis(), entityKey, value, ttlSeconds)
+  return putShareWith(redis(), entityKey, value, ttlSeconds, codeHash)
+}
+
+/** What `checkCode` found, for the caller to translate into a response. */
+export type CodeCheckOutcome =
+  | "none" // this send carries no code — proceed as before
+  | "required" // a code is needed and none was presented yet — ask for it
+  | "ok" // the presented proof matches — proceed to serve
+  | "wrong" // the presented proof does not match — an attempt was counted
+  | "locked" // too many wrong attempts — refused for the rest of this grant's life
+
+const CODE_CHECK_OUTCOMES: readonly CodeCheckOutcome[] = ["none", "required", "ok", "wrong", "locked"]
+
+function parseCodeCheckOutcome(raw: unknown): CodeCheckOutcome {
+  const lower = String(raw).toLowerCase()
+  const match = CODE_CHECK_OUTCOMES.find((outcome) => outcome === lower)
+  if (!match) throw new Error(`checkCode: unexpected result from the holder: ${String(raw)}`)
+  return match
+}
+
+/**
+ * Verify a presented code proof against the stored verifier, rate-limited.
+ *
+ * Called with an empty `presentedProof` to ask only whether a code is
+ * required at all — that probe is never counted as a guess. `at`/`expiresAt`
+ * size the attempt counter's TTL exactly like `serveShareWith` sizes the
+ * share's, so a coded share's rate limit is gone at expiry along with
+ * everything else the holder keeps for it.
+ */
+export async function checkCodeWith(
+  client: HolderClient,
+  entityKey: string,
+  presentedProof: string,
+  at: number,
+  expiresAt: number,
+): Promise<CodeCheckOutcome> {
+  const ttlSeconds = Math.max(60, Math.ceil(expiresAt - at) + TTL_GRACE_SECONDS)
+  const result = await client.eval(
+    CHECK_CODE_SCRIPT,
+    [codeHashKey(entityKey), codeAttemptsKey(entityKey)],
+    [presentedProof, MAX_CODE_ATTEMPTS, ttlSeconds],
+  )
+  return parseCodeCheckOutcome(result)
+}
+
+export async function checkCode(
+  entityKey: string,
+  presentedProof: string,
+  at: number,
+  expiresAt: number,
+): Promise<CodeCheckOutcome> {
+  return checkCodeWith(redis(), entityKey, presentedProof, at, expiresAt)
 }
 
 function parseStoredShare(raw: StoredShare | string | null): StoredShare | null {

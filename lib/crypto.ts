@@ -41,6 +41,10 @@ const LINK_SECRET_BYTES = 16
 const HKDF_INFO = "healthsend/grant/v1"
 const INFO_SHARE = "healthsend/share/v1"
 const INFO_AUTH = "healthsend/auth/v1"
+const INFO_SHARE_CODED = "healthsend/share/v2"
+
+/** Digits in a compose-time code. Four, per the design and the story. */
+const CODE_DIGITS = 4
 
 export function randomBytes(length: number): Uint8Array {
   const out = new Uint8Array(length)
@@ -191,7 +195,11 @@ export async function blindAttribute(secret: Uint8Array, value: string): Promise
  * that lets you check a claim without storing the secret behind it.
  * ------------------------------------------------------------------------- */
 
-async function deriveFromLinkSecret(linkSecret: Uint8Array, info: string): Promise<Uint8Array> {
+async function deriveFromLinkSecret(
+  linkSecret: Uint8Array,
+  info: string,
+  salt: Uint8Array = new Uint8Array(0),
+): Promise<Uint8Array> {
   const material = await crypto.subtle.importKey("raw", linkSecret as BufferSource, "HKDF", false, [
     "deriveBits",
   ])
@@ -199,13 +207,20 @@ async function deriveFromLinkSecret(linkSecret: Uint8Array, info: string): Promi
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: new Uint8Array(0) as BufferSource,
+      salt: salt as BufferSource,
       info: new TextEncoder().encode(info) as BufferSource,
     },
     material,
     KEY_BYTES * 8,
   )
   return new Uint8Array(bits)
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length)
+  out.set(a, 0)
+  out.set(b, a.length)
+  return out
 }
 
 function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -218,6 +233,60 @@ function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
 /** The recipient's half, derived from the fragment. Never transmitted. */
 export function deriveLinkShare(linkSecret: Uint8Array): Promise<Uint8Array> {
   return deriveFromLinkSecret(linkSecret, INFO_SHARE)
+}
+
+/**
+ * The recipient's half when a send also carries a code — H-7.
+ *
+ * `linkShare = HKDF(linkSecret, code, "share/v2")`: the code is folded in as
+ * HKDF salt, under a distinct info string from the uncoded share, so this
+ * never collides with `deriveLinkShare`'s output for the same fragment.
+ *
+ * This is the second of the two places the code lives, and it is defence in
+ * depth against the holder specifically: a compromised or compelled holder
+ * that serves its half to the wrong party still hands over something
+ * useless, because this half cannot be derived without the code too. The
+ * auth key and the on-chain commitment never take this path — see
+ * `deriveAuthKey` — so a code can never affect what gets written to Arkiv.
+ */
+export function deriveLinkShareWithCode(linkSecret: Uint8Array, code: string): Promise<Uint8Array> {
+  return deriveFromLinkSecret(linkSecret, INFO_SHARE_CODED, new TextEncoder().encode(code))
+}
+
+/**
+ * A fresh four-digit code, generated when a sender opts into one.
+ *
+ * Rejection-sampled rather than `% 10000` on two raw bytes: 65536 is not a
+ * multiple of 10000, so a naive modulo would land on the low 5536 values
+ * about 1.4× as often as the rest. Four digits is already a small space; it
+ * should not be an uneven one too.
+ */
+export function generateCode(): string {
+  const range = 10 ** CODE_DIGITS
+  const ceiling = Math.floor(65536 / range) * range
+  let value: number
+  do {
+    const bytes = randomBytes(2)
+    value = (bytes[0] << 8) | bytes[1]
+  } while (value >= ceiling)
+  return String(value % range).padStart(CODE_DIGITS, "0")
+}
+
+/**
+ * The proof of a code presented to the holder — never the code itself.
+ *
+ * Salted with the auth key, which the holder already learns on every unlock
+ * (see `deriveAuthKey`), so this proof is meaningless without the link and
+ * cannot be replayed against a different grant. The sender computes the same
+ * value at send time and hands it to the holder as the verifier to check
+ * future attempts against; the holder never sees the code, only this hash.
+ */
+export async function deriveCodeProof(authKey: Uint8Array, code: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    concatBytes(authKey, new TextEncoder().encode(code)) as BufferSource,
+  )
+  return toHex(new Uint8Array(digest))
 }
 
 /**
@@ -236,12 +305,20 @@ export async function authCommitment(authKey: Uint8Array): Promise<string> {
   return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", authKey as BufferSource)))
 }
 
-/** Split a content key so that neither half is ever published. */
+/**
+ * Split a content key so that neither half is ever published.
+ *
+ * `code` is optional and, when present, is folded into the link half only
+ * (`deriveLinkShareWithCode`) — never into `authKey` or the commitment it
+ * produces. The on-chain commitment must stay exactly as it is over the link
+ * secret alone, whether or not this send carries a code — see H-7.
+ */
 export async function splitContentKey(
   contentKey: Uint8Array,
   linkSecret: Uint8Array,
+  code?: string,
 ): Promise<{ heldShare: Uint8Array; authKey: Uint8Array; commitment: string }> {
-  const linkShare = await deriveLinkShare(linkSecret)
+  const linkShare = code ? await deriveLinkShareWithCode(linkSecret, code) : await deriveLinkShare(linkSecret)
   const authKey = await deriveAuthKey(linkSecret)
   return {
     heldShare: xor(contentKey, linkShare),
@@ -250,12 +327,20 @@ export async function splitContentKey(
   }
 }
 
-/** Put it back together. Needs the fragment AND the holder's half. */
+/**
+ * Put it back together. Needs the fragment AND the holder's half — and, for a
+ * coded send, the code too: a wrong or missing `code` here derives a wrong
+ * `linkShare`, which reconstructs a wrong content key. Nothing here checks
+ * the code explicitly; the AES-GCM tag on the sealed envelope does that for
+ * free the moment a caller tries to open it with the wrong key.
+ */
 export async function joinContentKey(
   heldShare: Uint8Array,
   linkSecret: Uint8Array,
+  code?: string,
 ): Promise<Uint8Array> {
-  return xor(heldShare, await deriveLinkShare(linkSecret))
+  const linkShare = code ? await deriveLinkShareWithCode(linkSecret, code) : await deriveLinkShare(linkSecret)
+  return xor(heldShare, linkShare)
 }
 
 
