@@ -9,7 +9,8 @@ import {
   XCircle,
 } from "@phosphor-icons/react"
 import { InsetNote } from "@/components/ui"
-import type { SetAsideIdentifiers } from "@/lib/archive"
+import type { BloodPanelRecord, SetAsideIdentifiers } from "@/lib/archive"
+import { addRecordsToMyArchive } from "@/lib/archive-store"
 
 export type MarkerRow = {
   id: string
@@ -34,6 +35,8 @@ export type BloodPanelReviewData = {
   label: string
   fileName: string
   markers: MarkerRow[]
+  /** The real archive record `confirm` writes through `addRecordsToMyArchive` — not rebuilt from `markers`, which drops fields no row view needs. */
+  record: BloodPanelRecord
   setAside: SetAsideIdentifiers
 }
 
@@ -69,13 +72,40 @@ export function ReviewScreen({ reviews }: { reviews: ReviewData[] }) {
   const [selectedId, setSelectedId] = useState(reviews[0].id)
   const [confirmedIds, setConfirmedIds] = useState<ReadonlySet<string>>(new Set())
   const [filterByDoc, setFilterByDoc] = useState<Record<string, Filter>>({})
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [errorByDoc, setErrorByDoc] = useState<Record<string, string>>({})
 
   const selected = reviews.find((review) => review.id === selectedId) ?? reviews[0]
   const confirmed = confirmedIds.has(selected.id)
   const filter = filterByDoc[selected.id] ?? "needs-a-look"
+  const saving = savingId === selected.id
+  const error = errorByDoc[selected.id] ?? null
 
-  function confirm() {
-    setConfirmedIds((previous) => new Set(previous).add(selected.id))
+  /**
+   * A document review has no `ArchiveRecord` shape to write — `lib/archive.ts`
+   * (H-44) defines only `blood-panel` and `wearable-series`, the same split
+   * `/add` already enforces by disabling its "A letter or report" card. So
+   * this path is unreachable through the UI (see `disabledReason` below); the
+   * guard here is only so a future caller can't skip that and claim success.
+   */
+  async function confirm() {
+    const review = selected
+    if (review.kind !== "blood-panel" || savingId === review.id) return
+    setSavingId(review.id)
+    setErrorByDoc((previous) => {
+      if (!(review.id in previous)) return previous
+      const next = { ...previous }
+      delete next[review.id]
+      return next
+    })
+    try {
+      await addRecordsToMyArchive([review.record])
+      setConfirmedIds((previous) => new Set(previous).add(review.id))
+    } catch (cause) {
+      setErrorByDoc((previous) => ({ ...previous, [review.id]: (cause as Error).message }))
+    } finally {
+      setSavingId((current) => (current === review.id ? null : current))
+    }
   }
 
   function setFilter(next: Filter) {
@@ -94,12 +124,14 @@ export function ReviewScreen({ reviews }: { reviews: ReviewData[] }) {
         <BloodPanelReview
           review={selected}
           confirmed={confirmed}
+          saving={saving}
+          error={error}
           filter={filter}
           onFilterChange={setFilter}
           onConfirm={confirm}
         />
       ) : (
-        <DocumentReview review={selected} confirmed={confirmed} onConfirm={confirm} />
+        <DocumentReview review={selected} confirmed={confirmed} saving={saving} error={error} onConfirm={confirm} />
       )}
     </div>
   )
@@ -177,12 +209,16 @@ function DocumentSwitcher({
 function BloodPanelReview({
   review,
   confirmed,
+  saving,
+  error,
   filter,
   onFilterChange,
   onConfirm,
 }: {
   review: BloodPanelReviewData
   confirmed: boolean
+  saving: boolean
+  error: string | null
   filter: Filter
   onFilterChange: (filter: Filter) => void
   onConfirm: () => void
@@ -261,12 +297,14 @@ function BloodPanelReview({
         </div>
       </div>
 
-      <ArchiveRetentionNote />
+      <ArchiveRetentionNote storable />
 
       {entries.length > 0 && <SetAsideNote entries={entries} />}
 
       <ReviewActions
         confirmed={confirmed}
+        saving={saving}
+        error={error}
         flaggedCount={flaggedCount}
         onFixFlagged={() => onFilterChange("needs-a-look")}
         onConfirm={onConfirm}
@@ -349,10 +387,14 @@ function MarkerRowView({ marker }: { marker: MarkerRow }) {
 function DocumentReview({
   review,
   confirmed,
+  saving,
+  error,
   onConfirm,
 }: {
   review: DocumentReviewData
   confirmed: boolean
+  saving: boolean
+  error: string | null
   onConfirm: () => void
 }) {
   const entries = setAsideEntries(review.setAside)
@@ -374,28 +416,42 @@ function DocumentReview({
         </div>
       </div>
 
-      <ArchiveRetentionNote />
+      <ArchiveRetentionNote storable={false} />
 
       {entries.length > 0 && <SetAsideNote entries={entries} />}
 
-      <ReviewActions confirmed={confirmed} flaggedCount={0} onFixFlagged={() => {}} onConfirm={onConfirm} />
+      <ReviewActions
+        confirmed={confirmed}
+        saving={saving}
+        error={error}
+        flaggedCount={0}
+        onFixFlagged={() => {}}
+        onConfirm={onConfirm}
+        disabledReason="Notes and letters like this aren't stored in your archive yet."
+      />
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Inset notes — pen id ZRIPh for the file-retention copy, verbatim. The
-// set-aside note has no frame of its own; its lead line is the exact phrase
-// `DESIGN.md` § Words we use requires in place of "anonymous", and the list
-// beneath it is real `SetAsideIdentifiers` values, never a stand-in.
+// Inset notes — pen id ZRIPh named a copy this build cannot keep true: H-44's
+// archive stores parsed `ArchiveRecord`s, never the source file (see
+// `docs/archive-model.md`), and a document review has no record shape at all
+// to store (see `disabledReason` above). See `docs/stories/H-56.md`
+// `## Choices` for why the line now names records, not the file, and splits
+// by whether this review's kind can be archived at all.
+//
+// The set-aside note has no frame of its own; its lead line is the exact
+// phrase `DESIGN.md` § Words we use requires in place of "anonymous", and the
+// list beneath it is real `SetAsideIdentifiers` values, never a stand-in.
 // ---------------------------------------------------------------------------
 
-function ArchiveRetentionNote() {
+function ArchiveRetentionNote({ storable }: { storable: boolean }) {
   return (
     <InsetNote icon={LockSimple}>
-      The file itself stays in your archive so you can come back and compare. It is locked to
-      you like your name is — no share can ever include it, which is exactly why these readings
-      need to be right.
+      {storable
+        ? "What you see above stays in your archive, encrypted, so you can come back and compare. The file itself is not kept — only these parsed readings."
+        : "This kind is not stored in your archive yet. Nothing above is kept once you leave this page."}
     </InsetNote>
   )
 }
@@ -420,14 +476,21 @@ function SetAsideNote({ entries }: { entries: { label: string; value: string }[]
 
 function ReviewActions({
   confirmed,
+  saving,
+  error,
   flaggedCount,
   onFixFlagged,
   onConfirm,
+  disabledReason,
 }: {
   confirmed: boolean
+  saving: boolean
+  error: string | null
   flaggedCount: number
   onFixFlagged: () => void
   onConfirm: () => void
+  /** Set only when this review's kind has no archive record shape at all — see `ReviewScreen.confirm`. */
+  disabledReason?: string
 }) {
   if (confirmed) {
     return (
@@ -440,34 +503,45 @@ function ReviewActions({
     )
   }
 
-  return (
-    <div className="flex w-full flex-col items-stretch gap-3 md:flex-row md:items-center md:gap-2.5">
-      <button
-        type="button"
-        onClick={onConfirm}
-        className="flex h-13 items-center justify-center gap-2 rounded-control bg-ink px-6 text-title text-surface"
-      >
-        <Check size={18} weight="regular" />
-        <span className="hidden md:inline">Looks right — add to archive</span>
-        <span className="md:hidden">Looks right — add it</span>
-      </button>
+  const disabled = saving || Boolean(disabledReason)
 
-      {flaggedCount > 0 && (
+  return (
+    <div className="flex w-full flex-col gap-3">
+      <div className="flex w-full flex-col items-stretch gap-3 md:flex-row md:items-center md:gap-2.5">
         <button
           type="button"
-          onClick={onFixFlagged}
-          className="flex h-13 items-center justify-center rounded-control border border-hairline bg-surface px-6 text-title text-ink"
+          onClick={onConfirm}
+          disabled={disabled}
+          className="flex h-13 items-center justify-center gap-2 rounded-control bg-ink px-6 text-title text-surface disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Fix the {flaggedCount} flagged
+          <Check size={18} weight="regular" />
+          <span className="hidden md:inline">{saving ? "Adding…" : "Looks right — add to archive"}</span>
+          <span className="md:hidden">{saving ? "Adding…" : "Looks right — add it"}</span>
         </button>
-      )}
 
-      <span className="hidden text-[13px] text-muted md:ml-auto md:inline">
-        Nothing is shareable until you add it
-      </span>
-      <span className="text-center text-[12.5px] text-muted md:hidden">
-        Nothing is shareable until you add it.
-      </span>
+        {flaggedCount > 0 && !disabledReason && (
+          <button
+            type="button"
+            onClick={onFixFlagged}
+            className="flex h-13 items-center justify-center rounded-control border border-hairline bg-surface px-6 text-title text-ink"
+          >
+            Fix the {flaggedCount} flagged
+          </button>
+        )}
+
+        <span className="hidden text-[13px] text-muted md:ml-auto md:inline">
+          {disabledReason ?? "Nothing is shareable until you add it"}
+        </span>
+        <span className="text-center text-[12.5px] text-muted md:hidden">
+          {disabledReason ?? "Nothing is shareable until you add it."}
+        </span>
+      </div>
+
+      {error && (
+        <p role="alert" className="text-[13px] text-error">
+          Could not add this to your archive: {error}
+        </p>
+      )}
     </div>
   )
 }

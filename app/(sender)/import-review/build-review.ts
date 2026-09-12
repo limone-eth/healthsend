@@ -106,6 +106,7 @@ export function buildReview(fixture: (typeof FIXTURES)[number]): ReviewData {
       label: fixture.label,
       fileName: fixture.file,
       markers,
+      record: imported.record,
       setAside: imported.record.provenance.setAside ?? {},
     }
     return review
