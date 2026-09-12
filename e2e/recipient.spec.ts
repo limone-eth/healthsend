@@ -84,11 +84,11 @@ test.describe("the five ways a share link resolves, offline", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
       status: 200,
       body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
     }))
-    await mockSwarmGateway(context, share.blob)
+    await mockSwarmGateway(context, share.reference, share.blob)
 
     await page.goto(`/s/${share.packedKey}#${share.fragment}`)
 
@@ -98,7 +98,50 @@ test.describe("the five ways a share link resolves, offline", () => {
     await expect(page.getByRole("button", { name: "consult-notes.txt" })).toBeVisible()
     await expect(page.locator("table")).toBeVisible()
     await expect(page.getByText("TSH")).toBeVisible()
+
+    // The second document must actually open, not just have a visible tab:
+    // clicking it must swap the rendered content, not silently keep showing
+    // the first file.
+    await page.getByRole("button", { name: "consult-notes.txt" }).click()
+    await expect(page.getByText("CONSULT NOTE")).toBeVisible()
+    await expect(page.locator("table")).toHaveCount(0)
+
     await assertNoStoredIdentity(context)
+  })
+
+  test("expiry while a document is open closes it, not just at the initial load", async ({
+    page,
+    context,
+  }) => {
+    // The countdown in `Viewer` (app/s/[key]/page.tsx) is the access, not a
+    // decoration beside it: when the window closes while a reader has the page
+    // open, the document must actually go away under them. Every other test in
+    // this file either starts already expired or never lets enough wall-clock
+    // time pass to reach the boundary live, so this is the only test that
+    // watches the live-to-expired transition happen.
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      // One block out — a couple of seconds of wall-clock life, long enough to
+      // render and short enough not to slow the suite down.
+      expiresBlock: share.currentBlock + 1,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+      status: 200,
+      body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
+    }))
+    await mockSwarmGateway(context, share.reference, share.blob)
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+    await expect(page.getByText("TSH")).toBeVisible()
+
+    await expect(page.getByText("This link has expired")).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText("TSH")).toHaveCount(0)
   })
 
   test("expired — the grant is gone", async ({ page, context }) => {
@@ -122,7 +165,7 @@ test.describe("the five ways a share link resolves, offline", () => {
       expiresBlock: share.expiresBlock,
       currentBlock: share.currentBlock,
     })
-    await mockHolderUnlock(context, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
       status: 503,
       body: { error: "Could not reach the holder", retryable: true },
     }))
@@ -148,7 +191,7 @@ test.describe("the five ways a share link resolves, offline", () => {
     })
     // The holder tells a revoke apart from a lapsed grant with the same 410 plus
     // a `revoked` flag — see lib/unlock.ts and app/api/holder/unlock/route.ts.
-    await mockHolderUnlock(context, () => ({
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
       status: 410,
       body: { error: "expired", revoked: true },
     }))
@@ -180,10 +223,17 @@ test.describe("the five ways a share link resolves, offline", () => {
     // The holder compares the presented auth key's hash against the grant's
     // commitment; a wrong fragment derives a wrong auth key, and any wrong auth
     // key gets the same answer, so the stub does not need to replay the HMAC.
-    await mockHolderUnlock(context, () => ({
-      status: 403,
-      body: { error: "Not authorised for this grant" },
-    }))
+    // It does need to check that the request actually carries a *different*
+    // key than the real one, though — otherwise this stub would return 403 for
+    // the correct fragment too, and the test would never notice the app had
+    // stopped deriving a distinct key per fragment.
+    await mockHolderUnlock(context, share.entityKeyHex, (body) => {
+      expect(
+        body.authKey,
+        "a wrong fragment must derive a different auth key than the real one",
+      ).not.toBe(share.authKeyB64)
+      return { status: 403, body: { error: "Not authorised for this grant" } }
+    })
 
     // A fragment that is well-formed but is not the one that seals this share.
     await page.goto(`/s/${share.packedKey}#${"Z".repeat(22)}`)
