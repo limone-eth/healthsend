@@ -31,9 +31,19 @@ export type BloodMarker = {
   id: string
   name: string
   value: number
+  /** Empty when import found no unit in the file — see `flaggedAtImport`, never absent. */
   unit: string
   referenceRange: ReferenceRange
+  /**
+   * The lab's own out-of-range call, read verbatim from the file (`HIGH`,
+   * `LOW`, `H`, `L`). Data about the result, not a signal that import is
+   * unsure of anything — never let this decide `flaggedAtImport`.
+   */
+  labFlag?: string
+  /** True only when import itself could not confidently place this value — never when the lab called it abnormal. */
   flaggedAtImport: boolean
+  /** Why import is unsure, in the review screen's own words. Set only when `flaggedAtImport` is true. */
+  flagReason?: string
 }
 
 export type BloodPanelRecord = {
@@ -232,7 +242,9 @@ function selectRecords(archive: Archive, selections: ArchiveSelection[]): Shared
                 ? {}
                 : { max: marker.referenceRange.max }),
             },
+            ...(marker.labFlag === undefined ? {} : { labFlag: marker.labFlag }),
             flaggedAtImport: marker.flaggedAtImport,
+            ...(marker.flagReason === undefined ? {} : { flagReason: marker.flagReason }),
           })),
       }
     }
@@ -328,14 +340,18 @@ function validateRecord(record: ArchiveRecord | SharedRecord, needsProvenance: b
       if (!isObject(marker)) throw new Error(`Invalid marker in ${record.id}`)
       assertOnlyKeys(
         marker,
-        ["id", "name", "value", "unit", "referenceRange", "flaggedAtImport"],
+        ["id", "name", "value", "unit", "referenceRange", "labFlag", "flaggedAtImport", "flagReason"],
         "blood marker",
       )
       assertText(marker.id, "marker id")
       assertText(marker.name, "marker name")
       assertFiniteNumber(marker.value, "marker value")
-      assertText(marker.unit, "marker unit")
+      // Empty, not absent: import found no unit to read, and that state is
+      // exactly what should reach the record — see `flaggedAtImport`.
+      if (typeof marker.unit !== "string") throw new Error("Invalid marker unit")
+      if (marker.labFlag !== undefined) assertText(marker.labFlag, "marker lab flag")
       if (typeof marker.flaggedAtImport !== "boolean") throw new Error("Invalid marker flag")
+      if (marker.flagReason !== undefined) assertText(marker.flagReason, "marker flag reason")
       validateReferenceRange(marker.referenceRange)
       if (markerIds.has(marker.id)) throw new Error(`Duplicate marker id: ${marker.id}`)
       markerIds.add(marker.id)
@@ -402,12 +418,15 @@ function validateSetAside(setAside: SetAsideIdentifiers): void {
   }
 }
 
+/**
+ * Both bounds absent is valid: it is how import represents a value it could
+ * not place in any reference range (see `lib/import.ts`), and that marker
+ * must still reach the record so it can be reviewed rather than silently
+ * dropped.
+ */
 function validateReferenceRange(range: ReferenceRange): void {
   if (!isObject(range)) throw new Error("Invalid reference range")
   assertOnlyKeys(range, ["min", "max"], "reference range")
-  if (range.min === undefined && range.max === undefined) {
-    throw new Error("Reference range needs a minimum or maximum")
-  }
   if (range.min !== undefined) assertFiniteNumber(range.min, "reference minimum")
   if (range.max !== undefined) assertFiniteNumber(range.max, "reference maximum")
   if (range.min !== undefined && range.max !== undefined && range.min > range.max) {

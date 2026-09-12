@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test"
  * the pointer at that point.
  *
  * `/import-review` is the one page the story names a concrete, reproducible
- * scenario for — "Fix the 3 flagged" behind the bar at 400px — so it is the
+ * scenario for — "Fix the 2 flagged" behind the bar at 400px — so it is the
  * one exercised here with a real click. The other four pages the story
  * names (`/add`, `/new`, `/shares`, `/`) share the exact same fix, because
  * it lives once in `chrome.tsx`'s `main` padding rather than per page, but
@@ -29,12 +29,12 @@ import { test, expect } from "@playwright/test"
 
 test.use({ viewport: { width: 400, height: 800 } })
 
-test("/import-review — \"Fix the 3 flagged\" clears the tab bar at 400px", async ({ page }) => {
+test("/import-review — \"Fix the 2 flagged\" clears the tab bar at 400px", async ({ page }) => {
   await page.goto("/import-review")
 
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
 
-  const fixFlagged = page.getByRole("button", { name: "Fix the 3 flagged" })
+  const fixFlagged = page.getByRole("button", { name: "Fix the 2 flagged" })
   await expect(fixFlagged).toBeVisible()
 
   // No `force`: a real click, exactly as a user would land it. Playwright's

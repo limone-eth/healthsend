@@ -46,11 +46,6 @@ function findSourceLine(text: string, markerName: string): string | undefined {
     .find((line) => line.toLowerCase().startsWith(`${needle},`))
 }
 
-function rawFlagText(sourceLine: string | undefined): string | undefined {
-  const flag = sourceLine?.split(",")[5]?.trim()
-  return flag ? flag : undefined
-}
-
 function buildReview(fixture: (typeof FIXTURES)[number]): ReviewData {
   const bytes = loadFixture(fixture.file)
   const rawText = extractDocumentText(bytes, fixture.format)
@@ -69,19 +64,15 @@ function buildReview(fixture: (typeof FIXTURES)[number]): ReviewData {
   if (imported.kind === "blood-panel") {
     const markers: MarkerRow[] = imported.record.markers.map((marker) => {
       const sourceLine = findSourceLine(cleaned, marker.name)
-      const flagText = rawFlagText(sourceLine)
       return {
         id: marker.id,
         name: marker.name,
         value: marker.value,
         unit: marker.unit,
         snippet: sourceLine ?? `${marker.name}, ${marker.value} ${marker.unit}`,
+        labFlag: marker.labFlag,
         flagged: marker.flaggedAtImport,
-        flagReason: marker.flaggedAtImport
-          ? flagText
-            ? `Flagged ${flagText} in the file`
-            : "Flagged in the file"
-          : undefined,
+        flagReason: marker.flaggedAtImport ? marker.flagReason : undefined,
       }
     })
     const review: BloodPanelReviewData = {
