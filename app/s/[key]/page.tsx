@@ -20,7 +20,7 @@ import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
 import { BookOpen, CloudSlash, LockSimple, PaperPlaneTilt } from "@phosphor-icons/react"
 import { openSend, type OpenedSend, type OpenFailure } from "@/lib/sends"
 import { classify, type PackedFile } from "@/lib/envelope"
-import { Action, Card, Countdown, ListRow } from "@/components/ui"
+import { Action, Card, Countdown, CountdownChip, ListRow } from "@/components/ui"
 import { RecipientTopBar } from "@/components/chrome"
 
 type State =
@@ -124,9 +124,10 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
  * than reintroducing a pronoun this codebase has already removed everywhere
  * else it appears — see `## Choices`.
  *
- * The top bar and its countdown reuse `RecipientTopBar`/`Countdown` exactly
- * as `Viewer` below does: the frame draws the same countdown pill before any
- * data renders, and this is the one component that already builds it.
+ * The top bar and its countdown reuse `RecipientTopBar`/`Countdown`/
+ * `CountdownChip` exactly as `Viewer` below does: the frame draws the same
+ * countdown pill before any data renders, and these are the components that
+ * already build it — see `## Choices` on the compact mobile pill.
  */
 function FirstOpenCode({
   expiresAt,
@@ -173,6 +174,7 @@ function FirstOpenCode({
   return (
     <div className="flex min-h-screen w-full flex-col bg-canvas">
       <RecipientTopBar>
+        <CountdownChip expiresAt={expiresAt} now={now} className="md:hidden" />
         <div className="hidden md:block md:w-full md:max-w-[300px]">
           <Countdown expiresAt={expiresAt} now={now} />
         </div>
@@ -180,10 +182,6 @@ function FirstOpenCode({
 
       <main className="mx-auto flex w-full max-w-[1080px] flex-1 items-center justify-center px-5 py-10 md:px-8">
         <div className="flex w-full max-w-[520px] flex-col gap-5">
-          <div className="md:hidden">
-            <Countdown expiresAt={expiresAt} now={now} />
-          </div>
-
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-inset bg-haze md:h-13 md:w-13">
             <PaperPlaneTilt size={24} weight="light" className="text-navy md:hidden" />
             <PaperPlaneTilt size={26} weight="light" className="hidden text-navy md:block" />
@@ -272,12 +270,11 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
   return (
     <div className="flex min-h-screen w-full flex-col bg-canvas">
       <RecipientTopBar>
-        {/* The 56px Countdown row can run to "Expires Saturday · 1 hour
-            left" — too wide to share the fixed 64px top bar with the
-            wordmark below md, where it would wrap and overflow. It moves
-            into the column below on mobile instead, full-width, and stays
-            in the top bar's slot at md and up, per RecipientTopBar's own
-            design (chrome.tsx: "scope chips, the countdown — is a slot"). */}
+        {/* Frame `X4AJCV`'s top bar carries a compact one-line pill beside
+            the wordmark at every width — `CountdownChip`, not the taller
+            `Countdown` card, which stays reserved for the ≥md slot per
+            `XhRxB`. */}
+        <CountdownChip expiresAt={send.expiresAt} now={now} className="md:hidden" />
         <div className="hidden md:block md:w-full md:max-w-[300px]">
           <Countdown expiresAt={send.expiresAt} now={now} />
         </div>
@@ -285,10 +282,6 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
 
       <main className="mx-auto w-full max-w-[1080px] flex-1 px-5 py-6 md:px-8 md:py-8 xl:px-12">
         <div className="flex w-full flex-col gap-3.5">
-          <div className="md:hidden">
-            <Countdown expiresAt={send.expiresAt} now={now} />
-          </div>
-
           <header className="flex w-full flex-col gap-1">
             <h1 className="text-[22px] font-bold leading-[1.2] tracking-[-0.45px] text-ink md:text-[19px] md:font-semibold md:leading-normal md:tracking-normal">
               Shared with you
@@ -338,11 +331,10 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
                   Do you send health data too?
                 </p>
                 <p className="text-[12.5px] text-secondary md:hidden">
-                  Same sign-in you used to open this.
+                  Nothing you have read here comes with you.
                 </p>
                 <p className="hidden text-[13px] text-secondary md:block">
-                  Make your own archive with the same account you used to open this. Nothing you
-                  have read here comes with you.
+                  Make your own archive. Nothing you have read here comes with you.
                 </p>
               </div>
             </div>

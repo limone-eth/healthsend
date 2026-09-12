@@ -276,6 +276,35 @@ export function Countdown({
   )
 }
 
+// A one-line pill for a chrome bar too short for the full `Countdown` card —
+// pen id `Y57h2` (3.2m's top bar): a 30px rounded-full pill with a calendar
+// glyph and a single date label, no word/remaining-time row. `RecipientTopBar`
+// is 64px tall; this is what fits beside the wordmark at every width.
+export function CountdownChip({
+  expiresAt,
+  now,
+  className = "",
+}: {
+  expiresAt: number
+  now: number
+  className?: string
+}) {
+  const remainingSeconds = expiresAt - now
+  const state = countdownStateFor(remainingSeconds)
+  const date = new Date(expiresAt * 1000)
+  return (
+    <div
+      data-testid="countdown-chip"
+      className={`flex h-[30px] shrink-0 items-center gap-1.5 rounded-full border border-hairline bg-surface px-[11px] ${className}`}
+    >
+      <CalendarBlank size={13} weight="light" className="text-navy" />
+      <span className="whitespace-nowrap text-[12.5px] font-semibold text-ink">
+        {state === "expired" ? "Access ended" : countdownDateLabel(state, date)}
+      </span>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Field — pen id vG3Zj
 // ---------------------------------------------------------------------------
