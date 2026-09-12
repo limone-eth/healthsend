@@ -43,16 +43,16 @@ export const DEMO_BLOOD_PANEL: BloodPanelRecord = {
     marker({ id: "fasting-glucose", name: "Fasting glucose", value: 89, unit: "mg/dL", referenceRange: { min: 70, max: 99 } }),
     marker({ id: "hba1c", name: "HbA1c", value: 5.2, unit: "%", referenceRange: { min: 4, max: 5.6 } }),
     marker({ id: "total-cholesterol", name: "Total cholesterol", value: 184, unit: "mg/dL", referenceRange: { max: 200 } }),
-    marker({ id: "ldl-cholesterol", name: "LDL cholesterol", value: 142, unit: "mg/dL", referenceRange: { max: 129 }, flaggedAtImport: true }),
+    marker({ id: "ldl-cholesterol", name: "LDL cholesterol", value: 142, unit: "mg/dL", referenceRange: { max: 129 } }),
     marker({ id: "hdl-cholesterol", name: "HDL cholesterol", value: 62, unit: "mg/dL", referenceRange: { min: 50 } }),
     marker({ id: "triglycerides", name: "Triglycerides", value: 86, unit: "mg/dL", referenceRange: { max: 150 } }),
-    marker({ id: "alt", name: "Alanine aminotransferase", value: 48, unit: "U/L", referenceRange: { min: 7, max: 40 }, flaggedAtImport: true }),
+    marker({ id: "alt", name: "Alanine aminotransferase", value: 48, unit: "U/L", referenceRange: { min: 7, max: 40 } }),
     marker({ id: "ast", name: "Aspartate aminotransferase", value: 26, unit: "U/L", referenceRange: { min: 10, max: 40 } }),
     marker({ id: "ggt", name: "Gamma-glutamyl transferase", value: 21, unit: "U/L", referenceRange: { min: 9, max: 36 } }),
     marker({ id: "creatinine", name: "Creatinine", value: 0.78, unit: "mg/dL", referenceRange: { min: 0.55, max: 1.02 } }),
     marker({ id: "egfr", name: "Estimated glomerular filtration rate", value: 104, unit: "mL/min/1.73m²", referenceRange: { min: 60 } }),
     marker({ id: "tsh", name: "Thyroid-stimulating hormone", value: 2.1, unit: "mIU/L", referenceRange: { min: 0.4, max: 4 } }),
-    marker({ id: "vitamin-d", name: "Vitamin D", value: 18, unit: "ng/mL", referenceRange: { min: 30, max: 100 }, flaggedAtImport: true }),
+    marker({ id: "vitamin-d", name: "Vitamin D", value: 18, unit: "ng/mL", referenceRange: { min: 30, max: 100 } }),
     marker({ id: "crp", name: "C-reactive protein", value: 0.7, unit: "mg/L", referenceRange: { max: 3 } }),
   ],
 }
@@ -106,11 +106,10 @@ function marker(params: {
   value: number
   unit: string
   referenceRange: ReferenceRange
-  flaggedAtImport?: boolean
 }): BloodMarker {
   return {
     ...params,
     id: `marker:${params.id}`,
-    flaggedAtImport: params.flaggedAtImport ?? false,
+    flaggedAtImport: false,
   }
 }
