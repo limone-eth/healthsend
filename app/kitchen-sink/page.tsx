@@ -22,6 +22,7 @@ import {
   Action,
   Card,
   Chip,
+  Countdown,
   FocusCard,
   InsetNote,
   inputClass,
@@ -53,6 +54,8 @@ function Section({ title, id, children }: { title: string; id: string; children:
     </section>
   )
 }
+
+const NOW = Math.floor(Date.now() / 1000)
 
 export default function KitchenSink() {
   return (
@@ -89,6 +92,26 @@ export default function KitchenSink() {
         <p className="text-label text-muted">
           Six states a share moves through, plus Temporarily unavailable — drawn unfilled with a
           hairline border on purpose, so infrastructure trouble never reads as a closed window.
+        </p>
+      </Section>
+
+      <Section title="Countdown" id="b7nB5">
+        <div className="flex flex-wrap gap-4">
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 84 * 86400} now={NOW} />
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 6 * 86400} now={NOW} />
+          <Countdown className="max-w-[380px]" expiresAt={NOW - 86400} now={NOW} />
+        </div>
+        <p className="text-label text-muted">
+          Active, Closing, Expired — the word changes with the colour every time, so the state
+          still reads in greyscale.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 49 * 3600} now={NOW} />
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 47 * 3600} now={NOW} />
+        </div>
+        <p className="text-label text-muted">
+          The 48-hour boundary on both sides — 49 hours left still reads in days, 47 switches to
+          hours.
         </p>
       </Section>
 

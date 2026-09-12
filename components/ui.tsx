@@ -168,6 +168,115 @@ export function Chip({ state, label }: { state: ChipState; label?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Countdown — pen id b7nB5, Sheet 0 § "Expiry — the one new primitive". The
+// product's one invented component: a date read from the grant's expiry
+// block, never a client-side timer counting against a stored one — see
+// docs/stories/H-2.md for why that distinction is load-bearing. Both
+// `expiresAt` and `now` come from the caller — the component reads the
+// clock through neither `Date.now()` nor a poll of its own, which keeps it a
+// pure function of its props and re-render-on-an-interval the caller's call.
+// ---------------------------------------------------------------------------
+
+export type CountdownState = "active" | "closing" | "expired"
+
+const COUNTDOWN_CLOSING_SECONDS = 7 * 86400
+const COUNTDOWN_HOURS_BOUNDARY_SECONDS = 48 * 3600
+
+const countdownFullDate = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+})
+const countdownWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" })
+
+function countdownStateFor(remainingSeconds: number): CountdownState {
+  if (remainingSeconds <= 0) return "expired"
+  if (remainingSeconds <= COUNTDOWN_CLOSING_SECONDS) return "closing"
+  return "active"
+}
+
+function countdownRemainingLabel(remainingSeconds: number): string {
+  if (remainingSeconds <= COUNTDOWN_HOURS_BOUNDARY_SECONDS) {
+    const hours = Math.max(1, Math.ceil(remainingSeconds / 3600))
+    return `${hours} hour${hours === 1 ? "" : "s"} left`
+  }
+  const days = Math.floor(remainingSeconds / 86400)
+  return `${days} day${days === 1 ? "" : "s"} left`
+}
+
+function countdownDateLabel(state: CountdownState, expiresAt: Date): string {
+  if (state === "closing") return `Expires ${countdownWeekday.format(expiresAt)}`
+  const full = countdownFullDate.format(expiresAt)
+  return state === "expired" ? `Expired ${full}` : `Expires ${full}`
+}
+
+const COUNTDOWN_SPEC: Record<
+  CountdownState,
+  { word: string; icon: PhosphorIcon; glyphFill: string; glyphIcon: string; wordColor: string; remainingColor: string }
+> = {
+  active: {
+    word: "ACTIVE",
+    icon: CalendarBlank,
+    glyphFill: "bg-haze",
+    glyphIcon: "text-navy",
+    wordColor: "text-navy",
+    remainingColor: "text-muted",
+  },
+  closing: {
+    word: "CLOSING",
+    icon: CalendarBlank,
+    glyphFill: "bg-chalk",
+    glyphIcon: "text-umber",
+    wordColor: "text-umber",
+    remainingColor: "text-umber",
+  },
+  expired: {
+    word: "EXPIRED",
+    icon: LockSimple,
+    glyphFill: "bg-grouped",
+    glyphIcon: "text-muted",
+    wordColor: "text-muted",
+    remainingColor: "text-muted",
+  },
+}
+
+export function Countdown({
+  expiresAt,
+  now,
+  className = "",
+}: {
+  expiresAt: number
+  now: number
+  className?: string
+}) {
+  const remainingSeconds = expiresAt - now
+  const state = countdownStateFor(remainingSeconds)
+  const spec = COUNTDOWN_SPEC[state]
+  const Icon = spec.icon
+  const date = new Date(expiresAt * 1000)
+  return (
+    <div
+      className={`flex h-14 w-full items-center justify-between gap-3 rounded-control border border-hairline bg-surface px-4 ${className}`}
+    >
+      <div className="flex items-center gap-3">
+        <div className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-glyph ${spec.glyphFill}`}>
+          <Icon size={16} weight="light" className={spec.glyphIcon} />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className={`text-[10px] font-semibold tracking-[1.3px] ${spec.wordColor}`}>{spec.word}</span>
+          <span className="text-[14px] font-semibold tracking-[-0.1px] text-ink">
+            {countdownDateLabel(state, date)}
+          </span>
+        </div>
+      </div>
+      <span className={`shrink-0 text-[14px] font-medium ${spec.remainingColor}`}>
+        {state === "expired" ? "Access ended" : countdownRemainingLabel(remainingSeconds)}
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Field — pen id vG3Zj
 // ---------------------------------------------------------------------------
 
