@@ -555,7 +555,8 @@ marked *Later*. Never rendered at
 ### Share state chip
 
 Capsule, 28px, at `capsule` radius, with a 13px Light glyph. Six states, fixed
-vocabulary, written in the words the user reads:
+vocabulary, written in the words the user reads — plus one that is deliberately
+not a state of the share at all:
 
 | Chip | Fill / type | Glyph | Means |
 |---|---|---|---|
@@ -565,6 +566,12 @@ vocabulary, written in the words the user reads:
 | Ending soon | `chalk` / `umber` | `calendar-blank` | A week or less to go. Nothing to renew |
 | Ended | `grouped` / `muted` | `lock-simple` | Past the date. Nothing left to open |
 | Ended by you | `surface` / `error`, `error` border | `x-circle` | The only state a person's action produces |
+| Temporarily unavailable | `surface` / `secondary`, `hairline` border | `cloud-slash` | **Not a stage.** The holder could not be reached; the grant is still live |
+
+The seventh is drawn unfilled precisely so it does not join the set. A share moves
+through the six; the seventh is our infrastructure failing while the share is
+perfectly healthy, and the two say opposite things about the sender's intention.
+Rendering it as `Ended` tells the reader their window closed when it did not.
 
 ### Action
 
@@ -1035,8 +1042,9 @@ is a day spent building the thing that weakens the story.
 
 **What is public either way — the claim is narrower than "no database".** There *are*
 databases in this design; they are simply not ours, and they hold nothing readable.
-Swarm holds ciphertext. Arkiv holds one grant entity per share — recipient key, Swarm
-hash, wrapped key, `ExpiresIn` — and its indexed attributes are **publicly queryable**,
+Swarm holds ciphertext. Arkiv holds one grant entity per share — a Swarm reference, a
+SHA-256 commitment to the link's authenticator, and the expiry block, and **no key
+material of any kind** — and its indexed attributes are **publicly queryable**,
 which is why §6's rule is that nothing semantic goes in them and sensitive values are
 HMAC'd under a user-held key, with only timestamps left plaintext for range queries.
 
@@ -1047,9 +1055,20 @@ trade-off, and the interface must never imply the existence of a share is secret
 
 The one thing that genuinely changes with remote is not a database appearing. It is
 that **a decryption capability appears, and it sits with us**: the server becomes the
-recipient, so it must hold the private key that unwraps the grant. Today no server
-anywhere holds that. That is the whole delta, and it should be described in exactly
-those terms rather than as "less secure".
+recipient, so it must hold the private key that unwraps the grant.
+
+The **holder** is not that, and the difference is the whole architecture. It keeps one
+XOR half of a content key under a TTL. It never receives the other half, never sees the
+link fragment, and never touches the ciphertext — so it cannot decrypt anything, alone
+or under compulsion, and a dump of it yields nothing. A remote connector would hold a
+whole capability. The holder holds half of one, and its only power is to refuse to
+complete it. That is the delta, and it should be described in exactly those terms
+rather than as "less secure".
+
+It exists because the grant cannot carry key material: a payload written to Arkiv
+survives in the creating transaction's calldata permanently, whatever the entity's
+expiry says. That finding rewrote this architecture, and it is set out in the README
+under *"What expiry does and does not do"*.
 
 **What local genuinely costs, stated plainly** — a remote endpoint is easier and more
 portable, and pretending otherwise would be dishonest:
@@ -1292,7 +1311,7 @@ consequences, both non-negotiable:
 
 ## Screen inventory
 
-Thirty-three frames in `healthsend.pen`, below the design-system sheets. Laid out in
+Thirty-five frames in `healthsend.pen`, below the design-system sheets. Laid out in
 flow order — one horizontal band per stage — with **each screen's desktop and mobile
 version side by side**, `d` then `m`.
 
@@ -1323,7 +1342,13 @@ version side by side**, `d` then `m`.
 |---|---|---|
 | 3.1 d/m | First open | The PIN and the claim, before any data renders |
 | 3.2 d/m | What she opens | Attribution, charts, biomarkers with ranges, assistant offer, growth hook |
+| 3.3 d/m | Temporarily unavailable | The holder could not be reached. Says so, and says the window has *not* closed |
 | 3.4 d/m | After it ends | The payoff. The one page that inverts |
+
+**3.3 is drawn in the ordinary light chrome on purpose.** 3.4 inverts because ending is
+the payoff; if 3.3 borrowed any of that treatment it would read as the ending to anyone
+skimming, which is the one thing it must never do. It is a live share that cannot load,
+and it looks like one.
 
 **4 · Your assistant**
 
