@@ -82,13 +82,16 @@ export function getSwarmClient(): Promise<SwarmIdClient> {
         ...(SUBSIDISED_GATEWAY ? { subsidisedGatewayUrl: SUBSIDISED_GATEWAY } : {}),
         containerId: CONNECT_CONTAINER_ID,
         buttonConfig: {
-          // Verbatim from frames BsnX6 (desktop) / GdIlc (mobile) "Sign in" —
-          // see docs/stories/H-21.md. The iframe paints the button, so our
-          // stylesheet cannot reach it; background colour, text colour and
-          // radius are the only knobs, matched here to the frame's Primary
-          // slot ($ink fill, $surface text, 14px radius) rather than kept as
-          // a distinct third-party style.
-          connectText: "Continue with Face ID",
+          // Names what actually happens: a passkey. Face ID is only one way
+          // to unlock one, and it doesn't exist on most computers or Android
+          // phones (docs/stories/H-73.md). Matches frames BsnX6 (desktop) /
+          // GdIlc (mobile) "Sign in" — see docs/stories/H-21.md. The iframe
+          // paints the button, so our stylesheet cannot reach it; background
+          // colour, text colour and radius are the only knobs, matched here
+          // to the frame's Primary slot ($ink fill, $surface text, 14px
+          // radius) rather than kept as a distinct third-party style. There
+          // is no font knob — see friction.md #14.
+          connectText: "Continue with Passkey",
           disconnectText: "Sign out",
           loadingText: "Opening…",
           backgroundColor: "#15161A",
