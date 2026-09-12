@@ -18001,7 +18001,7 @@
                   "fill": "$secondary",
                   "textGrowth": "fixed-width",
                   "width": 820,
-                  "content": "Every other component in this file already exists. Expiry does not, because Omea has nothing that ends. The Countdown reads a real Swarm batch TTL and an Arkiv ExpiresIn — it is never a UI timer counting down against a stored date. It appears in exactly three places: on a send in the sender's live view, in the recipient's header, and on an agent grant. It carries three states and the word changes with the colour, every time.",
+                  "content": "Every other component in this file already exists. Expiry does not, because Omea has nothing that ends. The Countdown reads the grant's expiry block on Arkiv — it is never a UI timer counting down against a stored date. It appears in exactly three places: on a send in the sender's live view, in the recipient's header, and on an agent grant. It carries three states and the word changes with the colour, every time.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font-ui",
                   "fontSize": 15,
@@ -18577,7 +18577,7 @@
                           "fill": "$secondary",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "The figure comes from the batch TTL and the grant's ExpiresIn. Never a client-side timer counting against a stored date — if the number can drift from the cryptography, the product's central claim becomes decoration.",
+                          "content": "The figure comes from the grant's expiry block on Arkiv, pinned at write time — never a duration, which resolves against whichever block the transaction lands in and so drifts later than the window the sender was promised. Never a client-side timer counting against a stored date either: if the number can drift from the cryptography, the product's central claim becomes decoration.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -18738,6 +18738,70 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Expired is a state of the whole surface, not a badge on a live one. When a grant lapses the recipient page becomes the expired page; the data never renders behind a notice.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "f6A7H",
+                      "name": "Rule",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "B28foh",
+                          "name": "Bullet",
+                          "fill": "$muted",
+                          "content": "·",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "S5jOW",
+                          "name": "Text",
+                          "fill": "$secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Unavailable is never dressed as expired. The holder can be unreachable while the grant is perfectly alive, and the two states say opposite things about the sender's intention. One is the arrangement finishing; the other is our infrastructure failing, and only one of them is hers to accept.",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "M7f9wt",
+                      "name": "Rule",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "PmTw3",
+                          "name": "Bullet",
+                          "fill": "$muted",
+                          "content": "·",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "f0THWv",
+                          "name": "Text",
+                          "fill": "$secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "The countdown is honest-client hygiene, not enforcement. A reader who controls their own browser can skip it. What ends access is the holder refusing to serve its half — the interface must never imply the number on screen is the lock.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -20547,7 +20611,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "Grant written, no access event recorded.",
+                          "content": "Grant written to Arkiv, key share handed to the holder, no unlock served.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -20655,7 +20719,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "First access event logged against the grant.",
+                          "content": "First unlock served by the holder against a live grant.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -20763,7 +20827,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "Claim-on-first-open completed; ephemeral key re-wrapped to the recipient passkey.",
+                          "content": "Claim-on-first-open recorded by the holder; unlock requests carrying a different device claim are refused.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -20871,7 +20935,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "Seven days or fewer of batch TTL remaining.",
+                          "content": "Seven days or fewer to the grant's expiry block.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -20979,7 +21043,7 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "Grant pruned by ExpiresIn; wrapped key off the query surface.",
+                          "content": "Grant pruned at its expiry block, so the holder refuses to serve; the held share's own TTL then deletes it. No key material was ever published, so there is nothing in calldata to recover.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -21087,7 +21151,115 @@
                           "fill": "$muted",
                           "textGrowth": "fixed-width",
                           "width": 300,
-                          "content": "Grant deleted on demand — the only path that calls delete.",
+                          "content": "Held share deleted on demand — the one path that ends a live share before its block.",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "pLhdx",
+                      "name": "Divider",
+                      "fill": "$hairline",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "F9tKg",
+                      "name": "Temporarily unavailable",
+                      "width": "fill_container",
+                      "gap": 24,
+                      "padding": [
+                        16,
+                        22
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "M3orkZ",
+                          "name": "Chip Cell",
+                          "width": 210,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ROIxj",
+                              "name": "Chip",
+                              "height": 34,
+                              "fill": "$surface",
+                              "cornerRadius": 999,
+                              "stroke": "$hairline",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner",
+                              "gap": 6,
+                              "padding": [
+                                0,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "VgvPn",
+                                  "name": "Glyph",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "cloud-slash",
+                                  "library": "phosphor",
+                                  "weight": 300,
+                                  "fill": "$secondary"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "vmEkd",
+                                  "name": "Label",
+                                  "fill": "$secondary",
+                                  "content": "Temporarily unavailable",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "EeEdd",
+                          "name": "Meaning",
+                          "fill": "$ink",
+                          "textGrowth": "fixed-width",
+                          "width": 440,
+                          "content": "Not a stage of the share, and never drawn as one. The service holding half the key could not be reached. Her window has not closed; a moment later it usually opens.",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "UzVZD",
+                          "name": "Spec",
+                          "fill": "$secondary",
+                          "textGrowth": "fixed-width",
+                          "width": 230,
+                          "content": "$surface + $hairline · cloud-slash",
+                          "lineHeight": 1.45,
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "UYRbx",
+                          "name": "Under",
+                          "fill": "$muted",
+                          "textGrowth": "fixed-width",
+                          "width": 300,
+                          "content": "Holder unreachable — a 5xx, not a 410. The grant is still live. Drawing this as Ended tells her the sender's window closed when it did not.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -25122,7 +25294,7 @@
                           "fill": "$secondary",
                           "textGrowth": "fixed-width",
                           "width": 720,
-                          "content": "A destroyed key is our proudest engineering fact and her least interesting one. What she wants is the outcome, stated flatly.",
+                          "content": "The engineering fact is narrower than it sounds — the half of the key we held is deleted — and it is her least interesting one either way. What she wants is the outcome, stated flatly.",
                           "lineHeight": 1.45,
                           "fontFamily": "$font-ui",
                           "fontSize": 13,
@@ -47292,7 +47464,7 @@
                       "fill": "#E4E5E7",
                       "textGrowth": "fixed-width",
                       "width": 820,
-                      "content": "Here, when the date passes there is nothing left to show. Not because we promise to stop, but because what is left cannot be opened by anyone — including us.",
+                      "content": "Here, when the date passes, the half of the key we hold is deleted. Not a promise to stop showing your data — there is simply nothing left to put back together.",
                       "lineHeight": 1.55,
                       "fontFamily": "$font-ui",
                       "fontSize": 17,
@@ -60625,7 +60797,7 @@
                   "fill": "#E4E5E7",
                   "textGrowth": "fixed-width",
                   "width": "fill_container",
-                  "content": "Here, when the date passes there is nothing left to show — not because we promise to stop, but because what is left cannot be opened by anyone, including us.",
+                  "content": "Here, when the date passes, the half of the key we hold is deleted. Not a promise to stop showing your data — there is simply nothing left to put back together.",
                   "lineHeight": 1.55,
                   "fontFamily": "$font-ui",
                   "fontSize": 15,
@@ -61355,6 +61527,385 @@
           "content": "You opened this 9 times between 11 September and 2 December.",
           "fontFamily": "$font-ui",
           "fontSize": 13,
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "RqJ31",
+      "x": 7220,
+      "y": 12180,
+      "name": "3.3d  Temporarily unavailable · desktop",
+      "clip": true,
+      "width": 1440,
+      "height": 1024,
+      "fill": "$canvas",
+      "padding": [
+        0,
+        48
+      ],
+      "justifyContent": "center",
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "text",
+          "id": "WM90i",
+          "layoutPosition": "absolute",
+          "x": 48,
+          "y": 36,
+          "name": "Wordmark",
+          "fill": "$ink",
+          "content": "healthsend",
+          "fontFamily": "$font-brand",
+          "fontSize": 17,
+          "fontWeight": "600",
+          "letterSpacing": -0.35
+        },
+        {
+          "type": "frame",
+          "id": "plpfx",
+          "layoutPosition": "absolute",
+          "x": 1200,
+          "y": 32,
+          "name": "Countdown",
+          "height": 34,
+          "fill": "$surface",
+          "cornerRadius": 999,
+          "stroke": "$hairline",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "gap": 7,
+          "padding": [
+            0,
+            13
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "xsvCY",
+              "name": "G",
+              "width": 14,
+              "height": 14,
+              "icon": "calendar-blank",
+              "library": "phosphor",
+              "weight": 300,
+              "fill": "$secondary"
+            },
+            {
+              "type": "text",
+              "id": "gM9tP",
+              "name": "L",
+              "fill": "$secondary",
+              "content": "Ends 4 December",
+              "fontFamily": "$font-ui",
+              "fontSize": 13.5,
+              "fontWeight": "500"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "L68J5",
+          "name": "Ended Panel",
+          "width": 560,
+          "fill": "$surface",
+          "cornerRadius": 22,
+          "stroke": "$hairline",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": 30,
+          "children": [
+            {
+              "type": "frame",
+              "id": "QgoZg",
+              "name": "GC",
+              "width": 46,
+              "height": 46,
+              "fill": "$grouped",
+              "cornerRadius": 14,
+              "stroke": "$hairline",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "opmcA",
+                  "name": "G",
+                  "width": 23,
+                  "height": 23,
+                  "icon": "cloud-slash",
+                  "library": "phosphor",
+                  "weight": 300,
+                  "fill": "$secondary"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "h3K6Eg",
+              "name": "T",
+              "fill": "$ink",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Temporarily unavailable",
+              "lineHeight": 1.15,
+              "fontFamily": "$font-ui",
+              "fontSize": 32,
+              "fontWeight": "700",
+              "letterSpacing": -0.8
+            },
+            {
+              "type": "text",
+              "id": "xEdXf",
+              "name": "D",
+              "fill": "$secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This has not ended. Giulia's window runs until 4 December. The service that holds half the key could not be reached just now, so this page cannot put it back together yet.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font-ui",
+              "fontSize": 16,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "rectangle",
+              "id": "YFZDD",
+              "name": "R",
+              "fill": "$hairline",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "text",
+              "id": "WdUw5",
+              "name": "N",
+              "fill": "$secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Try again in a moment. If it keeps failing, ask Giulia — she still has the documents and can send a fresh link.",
+              "lineHeight": 1.45,
+              "fontFamily": "$font-ui",
+              "fontSize": 14,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "hMRdH",
+          "layoutPosition": "absolute",
+          "x": 48,
+          "y": 960,
+          "name": "Foot",
+          "fill": "$muted",
+          "content": "Nothing is wrong with your link.",
+          "fontFamily": "$font-ui",
+          "fontSize": 13,
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "f9lYQS",
+      "x": 8780,
+      "y": 12180,
+      "name": "3.3m  Temporarily unavailable · mobile",
+      "clip": true,
+      "width": 440,
+      "height": 956,
+      "fill": "$canvas",
+      "cornerRadius": 44,
+      "stroke": "#0000000D",
+      "strokeWidth": 1,
+      "strokeAlignment": "inner",
+      "layout": "vertical",
+      "padding": [
+        56,
+        28,
+        40,
+        28
+      ],
+      "justifyContent": "space_between",
+      "children": [
+        {
+          "type": "frame",
+          "id": "cBKsl",
+          "name": "Top Bar",
+          "width": "fill_container",
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "IXksA",
+              "name": "Wordmark",
+              "fill": "$ink",
+              "content": "healthsend",
+              "fontFamily": "$font-brand",
+              "fontSize": 15,
+              "fontWeight": "600",
+              "letterSpacing": -0.3
+            },
+            {
+              "type": "frame",
+              "id": "I8DXpG",
+              "name": "Countdown",
+              "height": 32,
+              "fill": "$surface",
+              "cornerRadius": 999,
+              "stroke": "$hairline",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "background_blur",
+                "radius": 24
+              },
+              "gap": 6,
+              "padding": [
+                0,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "p3m7h",
+                  "name": "Glyph",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "calendar-blank",
+                  "library": "phosphor",
+                  "weight": 300,
+                  "fill": "$secondary"
+                },
+                {
+                  "type": "text",
+                  "id": "f5wqv",
+                  "name": "Label",
+                  "fill": "$secondary",
+                  "content": "Ends 4 December",
+                  "fontFamily": "$font-ui",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "iDkrK",
+          "name": "Ended Panel",
+          "width": "fill_container",
+          "fill": "$surface",
+          "cornerRadius": 22,
+          "stroke": "$hairline",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "effect": {
+            "type": "background_blur",
+            "radius": 24
+          },
+          "layout": "vertical",
+          "gap": 16,
+          "padding": 26,
+          "children": [
+            {
+              "type": "frame",
+              "id": "vjXyt",
+              "name": "Glyph Container",
+              "width": 44,
+              "height": 44,
+              "fill": "$grouped",
+              "cornerRadius": 14,
+              "stroke": "$hairline",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "flPaF",
+                  "name": "Glyph",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "cloud-slash",
+                  "library": "phosphor",
+                  "weight": 300,
+                  "fill": "$secondary"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "P5j8E",
+              "name": "Headline",
+              "fill": "$ink",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Temporarily unavailable",
+              "lineHeight": 1.2,
+              "fontFamily": "$font-ui",
+              "fontSize": 26,
+              "fontWeight": "700",
+              "letterSpacing": -0.6
+            },
+            {
+              "type": "text",
+              "id": "A7BIY",
+              "name": "Body",
+              "fill": "$secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This has not ended. Giulia's window runs until 4 December. The service that holds half the key could not be reached just now, so this page cannot put it back together yet.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font-ui",
+              "fontSize": 15,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "rectangle",
+              "id": "Ua0KP",
+              "name": "Rule",
+              "fill": "$hairline",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "text",
+              "id": "qrdlh",
+              "name": "Next",
+              "fill": "$secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Try again in a moment. If it keeps failing, ask Giulia — she still has the documents and can send a fresh link.",
+              "lineHeight": 1.45,
+              "fontFamily": "$font-ui",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "kHJRV",
+          "name": "Foot",
+          "fill": "$muted",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Nothing is wrong with your link.",
+          "lineHeight": 1.4,
+          "textAlign": "center",
+          "fontFamily": "$font-ui",
+          "fontSize": 12,
           "fontWeight": "normal"
         }
       ]
