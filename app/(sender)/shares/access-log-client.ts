@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * The sender's own read of "When she looked" — signs the same domain-
+ * The sender's own read of "When they looked" — signs the same domain-
  * prefixed, timestamp-bound message `lib/access-log.ts` expects, then POSTs
  * it to the route that already wires that module up.
  *

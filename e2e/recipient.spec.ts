@@ -276,8 +276,8 @@ test.describe("the five ways a share link resolves, offline", () => {
 
     await page.goto(`/s/${share.packedKey}#${share.fragment}`)
 
-    await expect(page.getByText("Access to this send has ended")).toBeVisible()
-    await expect(page.getByText(/the sender ended it early/i)).toBeVisible()
+    await expect(page.getByText("The sender ended this link")).toBeVisible()
+    await expect(page.getByText(/closed it before the time they’d first set/i)).toBeVisible()
     // Direction one: a revoke must never read as the natural-expiry copy.
     await expect(page.getByText("This link has expired")).toHaveCount(0)
     await expect(page.getByText(/nobody ended this early/i)).toHaveCount(0)

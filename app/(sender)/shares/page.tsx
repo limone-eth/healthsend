@@ -216,7 +216,7 @@ function logSummary(entry: KnownShare, log: LogByKey[string]): string {
   // H-69: nothing to say about opens for a share with no access log at all —
   // never "Not opened yet.", which would claim knowledge this share cannot have.
   if (!entry.hasAccessLog) return ""
-  if (!log || log === "loading") return "Checking when she looked…"
+  if (!log || log === "loading") return "Checking when they looked…"
   if (log.status === "unavailable") return "We could not reach the access log just now."
   if (!log.reliable && log.opened.length === 0) {
     return "A record may have been dropped. We can't confirm whether this has been opened."
@@ -272,7 +272,7 @@ function ShareCard({
             </div>
             <p className="mt-0.5 text-[13px] text-muted">{meta}</p>
           </div>
-          <div className="hidden shrink-0 md:block md:w-[260px]">
+          <div className="hidden shrink-0 md:block">
             <Countdown expiresAt={entry.expiresAt} now={now} />
           </div>
         </div>
@@ -288,7 +288,7 @@ function ShareCard({
         <p className="min-w-0 flex-1 text-[13px] text-secondary">{logSummary(entry, log)}</p>
         <div className="flex shrink-0 gap-2">
           <CapsuleButton onClick={onToggleLog} disabled={!canExpand}>
-            {expanded ? "Hide" : "When she looked"}
+            {expanded ? "Hide" : "When they looked"}
           </CapsuleButton>
           <CapsuleButton tone="destructive" icon={XCircle} onClick={onEnd}>
             End access now

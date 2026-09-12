@@ -227,20 +227,22 @@ export function Countdown({
   const Icon = spec.icon
   return (
     <div
-      className={`flex h-14 w-full items-center justify-between gap-3 rounded-control border border-hairline bg-surface px-4 ${className}`}
+      // min-h, not h: a fixed 56px clipped the word above the border once the date line
+      // wrapped. The date stays on one line and the card grows to fit it instead.
+      className={`flex min-h-14 w-full items-center justify-between gap-6 rounded-control border border-hairline bg-surface px-4 py-2.5 ${className}`}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <div className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-glyph ${spec.glyphFill}`}>
           <Icon size={16} weight="light" className={spec.glyphIcon} />
         </div>
-        <div className="flex flex-col gap-0.5">
-          <span className={`text-[10px] font-semibold tracking-[1.3px] ${spec.wordColor}`}>{spec.word}</span>
-          <span className="text-[14px] font-semibold tracking-[-0.1px] text-ink">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className={`text-[10px] font-semibold leading-none tracking-[1.3px] ${spec.wordColor}`}>{spec.word}</span>
+          <span className="whitespace-nowrap text-[14px] font-semibold leading-tight tracking-[-0.1px] text-ink tabular-nums">
             {countdownDateLabel(state, expiresAt, now)}
           </span>
         </div>
       </div>
-      <span className={`shrink-0 text-[14px] font-medium ${spec.remainingColor}`}>
+      <span className={`shrink-0 whitespace-nowrap text-[14px] font-medium tabular-nums ${spec.remainingColor}`}>
         {state === "expired" ? "Access ended" : countdownRemainingLabel(remainingSeconds)}
       </span>
     </div>

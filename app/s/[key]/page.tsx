@@ -641,18 +641,17 @@ function Ended({ revoked }: { revoked: boolean }) {
     <TerminalScreen
       tone="dark"
       icon={LockSimple}
-      headline={revoked ? "Access to this send has ended" : "This link has expired"}
+      headline={revoked ? "The sender ended this link" : "This link has expired"}
       body={
         revoked
-          ? "The sender ended it early, before the window they set had closed. Nothing went wrong on either side."
-          : "The grant reached the end of its life and no longer appears in Arkiv’s index. The holder checks for it before serving its half of the key, so there is no longer a second half to put this one together with. Nobody ended this early. No job ran. The access simply ran out."
+          ? "They closed it before the time they’d first set. Nothing went wrong on your side."
+          : "It stopped working at the time the sender chose. Nobody closed it early, and nothing went wrong."
       }
-      note={
-        revoked
-          ? "To be precise about what that does and does not mean: the encrypted document is still on Swarm, and the grant’s contents remain in the transaction that created it. Ending access stops it being reopened through this app. It is not erasure."
-          : "To be precise about what that does and does not mean: the encrypted document is still on Swarm, and the grant’s contents remain in the transaction that created it. Expiry ends access through this app. It is not erasure."
-      }
-      extraNote="Still working together? Ask for a new link and you will get a fresh twelve weeks."
+      // Plain words, same honesty (operator, 2026-09-13): ending access is not erasure. No date —
+      // once a grant has gone there is nothing on this page that knows when it ended. No promised
+      // window either — links can be minutes long.
+      note="The document hasn’t been deleted. It’s still stored, encrypted, where it was kept. This link just can’t open it any more."
+      extraNote="Still need it? Ask the sender for a new link."
     />
   )
 }

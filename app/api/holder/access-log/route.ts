@@ -1,5 +1,5 @@
 /**
- * "When she looked" — return the record of served unlocks to the grant's
+ * "When they looked" — return the record of served unlocks to the grant's
  * sender only.
  *
  * Authorisation and the read itself live in `lib/access-log.ts`, which reuses
