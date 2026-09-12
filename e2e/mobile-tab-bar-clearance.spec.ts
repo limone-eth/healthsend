@@ -54,10 +54,14 @@ test("/ — the last archive row clears the tab bar at 400px", async ({ page }) 
 
   // H-66: an empty archive is the empty-state card's own "Add blood tests" CTA, the
   // last actionable element on the page — not a bucket row (those are gone).
-  const addBloodTests = page.getByRole("link", { name: "Add blood tests" }).last()
+  // It opens the PDF picker in place rather than navigating to /add, so a click that
+  // lands proves it cleared the tab bar.
+  const addBloodTests = page.getByRole("button", { name: "Add blood tests" }).last()
   await expect(addBloodTests).toBeVisible()
+  const chooser = page.waitForEvent("filechooser")
   await addBloodTests.click()
-  await expect(page).toHaveURL(/\/add$/)
+  await chooser
+  await expect(page).toHaveURL(/\/$/)
 })
 
 test("/add — the last enabled kind card clears the tab bar at 400px", async ({ page }) => {

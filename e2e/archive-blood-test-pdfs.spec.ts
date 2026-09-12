@@ -148,7 +148,15 @@ test.describe("desktop, 1440px", () => {
         "Your blood test PDFs, exactly as the lab sent them. Nothing leaves this page unless you share it.",
       ),
     ).toBeVisible()
-    await expect(page.getByRole("link", { name: "Add blood tests" }).first()).toHaveAttribute("href", "/add")
+    // The primary action opens a multi-file PDF picker in place — no "What are you adding?"
+    // chooser in between. Broke by design: turn `AddBloodTestsButton` back into a link to
+    // /add and the file chooser never opens.
+    const chooserEvent = page.waitForEvent("filechooser")
+    await page.getByRole("button", { name: "Add blood tests" }).first().click()
+    const chooser = await chooserEvent
+    expect(chooser.isMultiple()).toBe(true)
+    expect(await chooser.element().getAttribute("accept")).toContain("application/pdf")
+    await expect(page).toHaveURL(/\/$/)
   })
 
   // Broke by design: hardcode `eyebrowLabel` in app/(sender)/page.tsx to always return

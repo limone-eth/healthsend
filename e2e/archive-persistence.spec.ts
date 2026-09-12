@@ -249,6 +249,35 @@ test("a sender picks two PDFs in one go and reads both after reload", async ({ p
   await expect(page.getByText("Thyroid panel, June.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
 })
 
+// Broke by design: point the archive's "Add blood tests" back at /add and the file chooser
+// never opens on "/".
+test("Add blood tests opens the PDF picker straight from the archive", async ({ page }) => {
+  const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
+  await fulfillArchiveBackend(page.context(), backend)
+
+  await page.goto("/")
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
+
+  const chooserEvent = page.waitForEvent("filechooser")
+  await page.getByRole("button", { name: "Add blood tests" }).filter({ visible: true }).first().click()
+  const chooser = await chooserEvent
+  const blobsBeforeAdd = backend.blobs.size
+  await chooser.setFiles([
+    { name: "Blood test, March.pdf", mimeType: "application/pdf", buffer: fakePdf("march") },
+    { name: "Thyroid panel, June.pdf", mimeType: "application/pdf", buffer: fakePdf("june") },
+  ])
+
+  await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+  await expect(page.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/$/)
+  // The whole pick is still one archive upload.
+  expect(backend.blobs.size).toBe(blobsBeforeAdd + 1)
+
+  await page.reload()
+  await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+})
+
 test("a non-PDF renamed .pdf is rejected and nothing is uploaded", async ({ page }) => {
   const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0 }
   await fulfillArchiveBackend(page.context(), backend)

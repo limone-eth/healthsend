@@ -1,10 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import Link from "next/link"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { ArrowDown, Eye, FileText, FileX } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
-import { loadMyArchive } from "@/lib/archive-store"
+import { recordsFromPdfFiles } from "@/lib/archive-input"
+import { addRecordsToMyArchive, loadMyArchive } from "@/lib/archive-store"
 import type { ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
 import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
 import { performRemoveDocument, type LiveShareView } from "@/components/remove-document-sheet-logic"
@@ -76,10 +76,41 @@ type RemoveSheetState =
       error: string | null
     }
 
+/**
+ * Adding PDFs straight from this screen: the click opens the file picker, with no
+ * "What are you adding?" chooser in between — this archive only takes PDFs.
+ */
+type AddState = { status: "idle" } | { status: "adding"; count: number } | { status: "error"; message: string }
+
 function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
   const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
   const [removeSheet, setRemoveSheet] = useState<RemoveSheetState>({ status: "closed" })
   const [removeSheetNow, setRemoveSheetNow] = useState(() => Math.floor(Date.now() / 1000))
+  const pdfInput = useRef<HTMLInputElement>(null)
+  const [adding, setAdding] = useState<AddState>({ status: "idle" })
+  const isAdding = adding.status === "adding"
+
+  function pickPdfs() {
+    if (isAdding) return
+    pdfInput.current?.click()
+  }
+
+  async function addPickedPdfs(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+    // Cleared so picking the same file again still fires `change`.
+    event.target.value = ""
+    if (files.length === 0) return
+    setAdding({ status: "adding", count: files.length })
+    try {
+      // The same path as Add's "A letter or report" card: every PDF in the pick
+      // is resealed and uploaded once, together — see lib/archive-store.ts.
+      await addRecordsToMyArchive(await recordsFromPdfFiles(files))
+      setAdding({ status: "idle" })
+      await refreshArchive()
+    } catch (cause) {
+      setAdding({ status: "error", message: (cause as Error).message })
+    }
+  }
 
   const refreshArchive = () => {
     let timeout: ReturnType<typeof setTimeout> | undefined
@@ -158,7 +189,27 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
 
   return (
     <div className="flex w-full flex-col gap-7 md:gap-[30px]">
-      <ArchiveHeader />
+      <ArchiveHeader onAdd={pickPdfs} adding={isAdding} />
+      <input
+        ref={pdfInput}
+        type="file"
+        accept="application/pdf,.pdf"
+        multiple
+        hidden
+        aria-label="Blood test PDFs"
+        onChange={addPickedPdfs}
+      />
+
+      {adding.status === "adding" && (
+        <div role="status" className="rounded-inset bg-grouped p-[18px] text-[15px] text-secondary">
+          {adding.count === 1 ? "Encrypting and adding your PDF…" : `Encrypting and adding ${adding.count} PDFs…`}
+        </div>
+      )}
+      {adding.status === "error" && (
+        <div role="alert" className="rounded-inset border border-error/20 bg-grouped p-[18px] text-[15px] text-error">
+          Could not add these PDFs: {adding.message}
+        </div>
+      )}
 
       {archive.status === "loading" ? (
         <div role="status" className="rounded-inset bg-grouped p-[18px] text-[15px] text-secondary">
@@ -169,7 +220,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
           Could not load your archive: {archive.message}
         </div>
       ) : documents.length === 0 ? (
-        <EmptyArchive />
+        <EmptyArchive onAdd={pickPdfs} adding={isAdding} />
       ) : (
         <>
           <div className="flex flex-col gap-2">
@@ -178,7 +229,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
           </div>
 
           <BloodTestListMobile documents={documents} onRemove={openRemoveSheet} />
-          <BloodTestListDesktop documents={documents} onRemove={openRemoveSheet} />
+          <BloodTestListDesktop documents={documents} onRemove={openRemoveSheet} onAdd={pickPdfs} adding={isAdding} />
 
           <SharedAsIssuedNote />
         </>
@@ -226,7 +277,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
 // `content` fields rather than assumed to match — see `docs/stories/H-17.md`.
 // ---------------------------------------------------------------------------
 
-function ArchiveHeader() {
+function ArchiveHeader({ onAdd, adding }: { onAdd: () => void; adding: boolean }) {
   return (
     <>
       <div className="flex flex-col gap-3.5 md:hidden">
@@ -234,7 +285,7 @@ function ArchiveHeader() {
           <h1 className="text-display-mobile text-ink">Your archive</h1>
           <p className="text-[15px] leading-[1.45] text-secondary">Your blood test PDFs, as the lab sent them.</p>
         </div>
-        <AddBloodTestsButton className="w-full" />
+        <AddBloodTestsButton className="w-full" onAdd={onAdd} adding={adding} />
       </div>
 
       <div className="hidden items-end justify-between gap-6 md:flex">
@@ -245,21 +296,31 @@ function ArchiveHeader() {
             share it.
           </p>
         </div>
-        <AddBloodTestsButton />
+        <AddBloodTestsButton onAdd={onAdd} adding={adding} />
       </div>
     </>
   )
 }
 
-function AddBloodTestsButton({ className = "" }: { className?: string }) {
+function AddBloodTestsButton({
+  className = "",
+  onAdd,
+  adding,
+}: {
+  className?: string
+  onAdd: () => void
+  adding: boolean
+}) {
   return (
-    <Link
-      href="/add"
-      className={`inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-control bg-ink px-5 text-[15px] font-semibold tracking-[-0.15px] text-surface ${className}`}
+    <button
+      type="button"
+      onClick={onAdd}
+      disabled={adding}
+      className={`inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-control bg-ink px-5 text-[15px] font-semibold tracking-[-0.15px] text-surface disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       <ArrowDown size={17} weight="regular" />
       Add blood tests
-    </Link>
+    </button>
   )
 }
 
@@ -269,7 +330,7 @@ function AddBloodTestsButton({ className = "" }: { className?: string }) {
 // nothing yet, offer the one action, not five empty cards.
 // ---------------------------------------------------------------------------
 
-function EmptyArchive() {
+function EmptyArchive({ onAdd, adding }: { onAdd: () => void; adding: boolean }) {
   return (
     <div className="flex w-full flex-col items-center gap-3 rounded-card border border-black/[0.05] bg-surface px-6 py-12 text-center">
       <div className="flex h-[34px] w-[34px] items-center justify-center rounded-glyph bg-haze">
@@ -279,13 +340,15 @@ function EmptyArchive() {
       <p className="max-w-[380px] text-[13px] leading-[1.45] text-muted">
         Add one from your lab and it will show up here, exactly as they sent it.
       </p>
-      <Link
-        href="/add"
-        className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-control bg-ink px-5 text-[14px] font-semibold text-surface"
+      <button
+        type="button"
+        onClick={onAdd}
+        disabled={adding}
+        className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-control bg-ink px-5 text-[14px] font-semibold text-surface disabled:cursor-not-allowed disabled:opacity-60"
       >
         <ArrowDown size={16} weight="regular" />
         Add blood tests
-      </Link>
+      </button>
     </div>
   )
 }
@@ -300,19 +363,28 @@ function EmptyArchive() {
 function BloodTestListDesktop({
   documents,
   onRemove,
+  onAdd,
+  adding,
 }: {
   documents: DocumentRecord[]
   onRemove: (document: DocumentRecord) => void
+  onAdd: () => void
+  adding: boolean
 }) {
   return (
     <div className="hidden w-full flex-col overflow-hidden rounded-card border border-black/[0.05] bg-surface md:flex">
       {documents.map((document) => (
         <DocumentRow key={document.id} document={document} onRemove={() => onRemove(document)} />
       ))}
-      <Link href="/add" className="flex items-center gap-2 px-5 py-4">
+      <button
+        type="button"
+        onClick={onAdd}
+        disabled={adding}
+        className="flex w-full items-center gap-2 px-5 py-4 text-left disabled:cursor-not-allowed disabled:opacity-60"
+      >
         <ArrowDown size={15} weight="regular" className="text-navy" />
         <span className="text-[13px] font-semibold text-navy">Add blood tests — pick one or several PDFs</span>
-      </Link>
+      </button>
     </div>
   )
 }
