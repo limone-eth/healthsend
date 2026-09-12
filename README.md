@@ -161,7 +161,7 @@ it, be compelled to, or get it wrong, and nobody outside could tell. On Arkiv:
 | [`lib/key-release/chipotle-action.js`](./lib/key-release/chipotle-action.js) | The Lit action: re-checks the grant's commitment, then queries Arkiv directly before releasing piece 2 |
 | [`app/api/holder/unlock/route.ts`](./app/api/holder/unlock/route.ts) | The holder's check that the grant is still live before it serves anything |
 | [`app/(sender)/shares/page.tsx`](./app/(sender)/shares/page.tsx) | Your shares: live grants, their countdowns, ending one early |
-| [`arkiv/schema.md`](./arkiv/schema.md) · [`friction.md`](./friction.md) | The schema, and what broke along the way |
+| [`arkiv/schema.md`](./arkiv/schema.md) · [`friction.md`](./friction.md) | Attributes, queries and lifetime (its payload section is the superseded v1 model; the current payload is `GrantPayload` in `lib/arkiv.ts`), and what broke along the way |
 | [`arkiv/evidence/mission-02-expiry.txt`](./arkiv/evidence/mission-02-expiry.txt) | Mission 02: the same query before and after the boundary, no delete call |
 
 ### Every combination, scored the same way
@@ -209,7 +209,7 @@ What that buys, precisely:
 |---|---|
 | Documents are encrypted on your device; no server of ours receives plaintext | **Yes** |
 | After the deadline, someone opening the link gets nothing | **Yes** |
-| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes**, once piece 2 is refused |
+| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes** for holder shares. **Not yet** for Lit Chipotle shares: our review found the Lit action can be fed a self-made live grant, so anyone who kept a Chipotle link can still recover its key after it ends. The fix (H-72) seals the grant into the Lit ciphertext. |
 | Expiry erases the document | **No.** Encrypted files on Swarm and grant calldata are permanent. Expiry ends *access*, not *existence*. |
 | Expiry takes back what someone already saw | **No.** A screenshot taken during the window stays a screenshot. |
 
