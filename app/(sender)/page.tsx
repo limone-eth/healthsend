@@ -417,16 +417,11 @@ function IdentityInset() {
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-[15px] font-semibold text-secondary">Identity</span>
         <span className="text-[13px] leading-[1.45] text-secondary">
-          {/* The frame (`whPAl`) reads "Your name and date of birth were separated
-              from the rest the moment you imported. They stay on this page — no
-              share has ever included them, and none can." That is the intended end
-              state and it is not true yet: `createSend` reads each file straight
-              into `packEnvelope`, so nothing strips identifiers on the way out
-              (H-36). Restore the frame's sentence verbatim when H-36 lands — the
-              screen must not claim a protection the upload path does not perform. */}
-          Your name and date of birth are meant to stay on this page and never travel with a
-          share. That step is built and tested but not yet wired into the upload path, so for
-          now a document is sent exactly as it is.
+          {/* Frame `whPAl`. True since H-36: `createSend` runs every upload
+              through `importDocument` before anything is encrypted — see
+              lib/sends.ts, `importForSend`. */}
+          Your name and date of birth were separated from the rest the moment you imported. They
+          stay on this page — no share has ever included them, and none can.
         </span>
       </div>
       <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-capsule border border-silver bg-surface px-3 text-[12.5px] font-semibold text-muted">

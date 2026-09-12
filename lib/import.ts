@@ -70,7 +70,8 @@ export function importDocument(params: ImportParams): ImportResult {
   return { kind: "document", cleanedText: cleaned, setAside }
 }
 
-function hasSetAside(setAside: SetAsideIdentifiers): boolean {
+/** Whether an import actually found anything to set aside — for callers deciding what to surface to the sender. */
+export function hasSetAside(setAside: SetAsideIdentifiers): boolean {
   return Object.values(setAside).some((value) => value !== undefined)
 }
 

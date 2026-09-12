@@ -4,9 +4,12 @@
  * Stopgap notice for the compose screen. H-16 and H-28 set aside a name and
  * date of birth that a matcher can actually recognize — a labeled field, an
  * unlabeled date near the top, the sender's own account name wherever it
- * appears. A matcher still cannot catch every case (H-15's import review
- * screen, unbuilt, is where a human catches the rest), so this notice keeps
- * pointing senders at the fixtures instead of their own records.
+ * appears — and H-36 wired that matcher into the upload path itself, so it
+ * actually runs on every send rather than proving itself against fixtures
+ * alone. A matcher still cannot catch every case (H-15's import review
+ * screen, built but not yet connected to this flow — H-56 — is where a human
+ * would catch the rest), so this notice keeps pointing senders at the
+ * fixtures instead of their own records.
  *
  * The first draft said only "a real upload to a public network", which reads as
  * though the document itself is exposed. It is not: `lib/swarm.ts` uploads
@@ -39,10 +42,12 @@ export function DemoNotice() {
         opens nothing. But anyone with the link can open it &mdash; including anyone your recipient
         forwards it to. There is no separate code and no device check to confirm it&apos;s still
         them. The encrypted copy also goes to a public network and stays there permanently &mdash;
-        expiry ends access, it does not erase anything. And nothing strips your name or date of
-        birth from a file today: that code exists and is tested, but the upload path does not call
-        it yet (story H-36), so whatever is in the document goes in as it is. Please use the sample
-        files in <code className="font-mono">fixtures/</code> instead of your own health records.
+        expiry ends access, it does not erase anything. Your name, date of birth, address and any
+        patient ID are set aside before anything is encrypted, and a recognized blood panel is
+        scoped down to its readings rather than sent as the original file &mdash; but detection
+        still only catches what it has been taught to recognize, so an identifier in a shape it
+        does not know can still go through. Please use the sample files in{" "}
+        <code className="font-mono">fixtures/</code> instead of your own health records.
       </p>
     </div>
   )
