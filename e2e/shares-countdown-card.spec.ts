@@ -73,3 +73,33 @@ test.describe("mobile, 400px", () => {
     await expectCardHoldsItsContent(page)
   })
 })
+
+/**
+ * Operator screenshot, 2026-09-13: in a narrow slot the date line ("Expires today at 00:33")
+ * ran under "42 seconds left". /kitchen-sink renders Countdown at 380, 300 and 240px without
+ * any network; on every card the date and the time left must not overlap, and both must stay
+ * inside the border. Broke by design: restore `min-w-0` on Countdown's left block and drop
+ * `flex-wrap`, and the 300px card goes red.
+ */
+test.describe("kitchen sink, narrow slots", () => {
+  test.use({ viewport: { width: 1440, height: 1600 } })
+  test("no Countdown card draws its time left over its date", async ({ page }) => {
+    await page.goto("/kitchen-sink")
+    const words = page.getByText(/^(ACTIVE|CLOSING|EXPIRED)$/)
+    const count = await words.count()
+    expect(count).toBeGreaterThanOrEqual(5)
+    for (let i = 0; i < count; i++) {
+      const card = words.nth(i).locator("xpath=ancestor::div[contains(@class,'rounded-control')][1]")
+      const date = card.getByText(/^(Expires|Expired) /)
+      const remaining = card.getByText(/ left$|^Access ended$/)
+      const [c, d, r] = await Promise.all([card.boundingBox(), date.boundingBox(), remaining.boundingBox()])
+      if (!c || !d || !r) throw new Error(`card ${i} has no layout box`)
+      const overlaps = d.x < r.x + r.width && r.x < d.x + d.width && d.y < r.y + r.height && r.y < d.y + d.height
+      expect(overlaps, `card ${i}: "${await date.textContent()}" overlaps "${await remaining.textContent()}"`).toBe(false)
+      for (const box of [d, r]) {
+        expect(box.x + box.width).toBeLessThanOrEqual(c.x + c.width + 0.5)
+        expect(box.y + box.height).toBeLessThanOrEqual(c.y + c.height + 0.5)
+      }
+    }
+  })
+})

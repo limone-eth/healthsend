@@ -120,6 +120,8 @@ export default function KitchenSink() {
           <Countdown className="max-w-[380px]" expiresAt={NOW + 90 * 60} now={NOW} />
           <Countdown className="max-w-[380px]" expiresAt={NOW + 120} now={NOW} />
           <Countdown className="max-w-[380px]" expiresAt={NOW + 30} now={NOW} />
+          <Countdown className="max-w-[300px]" expiresAt={NOW + 42} now={NOW} />
+          <Countdown className="max-w-[240px]" expiresAt={NOW + 6 * 86400 + 3600} now={NOW} />
         </div>
         <p className="text-label text-muted">
           Short shares read as finely as they are long — hours, then minutes, then seconds, always

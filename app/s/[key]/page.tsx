@@ -184,7 +184,7 @@ function FirstOpenCode({
     <div className="flex min-h-screen w-full flex-col bg-canvas">
       <RecipientTopBar>
         <CountdownChip expiresAt={expiresAt} now={now} className="md:hidden" />
-        <div className="hidden md:block md:w-full md:max-w-[300px]">
+        <div className="hidden md:block md:w-auto">
           <Countdown expiresAt={expiresAt} now={now} />
         </div>
       </RecipientTopBar>
@@ -284,7 +284,7 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
             `Countdown` card, which stays reserved for the ≥md slot per
             `XhRxB`. */}
         <CountdownChip expiresAt={send.expiresAt} now={now} className="md:hidden" />
-        <div className="hidden md:block md:w-full md:max-w-[300px]">
+        <div className="hidden md:block md:w-auto">
           <Countdown expiresAt={send.expiresAt} now={now} />
         </div>
       </RecipientTopBar>
