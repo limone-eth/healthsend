@@ -1,0 +1,20 @@
+# ETHRome 2026 Hacker Manual
+
+> Rules, prizes, judging, submissions, schedule, code of conduct and Rome guide for ETHRome 2026, the hackathon by urbe.eth at Urbe Hub, Rome, 11 to 13 September 2026. Mirror of https://ethrome.org/hackermanual.
+
+## Manual
+
+- [ETHRome 2026 Hacker Manual](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/index.md): Forty selected builders, forty hours, one weekend at Urbe Hub. Everything you need is on this page: the rules, what you can win, how you are judged, how you submit, and how to survive Rome while you do it.
+- [Hackathon Rules](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/rules.md): Everything that decides whether your project counts: who can hack, how teams work, what a valid build looks like, and the exact conditions for bringing an existing project.
+- [Prizes and Bounties](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/prizes.md): Two separate things are in play: the ETHRome prize and the sponsor bounties. They work under completely different rules.
+- [Schedule](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/schedule.md): Three days, one screen. Friday 11 to Sunday 13 September at Urbe Hub. Screenshot this page.
+- [Judging](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/judging.md): How your project gets scored: the session, what judges need from you, how your slot runs, and exactly where the points are.
+- [Submissions](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/submissions.md): One Google Form, one deadline. This page tells you exactly what the form asks and when it closes.
+- [Code of Conduct](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/conduct.md): One standard of behaviour for everyone in the building. Read it once. It takes a few minutes and it applies for the whole weekend.
+- [FAQ](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/faq.md): The questions every hacker asks, answered in one place. If it is not here, ask us directly: hello@urbe.build or the Telegram group.
+- [Rome](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/rome.md): Where to sleep, how to reach Urbe Hub, where to eat, and what to do with the little time you are not hacking. One page, everything you need to move.
+- [How to record your demo video](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/manual/demo-video.md): The 3-minute walkthrough that goes with your submission. Here is how to record one that works, in about 30 minutes, no editing skills required.
+
+## Optional
+
+- [Whole manual in one file](https://raw.githubusercontent.com/urbeETH/ethrome-2026-hacker-manual/main/HACKER-MANUAL.md): all ten pages concatenated.

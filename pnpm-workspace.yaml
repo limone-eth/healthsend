@@ -1,3 +1,6 @@
 allowBuilds:
   sharp: false
   unrs-resolver: false
+minimumReleaseAgeExclude:
+  - '@arkiv-network/sdk@0.8.1'
+  - '@snaha/swarm-id@0.4.1'

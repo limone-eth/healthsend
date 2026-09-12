@@ -6,14 +6,22 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "doctor": "node scripts/doctor.mjs",
+    "verify:crypto": "node --experimental-strip-types scripts/crypto-roundtrip.mjs",
+    "verify:expiry": "node scripts/expiry-demo.mjs",
+    "e2e": "playwright test"
   },
   "dependencies": {
+    "@arkiv-network/sdk": "0.8.1",
+    "@snaha/swarm-id": "0.4.1",
     "next": "16.3.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
