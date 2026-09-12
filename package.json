@@ -18,6 +18,8 @@
     "verify:import-flags": "node --experimental-strip-types scripts/import-flag-proof.mjs",
     "verify:holder": "node --experimental-strip-types scripts/holder-preflight-proof.mjs",
     "verify:copy": "node scripts/copy-claims-proof.mjs",
+    "verify:new-expiry": "node --experimental-strip-types scripts/new-expiry-proof.mjs",
+    "verify:import-review": "node --experimental-strip-types scripts/import-review-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm e2e",

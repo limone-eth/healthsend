@@ -33,6 +33,13 @@ for (const path of PAGES) {
         return { r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? +m[4] : 1 }
       }
 
+      /** Every opaque colour stop in a `linear-gradient(...)` background-image, resolved to rgb(a) by the browser already. */
+      function parseGradientStops(value: string) {
+        return Array.from(value.matchAll(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/g))
+          .map((m) => ({ r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? +m[4] : 1 }))
+          .filter((c) => c.a > 0.5)
+      }
+
       function relativeLuminance(r: number, g: number, b: number) {
         const [R, G, B] = [r, g, b].map((c) => {
           const channel = c / 255
@@ -66,35 +73,40 @@ for (const path of PAGES) {
         if (!fg || fg.a === 0) continue
 
         let bgEl: Element | null = el
-        let bg: { r: number; g: number; b: number; a: number } | null = null
-        let sitsOverImage = false
+        let backgrounds: { r: number; g: number; b: number; a: number }[] | null = null
         while (bgEl) {
           const bgStyle = getComputedStyle(bgEl)
           if (bgStyle.backgroundImage !== "none") {
-            // A gradient or image background — the one fixed-dark focus
-            // surface (DESIGN.md "No photography") is drawn this way, and a
-            // flat foreground/background comparison cannot judge contrast
-            // against it. Skip rather than compare against whatever solid
-            // colour happens to sit further up the tree.
-            sitsOverImage = true
+            // A gradient (the one fixed-dark focus surface, DESIGN.md "No
+            // photography") still resolves to concrete colour stops the
+            // browser has already computed — check against every stop
+            // rather than skip, so text over it is not exempt from this
+            // guard. A genuine image (`url(...)`) yields no stops and falls
+            // through to the skip below, since a flat colour check cannot
+            // judge contrast against a photo.
+            backgrounds = parseGradientStops(bgStyle.backgroundImage)
             break
           }
           const candidate = parseColor(bgStyle.backgroundColor)
           if (candidate && candidate.a > 0.5) {
-            bg = candidate
+            backgrounds = [candidate]
             break
           }
           bgEl = bgEl.parentElement
         }
-        if (sitsOverImage || !bg) continue
+        if (!backgrounds || backgrounds.length === 0) continue
 
-        const ratio = contrastRatio(fg, bg)
+        // The worst-case stop, not an average — a foreground only has to be
+        // near-invisible against one end of the gradient to be a real bug.
+        const ratio = Math.min(...backgrounds.map((bg) => contrastRatio(fg, bg)))
         if (ratio < NEAR_INVISIBLE) {
           found.push({
             tag: el.tagName,
             text: (el.textContent ?? "").trim().slice(0, 60),
             color: style.color,
-            backgroundColor: getComputedStyle(bgEl!).backgroundColor,
+            backgroundColor: getComputedStyle(bgEl!).backgroundImage !== "none"
+              ? getComputedStyle(bgEl!).backgroundImage
+              : getComputedStyle(bgEl!).backgroundColor,
             ratio,
           })
         }

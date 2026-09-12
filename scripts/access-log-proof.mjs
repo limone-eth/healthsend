@@ -127,11 +127,24 @@ function fakeRedis() {
   const lists = new Map() // key -> values[]
   const listTtls = new Map() // key -> ex seconds
   let evalShouldFail = false
+  let failCommandOnce = null
 
   const keyExists = (key) => strings.has(key) || lists.has(key)
 
   const call = (rawCommand, args) => {
     const command = rawCommand.toUpperCase()
+    // A *command*-level error: the request reached the server and the script
+    // is genuinely running (unlike `failNextEval`, which models the request
+    // never arriving at all) — some later command inside it errors, the way
+    // a real `WRONGTYPE` or similar would. Any earlier `redis.call` in the
+    // same script has already applied by the time this throws, because this
+    // fake mutates its store synchronously, the moment each command runs —
+    // exactly how a real Redis Lua script executes each command as it goes,
+    // with no per-script undo.
+    if (failCommandOnce === command) {
+      failCommandOnce = null
+      throw new Error(`fakeRedis: simulated command-level error on ${command}`)
+    }
     if (command === "RPUSH") {
       const [key, ...values] = args
       const list = lists.get(key) ?? []
@@ -201,11 +214,17 @@ function fakeRedis() {
     failNextEval() {
       evalShouldFail = true
     },
+    failCommand(command) {
+      failCommandOnce = command.toUpperCase()
+    },
     hasTTL(logKey) {
       return listTtls.has(logKey) && Number.isFinite(listTtls.get(logKey))
     },
     listExists(logKey) {
       return lists.has(logKey)
+    },
+    listValues(logKey) {
+      return lists.get(logKey) ?? []
     },
   }
 }
@@ -520,6 +539,92 @@ function fakeRedis() {
   assert.equal(served, null, "an atomic serve must refuse any share behind a tombstone")
   assert.deepEqual(await store.lrange(logKey), [], "a refused serve must not create an access event")
   console.log("PASS  atomic serve refuses stale share bytes behind a tombstone")
+}
+
+// --- R2-024: a command-level script error is not the same guarantee as a request that never arrives ---
+//
+// Every failure proved above is `failNextEval()` — the request never reaches
+// Redis at all, so Fengari never runs a single command and nothing in the
+// script can have taken effect. A *command-level* error is a different
+// failure entirely: the script really is executing on the server, an earlier
+// `redis.call` in it has already applied, and only a later command in the
+// same script errors out. Real Redis does not roll a Lua script back on a
+// command error — there is no transaction to undo, only commands already
+// applied and a script that stopped partway. These two tests reproduce that
+// with `failCommand()`, which fails one specific command name after it is
+// reached mid-script rather than failing the whole `eval()` up front.
+
+// --- a command-level EXPIRE failure still leaves the earlier RPUSH applied ---
+{
+  const store = fakeRedis()
+  const logKey = accessLogKeyName(ENTITY_KEY)
+
+  store.failCommand("EXPIRE")
+  await assert.rejects(() => recordAccessWith(store, ENTITY_KEY, 1000, 1000 + 3600))
+
+  assert.deepEqual(store.listValues(logKey), [1000], "the RPUSH already landed before the failing EXPIRE")
+  assert.equal(store.hasTTL(logKey), false, "no TTL landed, since EXPIRE is the command that failed")
+
+  // Unlike a request that never reaches Redis (proved above: no entry at
+  // all), the append is now visible in storage with no TTL — the exact shape
+  // `RECORD_ACCESS_SCRIPT` was written to make impossible for a dropped
+  // *request*. `recordAccessWith`'s degraded-key fallback is what keeps a
+  // reader from trusting this partial list as a confident "never opened".
+  const read = await getAccessLogWith(store, ENTITY_KEY)
+  assert.equal(read.reliable, false, "a partially-applied write must still read back as unreliable")
+  console.log(
+    "PASS  a command-level EXPIRE failure leaves the RPUSH applied with no TTL — a different shape than a request that never arrives, still caught by the degraded-key fallback",
+  )
+}
+
+// --- a command-level SET failure on the tombstone script reopens the refillable slot ---
+{
+  const store = fakeRedis()
+  const shareKey = shareKeyName(ENTITY_KEY)
+  const logKey = accessLogKeyName(ENTITY_KEY)
+  const tombKey = tombstoneKeyName(ENTITY_KEY)
+
+  const stored = await putShareWith(store, ENTITY_KEY, { share: "held-share", commitment: "c".repeat(64) }, 3600)
+  assert.equal(stored, true, "the legitimate first write must succeed")
+  await recordAccessWith(store, ENTITY_KEY, 1000, 1000 + 3600)
+
+  // TOMBSTONE_SCRIPT's own final command — the SET that actually marks the
+  // entity revoked — is the one that fails here, after its DEL has already
+  // run against the store.
+  //
+  // The script deletes the share and *keeps* the access log: H-45 (R2-015)
+  // removed the log DEL so that ending a share no longer destroys the record
+  // of who had already opened it. This test was written against the earlier
+  // two-DEL script and asserted the log was gone; that assertion now encodes
+  // behaviour we deliberately removed, so it asserts the opposite.
+  store.failCommand("SET")
+  await assert.rejects(() => tombstoneShareWith(store, ENTITY_KEY, 3600))
+
+  assert.equal(await store.get(shareKey), null, "the share was already deleted before the failing SET")
+  assert.equal(
+    store.listExists(logKey),
+    true,
+    "the access log survives a revoke, failed or not — R2-015",
+  )
+  assert.equal(await store.exists(tombKey), 0, "the tombstone itself never landed — it is what failed")
+
+  // `putShareWith`'s atomic check only ever looks at the tombstone key
+  // (`PUT_SHARE_SCRIPT`), so an entity in this exact state — share and log
+  // gone, no tombstone — reads as simply empty rather than revoked, and a
+  // refill right now succeeds. This is the precise hole the atomic rewrite
+  // closes for a dropped *request* (see lib/holder-store.ts's file header
+  // and the "a failed tombstone write must not leave a refillable slot" test
+  // above); a command-level error partway through the same script reopens
+  // it, because there is no per-script undo of commands that already ran.
+  const refill = await putShareWith(store, ENTITY_KEY, { share: "replay", commitment: "d".repeat(64) }, 3600)
+  assert.equal(
+    refill,
+    true,
+    "documenting the gap: a command-level error mid-script leaves the slot refillable, unlike a request that never reaches the server at all",
+  )
+  console.log(
+    "PASS  a command-level SET failure on the tombstone script leaves the share deleted and the log intact, with no tombstone — the slot is refillable (documented gap, distinct from a request-level failure)",
+  )
 }
 
 console.log("\nAll checks passed.")

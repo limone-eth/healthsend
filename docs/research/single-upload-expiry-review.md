@@ -6,9 +6,26 @@ Research and architecture review, 2026-09-12. This is an options paper, not an a
 
 Separate an **asset** from a **grant**. Encrypt and upload the asset once. Create a separate Arkiv grant and protected key package for each sharing arrangement. For genuinely different subsets of the same upload, encrypt the independently shareable units separately before that first upload.
 
-For asynchronous bearer links that stop receiving new decryption material after expiry, a threshold release service is the most promising way to remove HealthSend's centralized secret store. TACo has a documented arbitrary HTTPS JSON-RPC condition that could consult Arkiv directly. This is a credible integration candidate, not a demonstrated integration in this repository. See [the threshold research](threshold-expiry-alternatives.md) for current capabilities and limitations.
+For asynchronous bearer links that stop receiving new decryption material after expiry, a threshold release service is the most promising way to remove HealthSend's centralized secret store. TACo has a documented arbitrary HTTPS JSON-RPC condition that could consult Arkiv directly. However, the current TACo SDK overview explicitly warns that it lacks a stable operator cohort and supporting mainnet infrastructure, with a relaunch planned for Q3 2026. Treat this as a protocol candidate, not a deployable managed-network dependency until operation is verified. [Current TACo SDK status](https://docs.taco.build/for-developers/taco-sdk). See [the threshold research](threshold-expiry-alternatives.md) for current capabilities and limitations.
 
-If removing infrastructure matters more than blocking a first unlock after expiry, a simpler invitation model works with Swarm and Arkiv alone. It must promise invitation expiry, not that the original link becomes cryptographically unusable. Another strong product is a lease for future health updates, with fresh keys for future data.
+## Confirmed expiry requirement
+
+The user selected: **Block new unlocks after expiry, even with the original link.** This requirement accompanies the single-upload/many-grant constraint.
+
+The user subsequently confirmed that **keeping decryption keys only in browser memory is acceptable**, after discussing that recipients can deliberately retain keys or plaintext. Do not persist content keys or released key shares in localStorage, sessionStorage, IndexedDB, service-worker caches or other application-managed persistent storage. Each fresh opening must obtain authorization again; the app must not provide a persistent offline unlock path. The delivered share link still contains its original fragment secret. This is an accepted boundary, not a claim that in-memory keys cannot be copied. Behavior of a document already open at the expiry boundary is a separate UI decision, not specified by this preference.
+
+A recipient possessing the original link, the Swarm ciphertext and archived Arkiv payloads, but no previously released decryption material, must not be able to obtain sufficient new key material after the grant expires. Changing the client, querying transaction history or substituting another live grant must not bypass the restriction.
+
+Keys or plaintext obtained before expiry remain usable. This includes keys obtained through another authorized grant over the same immutable data. The release boundary governs new authorizations, not delivery time of a response already authorized before expiry. Arkiv block expiry remains the authority; RPC uncertainty must refuse release with a retryable unavailable result.
+
+Consequences:
+
+- Invitation-only expiry, hiding the reference, link-only key wrapping and future-update leases alone do not meet the chosen requirement. They remain below as evaluated alternatives, not substitutes for the selected behavior.
+- A key-release authority remains necessary: preferably independently operated threshold release if central custody is to be removed, or an explicitly trusted service/committee. Removing the KV alone does not remove that authority.
+- Preserve one Swarm upload, separate grant-specific secrets and protected key packages, and independently encrypted components wherever selective sharing is required.
+- Do not downgrade to client-side expiry if the release service is unavailable. A working release provider and acceptable trust assumptions are prerequisites for implementation. No specific replacement network is selected or verified live by this review.
+
+Acceptance proof: create two grants for the same uploaded asset with different deadlines. Keep one recipient from obtaining any key material before the first deadline. Afterwards, demonstrate that its original link plus archived grant and ciphertext cannot unlock, while the second live grant still works without another asset upload. Separately demonstrate that previously acquired keys remain usable, and test wrong-grant substitution, public capsule prefetching, revocation and RPC failures.
 
 ## What the repository does today
 
@@ -85,7 +102,7 @@ A public asset ID/reference repeated on every grant makes all those shares corre
 
 ## Five ways to remove the centralized KV
 
-### 1. Threshold-protected grant packages — best candidate for asynchronous expiring links
+### 1. Threshold-protected grant packages — preferred architecture, deployment availability unresolved
 
 At import, upload the asset and encrypted owner directory once. For grant G:
 
@@ -103,7 +120,7 @@ Default entity mutability deserves explicit handling. The SDK's `readonly` flag 
 
 Early revocation can use Arkiv deletion, eliminating a separate Redis tombstone. Cached key material remains usable. Requests already authorized around the revocation boundary cannot be recalled.
 
-This removes HealthSend's per-grant secret database. It still relies on the selected threshold operators and the correctness/freshness of their Arkiv observations. Many nodes trusting one HTTPS RPC response share an oracle dependency. Production ritual availability, RPC quotas, condition support and actual absence/error behavior must be tested. No four-digit PIN counter or authoritative access log is provided by this design automatically.
+This removes HealthSend's per-grant secret database. It still relies on the selected threshold operators and the correctness/freshness of their Arkiv observations. Many nodes trusting one HTTPS RPC response share an oracle dependency. The current TACo operator/infrastructure warning takes precedence over older testnet and mainnet-onboarding instructions. Live network availability, RPC quotas, condition support and actual absence/error behavior must be tested; a promised Q3 relaunch is not confirmation that it has happened. No four-digit PIN counter or authoritative access log is provided by this design automatically.
 
 ### 2. Independent expiring share holders — decentralized custody with deletion
 
@@ -142,6 +159,10 @@ Swarm ACT is relevant to access to versions, not retroactive expiry: its documen
 - **Revocation receipts:** usually unnecessary when deleting the grant itself drives release refusal. Add a receipt only if a private audit/history requirement justifies it.
 - **Attempt counters:** state can in principle live outside Redis, but a generic entity does not provide atomic conditional, private, low-latency authorization logic. A rate-limited short PIN should not dictate the entire product architecture. A high-entropy separate passphrase or recipient key is a different trade.
 
+## Practical recommendation today
+
+Implementing the single-upload/many-grant separation does not depend on choosing a release provider immediately. Keep the release mechanism replaceable. The confirmed requirement needs enforced asynchronous unlock expiry. Keep the existing holder provisionally, or evaluate a stateless encrypted-capsule service while explicitly retaining central trust; neither is the final decentralized solution. If independence from HealthSend is non-negotiable, verify an operating third-party service with acceptable trust assumptions or recruit independent holders before committing to it. Current Lit Chipotle uses a TEE-derived-key model, not the older BLS threshold design; it is another distinct trust trade, not evidence that a ready threshold replacement has been found. [Lit model comparison](https://developer.litprotocol.com/lit-actions/migration/encryption)
+
 ## What I would validate next
 
 1. Confirm whether sharing granularity is whole bundle, file, marker, or date segment. This decides the first-upload format and cannot be repaired through UI filtering later.
@@ -152,3 +173,32 @@ Swarm ACT is relevant to access to versions, not retroactive expiry: its documen
 6. Test new-device owner recovery: the original upload and owner key directory must be discoverable without depending on an expired share entity.
 
 The current [Arkiv ETHRome brief](https://hub.arkiv.network/ethrome) requires app behavior to change because data expires naturally. It does not require secure erasure or a key custodian. Therefore the bounty itself is not a reason to choose the most complex access guarantee. The live page also differs from the vendored manual in scoring and bounty denomination; use the live brief for those details.
+
+## Remote MCP connected to Claude
+
+Discussed as a possible integration, not approved for implementation. The same single-upload asset and expiring-grant model can serve Claude through a remote MCP, but this changes the location of decryption and the trust boundary.
+
+Claude's remote connectors call the MCP server from Anthropic's cloud infrastructure, not from the user's browser or local device. They cannot directly access keys in an existing HealthSend browser tab. Local MCP servers are a separate connection mechanism. [Claude remote connector documentation](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)
+
+### Proposed remote read flow
+
+1. The user explicitly authorizes the connector for a particular grant and scope through an authorization flow. Connector credentials identify that authorization; they are not content-decryption keys. Exact credential issuance and key provisioning remain to be designed. [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+2. Expose narrow tools such as `read_shared_records`. On every data-bearing tool or resource request, validate connector authorization, current Arkiv grant liveness, and permitted selection. A still-valid OAuth token or an existing MCP session must not bypass grant expiry.
+3. The remote service obtains the required decryption material through the selected release mechanism, fetches the existing Swarm ciphertext, decrypts in temporary server memory, and returns only authorized records. No second upload of the underlying asset is needed.
+4. Do not return decryption keys or secret-bearing share links in model-visible tool results. Do not ask the user to paste those secrets into the Claude conversation. Any required secret provisioning belongs in the explicit authorization flow, outside model-visible arguments and results.
+5. Do not intentionally persist data keys, released key shares or decrypted records in service logs, durable caches or databases. Request-scoped memory is a design constraint, not proof of forensic erasure. Any cache or session optimization must still check the grant on every new release of data.
+6. After expiry or revocation, refuse new reads even while the connector remains connected. An unreachable or uncertain Arkiv RPC must produce a retryable unavailable result without releasing data. Check again before returning results from long-running work when needed to enforce the intended response boundary; data already transmitted cannot be recalled.
+
+### Accepted browser behavior does not automatically authorize server decryption
+
+The earlier browser-memory preference applies to the web recipient flow. Remote MCP decryption would move keys and selected plaintext into the remote service's memory. It therefore requires an explicit product/trust decision; this research does not treat that change as already approved. A conventional remote connector cannot both decrypt autonomously and depend exclusively on secrets available only in a closed browser tab. An enclave or separately controlled decryption service changes the trust assumptions rather than removing them.
+
+If keys must stay on the user's device, a local MCP or a deliberately designed browser-assisted bridge is an alternative. The bridge depends on that device being available. Records sent to Claude still leave the device, regardless of where decryption occurs.
+
+### What expiry means for Claude
+
+The promise is: **Claude can fetch these authorized records until the grant expires.** The system can deny new tool reads; it cannot remove records, quotations, summaries or conclusions already returned to Claude from its conversation or downstream copies. The exact retention of that content depends on the Claude product and its settings; this plan makes no erasure or retention-period claim.
+
+This limitation exists even if neither the MCP nor Claude ever receives a reusable content key: returning plaintext is already delivery of information. Avoid bulk export tools unless explicitly intended, since a live connector could otherwise retrieve the entire authorized scope before expiry.
+
+Acceptance checks for this integration: a live grant returns only selected records; the same connector token and MCP session cannot read after expiry; cached data cannot bypass expiry; RPC errors release nothing; tool inputs/results expose no content keys; and the demonstration distinguishes blocked new retrieval from information already present in the conversation.

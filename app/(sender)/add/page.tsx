@@ -27,7 +27,6 @@ import {
   Pill,
   UserCircle,
 } from "@phosphor-icons/react"
-import { SenderChrome } from "@/components/chrome"
 import { Action, Card, Field, InsetNote, ScreenHeader, inputClass } from "@/components/ui"
 
 type ArchiveKind = "blood-panel" | "wearable-series"
@@ -229,41 +228,39 @@ function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
 export default function WhatAreYouAdding() {
   const [selected, setSelected] = useState<Kind | null>(null)
 
+  if (selected) {
+    return <FilePicker kind={selected} onBack={() => setSelected(null)} />
+  }
+
   return (
-    <SenderChrome active="archive">
-      {selected ? (
-        <FilePicker kind={selected} onBack={() => setSelected(null)} />
-      ) : (
-        <div className="flex w-full flex-col gap-3.5 md:gap-6">
-          <div className="md:hidden">
-            <ScreenHeader
-              title="What are you adding?"
-              lede="The kind decides how we read it and where it lands."
-            />
-          </div>
-          <div className="hidden md:block">
-            <ScreenHeader
-              title="What are you adding?"
-              lede="Pick the kind of thing first. It decides how we read it, which group it lands in, and whether you need to check anything afterwards."
-            />
-          </div>
+    <div className="flex w-full flex-col gap-3.5 md:gap-6">
+      <div className="md:hidden">
+        <ScreenHeader
+          title="What are you adding?"
+          lede="The kind decides how we read it and where it lands."
+        />
+      </div>
+      <div className="hidden md:block">
+        <ScreenHeader
+          title="What are you adding?"
+          lede="Pick the kind of thing first. It decides how we read it, which group it lands in, and whether you need to check anything afterwards."
+        />
+      </div>
 
-          <div className="flex flex-col gap-[9px] md:hidden">
-            {KINDS.map((kind) => (
-              <MobileKindRow key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
-            ))}
-          </div>
-          <div className="hidden md:grid md:grid-cols-2 md:gap-5 xl:grid-cols-3">
-            {KINDS.map((kind) => (
-              <DesktopKindCard key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
-            ))}
-          </div>
+      <div className="flex flex-col gap-[9px] md:hidden">
+        {KINDS.map((kind) => (
+          <MobileKindRow key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
+        ))}
+      </div>
+      <div className="hidden md:grid md:grid-cols-2 md:gap-5 xl:grid-cols-3">
+        {KINDS.map((kind) => (
+          <DesktopKindCard key={kind.id} kind={kind} onSelect={() => setSelected(kind)} />
+        ))}
+      </div>
 
-          <div className="hidden md:block">
-            <InsetNote>{NOTE}</InsetNote>
-          </div>
-        </div>
-      )}
-    </SenderChrome>
+      <div className="hidden md:block">
+        <InsetNote>{NOTE}</InsetNote>
+      </div>
+    </div>
   )
 }
