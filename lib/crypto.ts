@@ -11,13 +11,18 @@
  *      grant entity, which carries an expiry.
  *
  * Reading therefore needs BOTH halves: S (from the link) and the wrapped CEK
- * (from Arkiv). When the grant expires, Arkiv stops serving it, the wrapped CEK
- * is gone from the query surface, and the ciphertext sitting on Swarm is noise
- * even to someone who kept the link. Expiry is key destruction, not a policy
- * check we are trusted to run.
+ * (from Arkiv). Neither half is useful alone, and that much is true.
  *
- * Arkiv entities are public, which is exactly why the wrapped CEK is safe to put
- * there: without S it is undistinguishable from random.
+ * What is NOT true — and was asserted here until we tested it — is that expiry
+ * destroys the key. Arkiv entities are created by transactions and the payload
+ * rides in the calldata, so pruning removes the entity from the live query
+ * surface and nothing else. The wrapped CEK stays public and permanent, and
+ * whoever holds S can decrypt for as long as the Swarm blob survives.
+ *
+ * So the honest statement of this scheme: it makes the ciphertext useless to
+ * anyone without the fragment, and it ends availability for every ordinary
+ * reader at T. It is not erasure. See README, "What expiry does and does not
+ * do", and scripts/payload-survives.mjs, which demonstrates the recovery.
  */
 
 const KEY_BYTES = 32

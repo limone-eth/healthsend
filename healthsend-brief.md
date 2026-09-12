@@ -6,6 +6,39 @@ Share your health data with a person or an AI assistant, scoped to exactly what 
 
 Target: ETHRome 2026 (Sept 11–13, Urbe Hub) — Swarm bounty ("Build an app where users own their data") + Arkiv bounty (Mission 02 "Built to expire" + Best Use of Arkiv automatically; Missions 01/03 dropped unless a clear product value-add appears).
 
+
+---
+
+> ⚠️ **Corrections, added 12 September 2026 — this document is kept as written.**
+>
+> The brief predates the build and is left unedited as the historical design
+> record. Building it proved several of its claims wrong, and the corrections
+> live in the README under
+> **[What expiry does and does not do](./README.md#what-expiry-does-and-does-not-do)**.
+> The specific lines not to rely on:
+>
+> - **§7, "Expiry = key destruction"** and **§9's table row** calling grant
+>   deletion *"Hard, instant — the core guarantee"*. Arkiv entities are created
+>   by transactions and the payload rides in the calldata, so expiry prunes the
+>   entity from the live query surface and erases nothing. Demonstrated by
+>   `scripts/payload-survives.mjs` against one of our own expired grants.
+> - **§9's verbatim claim** that expiry is enforced against anyone who did not
+>   capture *both* halves during the window. Neither simultaneous capture nor
+>   capture during the window is necessary: the wrapped key is public while the
+>   grant lives and permanent in calldata afterwards, so only the fragment is
+>   scarce.
+> - **§9, "Batch TTL is a readable, deterministic value."** It is an estimate
+>   derived from current storage prices and moves with the price oracle.
+> - **§7's ACT direction.** bee-js documents grantee revocation as *not
+>   retroactive*; Swarm keeps historical ACT versions so a former grantee can
+>   still fetch what they were authorised for. It is not a route to expiry.
+>
+> §7's threshold-decryption note is the part that held up: a live share-holder
+> is the only construction here that expires anything. What it expires is
+> narrower than the brief assumed — see the README.
+
+---
+
 ---
 
 ## 1. The problem

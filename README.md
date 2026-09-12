@@ -1,6 +1,6 @@
 # HealthSend
 
-**Share health data with someone for exactly as long as you mean to. Then the key is gone.**
+**Share health data with someone for exactly as long as you mean to.**
 
 A first scaffold, focused on the two integrations that carry the idea: **Swarm**
 for storage and identity, **Arkiv** for grants that expire on their own.
@@ -133,13 +133,31 @@ layer… encrypt your own data before it goes in."* We did encrypt the document
 before it went in. The mistake was putting the **wrapped key** in as well, and
 assuming pruning was erasure.
 
-**What would fix it,** and what we would build next: keep the wrapped key out of
-Arkiv entirely. Put it behind something that can stop answering — a threshold
-share held by a live share-holder, or an ACT-gated blob on Swarm whose grantee
-list is revoked — and let Arkiv hold only a commitment plus the typed attributes,
-which is the role its own docs describe. That trades against the no-server
+**What would fix it** — and, just as usefully, what would not.
+
+*Not* Swarm ACT. We reached for it first and it is ruled out explicitly: bee-js
+states that *"updating the grantees list to remove a public key will not revoke
+access to the content retroactively"*, and Swarm's access-control design keeps
+historical versions precisely so a grantee can still fetch what they were once
+authorised for. A former grantee need not even have downloaded during the window.
+ACT would add another permanent envelope, not an expiring one.
+
+*Not* letting the postage batch lapse either. That removes the incentive to keep
+serving chunks; it is not an obligation on anyone to erase bytes, and an
+archivist needs no key to keep a copy of ciphertext.
+
+What is left is a live holder: keep the key material out of public storage
+entirely and behind a party that can refuse — a threshold share, ideally split
+across an independent quorum — with Arkiv holding only a commitment and the typed
+attributes, the role its own docs describe. That trades against the no-server
 premise, which is exactly the unresolved tension
 [§7 of the brief](./healthsend-brief.md) flags.
+
+And it is worth being precise about what even that buys. It does **not** expire
+access already obtained: a recipient who opened the document keeps whatever their
+browser received, and no design changes that. What it does buy is that a fragment
+leaking *after* expiry — an old bookmark, a forwarded message, a stale backup —
+becomes useless. That is a real gain, and it is narrower than "the key is gone".
 
 ### What we never claimed
 

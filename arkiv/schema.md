@@ -131,11 +131,17 @@ layer"* — and our error was subtler than ignoring it: we encrypted the documen
 before it went in, then put the wrapped key in beside it and assumed pruning was
 destruction.
 
-**The fix, if we take this further:** keep the wrapped key out of Arkiv. Hold it
-behind something that can stop answering — a threshold share, or an ACT-gated
-blob on Swarm with a revoked grantee list — and let the entity carry only a
-commitment plus the typed attributes. That is the role the Arkiv docs describe,
-and it is what the index is genuinely good at.
+**The fix, if we take this further:** keep the wrapped key out of Arkiv and
+behind a party that can refuse — a threshold share, ideally across an independent
+quorum — leaving the entity to carry only a commitment plus the typed attributes.
+That is the role the Arkiv docs describe, and it is what the index is genuinely
+good at.
+
+Two things we considered and ruled out, because both look like fixes and are not:
+Swarm ACT revocation is documented as *not retroactive*, and keeps historical
+versions so a former grantee can still fetch what they were authorised for;
+letting the postage batch lapse removes the incentive to serve chunks rather than
+imposing any obligation to erase them.
 
 ## Trade-offs we accepted
 
