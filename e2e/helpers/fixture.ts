@@ -12,6 +12,7 @@ import {
   generateLinkSecret,
   seal,
   splitContentKey,
+  deriveCodeProof,
   toBase64Url,
   packEntityKey,
 } from "@/lib/crypto"
@@ -39,12 +40,20 @@ export type ShareFixture = {
   currentBlock: number
   expiresBlock: number
   files: ShareFile[]
+  /** H-7: the proof the holder would have been given at share time — absent unless `code` was passed. */
+  codeHash?: string
 }
 
 const CSV = "marker,value,unit\nTSH,4.82,mIU/L\nFree T4,0.91,ng/dL\n"
 const NOTES = "CONSULT NOTE\nRepeat TSH in eight weeks.\n"
 
-export async function buildShareFixture(): Promise<ShareFixture> {
+/**
+ * `code`, when given, is folded into the held share exactly as `createSend`
+ * would (H-7) — the blob and its reference are unaffected, since the code
+ * only changes how the content key is split, never how the envelope itself
+ * is sealed.
+ */
+export async function buildShareFixture(code?: string): Promise<ShareFixture> {
   const encoder = new TextEncoder()
   const files: ShareFile[] = [
     { name: "thyroid-panel.csv", text: CSV },
@@ -63,7 +72,7 @@ export async function buildShareFixture(): Promise<ShareFixture> {
   blob.set(sealed.ciphertext, sealed.iv.length)
 
   const linkSecret = generateLinkSecret()
-  const { heldShare, authKey, commitment } = await splitContentKey(contentKey, linkSecret)
+  const { heldShare, authKey, commitment } = await splitContentKey(contentKey, linkSecret, code)
 
   const entityKeyHex = "0x" + "7a".repeat(32)
   const currentBlock = 1_000_000
@@ -80,5 +89,6 @@ export async function buildShareFixture(): Promise<ShareFixture> {
     currentBlock,
     expiresBlock: currentBlock + 500, // ~1000s out at the nominal 2s block time
     files,
+    codeHash: code ? await deriveCodeProof(authKey, code) : undefined,
   }
 }

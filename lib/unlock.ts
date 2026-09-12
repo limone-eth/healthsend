@@ -56,6 +56,8 @@ function equal(a: string, b: string): boolean {
   return diff === 0
 }
 
+export type CodeCheckOutcome = "none" | "required" | "ok" | "wrong" | "locked"
+
 export type UnlockDeps = {
   getGrant: (entityKey: string) => Promise<Grant | null>
   /** Preliminary read used only to check the stored commitment. */
@@ -64,11 +66,29 @@ export type UnlockDeps = {
   serveShare: (entityKey: string, at: number, expiresAt: number) => Promise<StoredShare | null>
   /** Consulted only once the share is already missing, to tell a revoke apart from a lapsed grant. */
   isRevoked?: (entityKey: string) => Promise<boolean>
+  /**
+   * H-7: rate-limited verifier for a share's code, if it has one. Omitted
+   * entirely by a caller that predates codes — every result below then
+   * behaves exactly as if no share here ever carried one.
+   */
+  checkCode?: (entityKey: string, proof: string, at: number, expiresAt: number) => Promise<CodeCheckOutcome>
 }
 
 export type UnlockResult =
   | { ok: true; share: string; expiresAt: number }
-  | { ok: false; status: number; error: string; retryable?: boolean; revoked?: boolean }
+  | {
+      ok: false
+      status: number
+      error: string
+      retryable?: boolean
+      revoked?: boolean
+      /** A code guards this share and none was presented — ask for it, do not count an attempt. */
+      codeRequired?: boolean
+      /** A code was presented and did not match — its own status, never a decryption error. */
+      wrongCode?: boolean
+      /** Wrong too many times — refused for the rest of this grant's life, not just this attempt. */
+      locked?: boolean
+    }
 
 /** A missing share, either because the grant lapsed or because it was revoked. */
 async function noShare(entityKey: string, deps: UnlockDeps): Promise<UnlockResult> {
@@ -87,6 +107,8 @@ export async function resolveUnlock(
   entityKey: string,
   authKey: string,
   deps: UnlockDeps,
+  /** H-7: proof of a code, or "" to ask only whether one is required. Appended last so every existing 3-argument caller is unaffected. */
+  codeProof: string = "",
 ): Promise<UnlockResult> {
   // 1. Ask Arkiv. A missing grant is expiry, and it is the end of the matter.
   //
@@ -126,6 +148,41 @@ export async function resolveUnlock(
   }
   if (!equal(presented, grant.authCommitment) || !equal(stored.commitment, grant.authCommitment)) {
     return { ok: false, status: 403, error: "Not authorised for this grant" }
+  }
+
+  // 3.5. H-7: a share may also carry a code, checked only once the caller has
+  // already proven it holds the link. This is the rate-limited verifier —
+  // "held only by the holder, gone at expiry" — and it runs before the share
+  // is ever read for real, so a wrong or missing code never reaches step 4.
+  if (deps.checkCode) {
+    const now = Math.floor(Date.now() / 1000)
+    let outcome: CodeCheckOutcome
+    try {
+      outcome = await deps.checkCode(entityKey, codeProof, now, grant.expiresAt)
+    } catch (error) {
+      return {
+        ok: false,
+        status: 503,
+        error: `Could not reach the key-share holder: ${(error as Error).message}`,
+        retryable: true,
+      }
+    }
+    if (outcome === "required") {
+      return { ok: false, status: 401, error: "A code is required to open this", codeRequired: true }
+    }
+    if (outcome === "wrong") {
+      return { ok: false, status: 401, error: "That code is not right", wrongCode: true }
+    }
+    if (outcome === "locked") {
+      return {
+        ok: false,
+        status: 401,
+        error: "Too many attempts — ask the sender for a new link",
+        wrongCode: true,
+        locked: true,
+      }
+    }
+    // "none" or "ok" — fall through to the serve below.
   }
 
   // 4. Serve at one atomic holder boundary. The Lua operation checks the

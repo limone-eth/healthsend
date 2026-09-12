@@ -150,10 +150,15 @@ export async function mockArkiv(
 export async function mockHolderUnlock(
   context: BrowserContext,
   entityKeyHex: string,
-  respond: (body: { entityKey: string; authKey: string }) => { status: number; body: unknown },
+  respond: (body: {
+    entityKey: string
+    authKey: string
+    /** H-7: present only once the reader has submitted a code. */
+    codeProof?: string
+  }) => { status: number; body: unknown },
 ) {
   await context.route("**/api/holder/unlock", async (route) => {
-    const body = route.request().postDataJSON() as { entityKey: string; authKey: string }
+    const body = route.request().postDataJSON() as { entityKey: string; authKey: string; codeProof?: string }
     expect(
       body.entityKey?.toLowerCase(),
       "the recipient must ask the holder for the entity key the grant actually names",

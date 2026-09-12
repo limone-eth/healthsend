@@ -14,13 +14,13 @@
  * serving.
  */
 
-import { use, useEffect, useRef, useState } from "react"
+import { use, useEffect, useRef, useState, type KeyboardEvent } from "react"
 import Link from "next/link"
 import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
 import { BookOpen, CloudSlash, LockSimple, PaperPlaneTilt } from "@phosphor-icons/react"
-import { openSend, type OpenedSend } from "@/lib/sends"
+import { openSend, type OpenedSend, type OpenFailure } from "@/lib/sends"
 import { classify, type PackedFile } from "@/lib/envelope"
-import { Card, Countdown, ListRow } from "@/components/ui"
+import { Action, Card, Countdown, ListRow } from "@/components/ui"
 import { RecipientTopBar } from "@/components/chrome"
 
 type State =
@@ -29,8 +29,24 @@ type State =
   | { status: "expired" }
   | { status: "revoked" }
   | { status: "no-key" }
+  /** H-7: this share carries a code. `error`/`locked` ride along rather than resetting to "loading" between tries. */
+  | { status: "needs-code"; expiresAt: number; error?: string; locked?: boolean }
   | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
+
+/** Fold an `openSend` result into this page's `State` — the one place that mapping happens. */
+function toState(result: { status: "ok"; send: OpenedSend } | OpenFailure): State {
+  if (result.status === "ok") return { status: "ok", send: result.send }
+  if (result.status === "wrong-code") {
+    return {
+      status: "needs-code",
+      expiresAt: result.expiresAt,
+      error: result.locked ? "Too many attempts. Ask the sender for a new link." : "That code isn't right.",
+      locked: result.locked,
+    }
+  }
+  return result
+}
 
 export default function SharePage({ params }: { params: Promise<{ key: string }> }) {
   const { key } = use(params)
@@ -42,12 +58,22 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
     let cancelled = false
     openSend(key, linkSecret).then((result) => {
       if (cancelled) return
-      setState(result.status === "ok" ? { status: "ok", send: result.send } : result)
+      setState(toState(result))
     })
     return () => {
       cancelled = true
     }
   }, [key])
+
+  // The code never leaves this closure except as a derived proof — see
+  // `lib/crypto.ts`, `deriveCodeProof` — and it is asked for again on every
+  // submit rather than held in state, so a wrong guess leaves nothing behind
+  // to inspect.
+  const submitCode = async (code: string) => {
+    const linkSecret = window.location.hash.replace(/^#/, "")
+    const result = await openSend(key, linkSecret, code)
+    setState(toState(result))
+  }
 
   // "ok" draws its own chrome (RecipientTopBar, no rail, no tabs) per H-5.
   // "unavailable", "expired" and "revoked" are H-6's: full-bleed splash
@@ -55,6 +81,16 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
   // that wrapper is what is left for the states this story does not touch.
   if (state.status === "ok") {
     return <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
+  }
+  if (state.status === "needs-code") {
+    return (
+      <FirstOpenCode
+        expiresAt={state.expiresAt}
+        error={state.error}
+        locked={state.locked}
+        onSubmit={submitCode}
+      />
+    )
   }
   if (state.status === "unavailable") {
     return <Unavailable message={state.message} />
@@ -69,6 +105,134 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
       {state.status === "no-key" && <NoKey />}
       {state.status === "error" && <Failed message={state.message} />}
     </main>
+  )
+}
+
+/**
+ * 3.1 "First open" — pen ids `wIxCY` (desktop) / `e1Zud2` (mobile), read via
+ * the pencil MCP tool. Both frames also draw a "This will be tied to this
+ * device" claim panel below the code — device binding, H-7's own non-goal
+ * ("Different story, and its chip vocabulary already shipped"), so that panel
+ * is left out here rather than faked, the same call `new/page.tsx` makes for
+ * "Lock it to their phone".
+ *
+ * Both frames' helper line reads "She sent this on its own, away from the
+ * link — check your messages." — a gendered sender, same as the nodes H-47
+ * corrected elsewhere in this canvas to "they/their" (this node predates that
+ * pass; it was never touched because nothing rendered it before this story).
+ * Copied here as "They", matching the app's one standing convention rather
+ * than reintroducing a pronoun this codebase has already removed everywhere
+ * else it appears — see `## Choices`.
+ *
+ * The top bar and its countdown reuse `RecipientTopBar`/`Countdown` exactly
+ * as `Viewer` below does: the frame draws the same countdown pill before any
+ * data renders, and this is the one component that already builds it.
+ */
+function FirstOpenCode({
+  expiresAt,
+  error,
+  locked,
+  onSubmit,
+}: {
+  expiresAt: number
+  error?: string
+  locked?: boolean
+  onSubmit: (code: string) => void
+}) {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const [digits, setDigits] = useState<string[]>(["", "", "", ""])
+  const inputs = useRef<(HTMLInputElement | null)[]>([])
+
+  const setDigit = (index: number, raw: string) => {
+    const value = raw.replace(/\D/g, "").slice(-1)
+    setDigits((prev) => {
+      const next = [...prev]
+      next[index] = value
+      return next
+    })
+    if (value && index < digits.length - 1) inputs.current[index + 1]?.focus()
+  }
+
+  const onKeyDown = (index: number, event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && !digits[index] && index > 0) {
+      inputs.current[index - 1]?.focus()
+    }
+  }
+
+  const code = digits.join("")
+  const complete = code.length === digits.length
+  const submit = () => {
+    if (complete && !locked) onSubmit(code)
+  }
+
+  return (
+    <div className="flex min-h-screen w-full flex-col bg-canvas">
+      <RecipientTopBar>
+        <div className="hidden md:block md:w-full md:max-w-[300px]">
+          <Countdown expiresAt={expiresAt} now={now} />
+        </div>
+      </RecipientTopBar>
+
+      <main className="mx-auto flex w-full max-w-[1080px] flex-1 items-center justify-center px-5 py-10 md:px-8">
+        <div className="flex w-full max-w-[520px] flex-col gap-5">
+          <div className="md:hidden">
+            <Countdown expiresAt={expiresAt} now={now} />
+          </div>
+
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-inset bg-haze md:h-13 md:w-13">
+            <PaperPlaneTilt size={24} weight="light" className="text-navy md:hidden" />
+            <PaperPlaneTilt size={26} weight="light" className="hidden text-navy md:block" />
+          </div>
+
+          <h1 className="text-[26px] font-bold leading-[1.2] tracking-[-0.6px] text-ink md:text-[36px] md:leading-[1.12] md:tracking-[-0.85px]">
+            Health data, shared with you
+          </h1>
+          <p className="text-[15px] leading-[1.5] text-secondary md:text-[17px]">
+            Enter the code you were sent to open it.
+          </p>
+
+          <div className="flex flex-col gap-2.5">
+            <span className="text-[15px] font-semibold leading-[1.33] text-ink">
+              The four-digit code you were sent separately
+            </span>
+            <div className="flex w-full gap-2.5">
+              {digits.map((digit, index) => (
+                <input
+                  key={index}
+                  ref={(el) => {
+                    inputs.current[index] = el
+                  }}
+                  value={digit}
+                  onChange={(event) => setDigit(index, event.target.value)}
+                  onKeyDown={(event) => onKeyDown(index, event)}
+                  disabled={locked}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={1}
+                  aria-label={`Code digit ${index + 1} of ${digits.length}`}
+                  className={`h-16 w-full rounded-control border-[1.5px] bg-surface text-center text-[22px] font-semibold text-ink shadow-control outline-none disabled:opacity-50 md:h-[64px] ${
+                    digit ? "border-ink" : "border-hairline"
+                  }`}
+                />
+              ))}
+            </div>
+            <p className="text-[13px] leading-[1.38] text-secondary">
+              They sent this on its own, away from the link — check your messages.
+            </p>
+            {error && <p className="text-[13px] leading-[1.38] text-error">{error}</p>}
+          </div>
+
+          <Action fullWidth disabled={!complete || locked} onClick={submit}>
+            Open it
+          </Action>
+        </div>
+      </main>
+    </div>
   )
 }
 

@@ -243,6 +243,132 @@ test.describe("the five ways a share link resolves, offline", () => {
   })
 })
 
+test.describe("a coded share, offline (H-7)", () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await blockUnstubbedNetwork(context, baseURL!)
+  })
+
+  /**
+   * A single stub playing the holder's real protocol: refuse a bare probe
+   * with "a code is required", refuse anything but the right proof with
+   * "wrong code", and only then serve the share. This is what makes the test
+   * below exercise the actual two-step flow rather than assuming it.
+   */
+  async function mockCodedHolder(context: BrowserContext, entityKeyHex: string, codeHash: string, heldShare: string) {
+    await mockHolderUnlock(context, entityKeyHex, (body) => {
+      if (!body.codeProof) return { status: 401, body: { error: "A code is required to open this", codeRequired: true } }
+      if (body.codeProof !== codeHash) {
+        return { status: 401, body: { error: "That code is not right", wrongCode: true } }
+      }
+      return { status: 200, body: { share: heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 } }
+    })
+  }
+
+  test("the code screen renders before anything else, and holds at 400 and 1440 with no overflow", async ({
+    page,
+    context,
+  }) => {
+    const share = await buildShareFixture("4821")
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockCodedHolder(context, share.entityKeyHex, share.codeHash!, share.heldShare)
+
+    for (const width of [400, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+      await expect(page.getByText("The four-digit code you were sent separately")).toBeVisible()
+      // 3.1's own claim: nothing about the document renders behind this gate.
+      await expect(page.getByText("TSH")).toHaveCount(0)
+
+      const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }))
+      expect(scrollWidth, `must not overflow horizontally at ${width}px`).toBeLessThanOrEqual(clientWidth)
+    }
+  })
+
+  test("a wrong code fails closed with its own status, then the right code opens it", async ({
+    page,
+    context,
+  }) => {
+    const share = await buildShareFixture("4821")
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockCodedHolder(context, share.entityKeyHex, share.codeHash!, share.heldShare)
+    await mockSwarmGateway(context, share.reference, share.blob)
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+    await expect(page.getByText("The four-digit code you were sent separately")).toBeVisible()
+
+    const enterCode = async (digits: string) => {
+      const boxes = page.getByRole("textbox", { name: /code digit/i })
+      for (let i = 0; i < digits.length; i++) {
+        await boxes.nth(i).fill(digits[i])
+      }
+    }
+
+    // Wrong code: its own status, never the generic "could not open", never
+    // "expired", never "unavailable" — and no document ever rendered.
+    await enterCode("0000")
+    await page.getByRole("button", { name: "Open it" }).click()
+    await expect(page.getByText("That code isn't right.")).toBeVisible()
+    await expect(page.getByText("This link has expired")).toHaveCount(0)
+    await expect(page.getByText("Temporarily unavailable")).toHaveCount(0)
+    await expect(page.getByText("Could not open this send")).toHaveCount(0)
+    await expect(page.getByText("TSH")).toHaveCount(0)
+
+    // The right code opens it — proving the crypto path (linkShare mixed with
+    // the code) actually reconstructs the same content key `createSend` split.
+    await enterCode("4821")
+    await page.getByRole("button", { name: "Open it" }).click()
+    await expect(page.getByText("TSH")).toBeVisible()
+  })
+
+  test("locked out reads as its own status too, distinct from a single wrong guess", async ({
+    page,
+    context,
+  }) => {
+    const share = await buildShareFixture("4821")
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, share.entityKeyHex, (body) => {
+      if (!body.codeProof) return { status: 401, body: { error: "required", codeRequired: true } }
+      return {
+        status: 401,
+        body: { error: "Too many attempts — ask the sender for a new link", wrongCode: true, locked: true },
+      }
+    })
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+    const boxes = page.getByRole("textbox", { name: /code digit/i })
+    for (let i = 0; i < 4; i++) await boxes.nth(i).fill("0")
+    await page.getByRole("button", { name: "Open it" }).click()
+
+    await expect(page.getByText("Too many attempts. Ask the sender for a new link.")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Open it" })).toBeDisabled()
+  })
+})
+
 test.describe("infrastructure failures are never dressed up as expiry", () => {
   test.beforeEach(async ({ context, baseURL }) => {
     await blockUnstubbedNetwork(context, baseURL!)
