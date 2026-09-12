@@ -97,8 +97,12 @@ export default function Home() {
       )}
 
       <footer className="mt-16 border-t border-line pt-6 text-xs text-muted">
+        {/* This described the v1 architecture, where the grant carried the wrapped
+            key. It no longer does — that was the whole point of the rewrite, and
+            a grant now carries a reference and a commitment and nothing else. */}
         Documents are encrypted in this browser and stored on Swarm. The key that opens them is
-        split between the link and an Arkiv grant that expires on its own.
+        split in two: half is in the link, half is held for the length of the window and then
+        deleted. An Arkiv grant decides when that window ends, and nothing has to run for it to.
       </footer>
     </main>
   )
