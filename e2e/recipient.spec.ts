@@ -109,6 +109,83 @@ test.describe("the five ways a share link resolves, offline", () => {
     await assertNoStoredIdentity(context)
   })
 
+  test("the growth hook invites an archive without claiming an account, at 400 and 1440 (R3-009)", async ({
+    page,
+    context,
+  }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+      status: 200,
+      body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
+    }))
+    await mockSwarmGateway(context, share.reference, share.blob)
+
+    for (const width of [400, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+      await expect(page.getByText("Do you send health data too?")).toBeVisible()
+
+      // A recipient opens a link with no account and no sign-in at all — the
+      // growth hook must never imply one already exists to reuse.
+      await expect(page.getByText(/account|sign-in/i)).toHaveCount(0)
+      // DESIGN.md's growth-hook copy must say that nothing just read follows
+      // the recipient into their own archive, at every width. `:visible`
+      // picks out whichever of the mobile/desktop paragraphs CSS is
+      // currently showing — both exist in the DOM at every width.
+      await expect(
+        page.locator("p:visible", { hasText: /nothing you have read here comes with you/i }),
+      ).toBeVisible()
+    }
+  })
+
+  test("the top-bar countdown pill sits inside the 64px bar at 400px, not below it (R3-012)", async ({
+    page,
+    context,
+  }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, share.entityKeyHex, () => ({
+      status: 200,
+      body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
+    }))
+    await mockSwarmGateway(context, share.reference, share.blob)
+
+    await page.setViewportSize({ width: 400, height: 900 })
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+    await expect(page.getByText("TSH")).toBeVisible()
+
+    // `RecipientTopBar`'s `<header>` is the first in the tree; `Viewer`'s
+    // content section below also uses a semantic `<header>`.
+    const bar = page.locator("header").first()
+    const chip = page.getByTestId("countdown-chip")
+    await expect(chip).toBeVisible()
+
+    const barBox = await bar.boundingBox()
+    const chipBox = await chip.boundingBox()
+    if (!barBox || !chipBox) throw new Error("could not measure the top bar or the countdown chip")
+
+    expect(chipBox.y, "the countdown must start inside the top bar").toBeGreaterThanOrEqual(barBox.y)
+    expect(
+      chipBox.y + chipBox.height,
+      "the countdown must end inside the top bar",
+    ).toBeLessThanOrEqual(barBox.y + barBox.height)
+  })
+
   test("expiry while a document is open closes it, not just at the initial load", async ({
     page,
     context,
