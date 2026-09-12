@@ -15,9 +15,12 @@
  */
 
 import { use, useEffect, useRef, useState } from "react"
+import Link from "next/link"
+import { BookOpen, PaperPlaneTilt } from "@phosphor-icons/react"
 import { openSend, type OpenedSend } from "@/lib/sends"
 import { classify, type PackedFile } from "@/lib/envelope"
-import { Card, timeLeft } from "@/components/ui"
+import { Card, Countdown, ListRow } from "@/components/ui"
+import { RecipientTopBar } from "@/components/chrome"
 
 type State =
   | { status: "loading" }
@@ -45,12 +48,16 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
     }
   }, [key])
 
+  // The "ok" branch draws its own chrome (RecipientTopBar, no rail, no tabs)
+  // per H-5. Every other status is H-6's to restyle, so it keeps the plain
+  // centred wrapper this page always had rather than inheriting the new one.
+  if (state.status === "ok") {
+    return <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
+  }
+
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-16">
       {state.status === "loading" && <p className="text-sm text-muted">Opening…</p>}
-      {state.status === "ok" && (
-        <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
-      )}
       {state.status === "expired" && <Expired />}
       {state.status === "revoked" && <Revoked />}
       {state.status === "unavailable" && <Unavailable message={state.message} />}
@@ -60,8 +67,19 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
   )
 }
 
+/**
+ * 3.2 "What she opens" — pen ids `XhRxB` (desktop) / `X4AJCV` (mobile), read
+ * via the pencil MCP tool. Both frames draw the fully structured-record
+ * future (sleep charts, a biomarker table with lab ranges, an assistant
+ * offer) that H-13/H-36 have not wired up yet — this send ships files, not
+ * archive records. Rendering those cards from hardcoded fixtures would make
+ * the demo contradict the data model, so this view keeps only what the
+ * current model actually has: the attribution, the countdown (now in the
+ * top bar, per H-2's primitive), a file switcher for a bundle, the file
+ * itself, and the growth hook. See `docs/stories/H-5.md` `## Choices`.
+ */
 function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }) {
-  const [remaining, setRemaining] = useState(() => timeLeft(send.expiresAt))
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   const [active, setActive] = useState(0)
 
   // The window can close while the page is open. When it does the documents go
@@ -69,11 +87,12 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
   // beside them — the countdown is the access, not a decoration on it.
   useEffect(() => {
     const timer = setInterval(() => {
-      if (send.expiresAt > 0 && send.expiresAt <= Math.floor(Date.now() / 1000)) {
+      const seconds = Math.floor(Date.now() / 1000)
+      if (send.expiresAt > 0 && send.expiresAt <= seconds) {
         onExpired()
         return
       }
-      setRemaining(timeLeft(send.expiresAt))
+      setNow(seconds)
     }, 1000)
     return () => clearInterval(timer)
   }, [send.expiresAt, onExpired])
@@ -82,41 +101,107 @@ function Viewer({ send, onExpired }: { send: OpenedSend; onExpired: () => void }
   const many = send.files.length > 1
 
   return (
-    <>
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">
-          {many ? `${send.files.length} documents` : file.header.name}
-        </h1>
-        <p className="mt-1 text-sm text-muted">Shared with you · {remaining}</p>
-      </header>
+    <div className="flex min-h-screen w-full flex-col bg-canvas">
+      <RecipientTopBar>
+        {/* The 56px Countdown row can run to "Expires Saturday · 1 hour
+            left" — too wide to share the fixed 64px top bar with the
+            wordmark below md, where it would wrap and overflow. It moves
+            into the column below on mobile instead, full-width, and stays
+            in the top bar's slot at md and up, per RecipientTopBar's own
+            design (chrome.tsx: "scope chips, the countdown — is a slot"). */}
+        <div className="hidden md:block md:w-full md:max-w-[300px]">
+          <Countdown expiresAt={send.expiresAt} now={now} />
+        </div>
+      </RecipientTopBar>
 
-      {many && (
-        <nav className="mb-4 flex flex-wrap gap-2">
-          {send.files.map((f, index) => (
-            <button
-              key={`${f.header.name}-${index}`}
-              onClick={() => setActive(index)}
-              className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-                index === active
-                  ? "border-ink bg-ink text-canvas"
-                  : "border-hairline hover:bg-hairline/40"
-              }`}
+      <main className="mx-auto w-full max-w-[1080px] flex-1 px-5 py-6 md:px-8 md:py-8 xl:px-12">
+        <div className="flex w-full flex-col gap-3.5">
+          <div className="md:hidden">
+            <Countdown expiresAt={send.expiresAt} now={now} />
+          </div>
+
+          <header className="flex w-full flex-col gap-1">
+            <h1 className="text-[22px] font-bold leading-[1.2] tracking-[-0.45px] text-ink md:text-[19px] md:font-semibold md:leading-normal md:tracking-normal">
+              Shared with you
+            </h1>
+            <p className="text-[13px] text-muted md:text-[14px]">
+              {send.files.length} document{send.files.length === 1 ? "" : "s"} · nothing to download
+            </p>
+          </header>
+
+          {many && (
+            <div className="w-full divide-y divide-hairline overflow-hidden rounded-card bg-surface shadow-card">
+              {send.files.map((f, index) => (
+                <ListRow
+                  key={`${f.header.name}-${index}`}
+                  icon={BookOpen}
+                  label={f.header.name}
+                  value={index === active ? "Viewing" : undefined}
+                  showCaret={false}
+                  onClick={() => setActive(index)}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="w-full overflow-hidden rounded-card bg-surface shadow-card">
+            <div className="flex w-full items-center gap-2.5 border-b border-hairline px-5 py-4">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-glyph bg-haze">
+                <BookOpen size={15} weight="light" className="text-navy" />
+              </div>
+              <span className="flex-1 truncate text-[17px] font-semibold text-ink">
+                {file.header.name}
+              </span>
+              <span className="shrink-0 text-[13px] text-muted">{formatFileMeta(file)}</span>
+            </div>
+            <div className="p-5">
+              <Preview file={file} />
+            </div>
+          </div>
+
+          <div className="flex w-full flex-col items-center gap-3 rounded-card bg-grouped p-4 md:flex-row md:gap-4 md:p-5">
+            <div className="flex w-full items-center gap-3 md:w-auto md:flex-1">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-glyph bg-haze md:h-[34px] md:w-[34px]">
+                <PaperPlaneTilt size={17} weight="light" className="text-navy" />
+              </div>
+              <div className="flex flex-1 flex-col gap-0.5">
+                <p className="text-[14.5px] font-semibold text-ink md:text-[15px]">
+                  Do you send health data too?
+                </p>
+                <p className="text-[12.5px] text-secondary md:hidden">
+                  Same sign-in you used to open this.
+                </p>
+                <p className="hidden text-[13px] text-secondary md:block">
+                  Make your own archive with the same account you used to open this. Nothing you
+                  have read here comes with you.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/landing"
+              className="inline-flex h-10 shrink-0 items-center justify-center rounded-control border border-hairline bg-surface px-3.5 text-[13.5px] font-semibold text-ink md:h-11"
             >
-              {f.header.name}
-            </button>
-          ))}
-        </nav>
-      )}
-
-      <Card>
-        <Preview file={file} />
-      </Card>
-      <p className="mt-6 text-xs text-muted">
-        You were given access, not a copy. When the window closes this page stops working for
-        everyone, including you — nobody has to remember to revoke it.
-      </p>
-    </>
+              <span className="md:hidden">Create yours</span>
+              <span className="hidden md:inline">Create your archive</span>
+            </Link>
+          </div>
+        </div>
+      </main>
+    </div>
   )
+}
+
+/** "PDF · 240 KB" — the coarse kind and size, both read straight off the file. */
+function formatFileMeta(file: PackedFile): string {
+  const kind = classify({ name: file.header.name, type: "" })
+  const label = kind === "pdf" ? "PDF" : kind === "csv" ? "CSV" : "Text"
+  return `${label} · ${formatBytes(file.header.size)}`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /**
