@@ -18,6 +18,19 @@
 
 import type { SwarmIdClient, ConnectionInfo, UploadResult } from "@snaha/swarm-id"
 
+/**
+ * Where the Swarm ID proxy mounts its own connect button.
+ *
+ * We render the button the iframe provides rather than our own calling
+ * `connect()`. The difference matters in partitioned storage — the ordinary mode
+ * in Safari always, and in Chrome and Firefox until third-party storage access
+ * is granted. The proxy's button opens the auth popup *from inside the iframe*,
+ * so `window.opener` is the iframe and the secret handover reaches it. A button
+ * of ours opens that popup from the top level, where the handover has nowhere to
+ * land and no fallback fires (snaha/swarm-id#613).
+ */
+export const CONNECT_CONTAINER_ID = "swarm-id-connect"
+
 export const SWARM_ID_ORIGIN =
   process.env.NEXT_PUBLIC_SWARM_ID_ORIGIN ?? "https://swarm-id.snaha.net"
 
@@ -67,6 +80,12 @@ export function getSwarmClient(): Promise<SwarmIdClient> {
           description: "Share health data that expires on its own.",
         },
         ...(SUBSIDISED_GATEWAY ? { subsidisedGatewayUrl: SUBSIDISED_GATEWAY } : {}),
+        containerId: CONNECT_CONTAINER_ID,
+        buttonConfig: {
+          connectText: "Continue with Swarm ID",
+          disconnectText: "Sign out",
+          loadingText: "Opening…",
+        },
         // A sized popup rather than a full browser tab. Passkey creation cannot
         // happen inside the embedded iframe — WebAuthn in a cross-origin frame
         // needs a `publickey-credentials-create` Permissions Policy that the SDK

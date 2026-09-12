@@ -8,7 +8,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react"
-import { connect, disconnect, onConnectionChange, type ConnectionInfo } from "@/lib/swarm"
+import {
+  CONNECT_CONTAINER_ID,
+  disconnect,
+  onConnectionChange,
+  type ConnectionInfo,
+} from "@/lib/swarm"
 import { getIdentity, forgetIdentity } from "@/lib/identity"
 import { createSend, listMySends, type CreateSendResult } from "@/lib/sends"
 import type { FileKind, Grant } from "@/lib/arkiv"
@@ -115,9 +120,9 @@ function ConnectionPanel({
           Swarm ID is the whole account: a passkey, no wallet and no seed phrase. There is no user
           database here to sign in to.
         </p>
-        <Button onClick={() => run(connect)} disabled={busy}>
-          {busy ? "Opening Swarm ID…" : "Continue with Swarm ID"}
-        </Button>
+        {/* The button is rendered by the Swarm ID iframe itself — see
+            CONNECT_CONTAINER_ID for why that is not a cosmetic choice. */}
+        <div id={CONNECT_CONTAINER_ID} className="min-h-10" />
       </Card>
     )
   }
