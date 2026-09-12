@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { checkoutId, isOwnedByCheckout, resolveServerTarget } from "./lib/e2e-server-select.ts"
 
 /**
  * The recipient is the thing worth testing in a browser, and the thing worth
@@ -29,22 +30,34 @@ import { defineConfig, devices } from "@playwright/test"
  * while reporting green for its own branch. It is not a flake — it passes,
  * confidently, on the wrong tree.
  *
- * So reuse is now opt-in and explicit: it happens only when the operator
- * names a server with `BASE_URL`. With `BASE_URL` unset, Playwright starts
- * its own server on the port in that URL and refuses to run if the port is
- * already taken — a loud failure instead of a quiet lie. Run a worktree on
+ * So reuse is opt-in, explicit, and now checked rather than assumed: naming
+ * a server with `BASE_URL` is not by itself proof that the server belongs to
+ * this checkout. `lib/e2e-server-select.ts` only allows reuse when a marker
+ * left by a previous *confirmed* start on that port (see
+ * `e2e/helpers/global-setup.ts`) names this checkout's own working directory.
+ * Anything else — no marker, a foreign checkout's marker, nothing listening
+ * at all — refuses to reuse, and Playwright then tries to start its own
+ * server on that port, which fails loudly if something else still holds it.
+ * With `BASE_URL` unset, reuse is never even considered. Run a worktree on
  * its own port:
  *
  *     BASE_URL=http://localhost:3100 pnpm e2e
+ *
+ * `resolveServerTarget` also refuses an https `BASE_URL` outright: the local
+ * server this suite starts is a plain `next dev`, which cannot serve TLS, so
+ * pointing at an https origin — including a real deployment — must fail
+ * loudly instead of silently starting an incompatible server.
  */
-const baseURL = process.env.BASE_URL ?? "http://localhost:3000"
-const port = new URL(baseURL).port || "3000"
+const baseURLInput = process.env.BASE_URL ?? "http://localhost:3000"
+const { url: baseURL, port } = resolveServerTarget(baseURLInput)
+const reuseExistingServer = Boolean(process.env.BASE_URL) && isOwnedByCheckout(port, checkoutId())
 
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
   expect: { timeout: 15_000 },
   reporter: [["list"]],
+  globalSetup: "./e2e/helpers/global-setup.ts",
   use: {
     baseURL,
     ...devices["Desktop Chrome"],
@@ -52,8 +65,7 @@ export default defineConfig({
   webServer: {
     command: `pnpm dev --port ${port}`,
     url: baseURL,
-    // Only ever attach to a server the operator pointed us at by hand.
-    reuseExistingServer: Boolean(process.env.BASE_URL),
+    reuseExistingServer,
     timeout: 60_000,
   },
   projects: [

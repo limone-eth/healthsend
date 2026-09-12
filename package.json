@@ -26,8 +26,9 @@
     "verify:mcp": "node --no-warnings --experimental-strip-types scripts/mcp-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "verify:taco-condition": "node --experimental-strip-types scripts/arkiv-taco-condition-proof.mjs",
+    "verify:e2e-server-select": "node --experimental-strip-types scripts/playwright-server-select-proof.mjs",
     "e2e": "playwright test",
-    "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm e2e",
+    "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm verify:e2e-server-select && pnpm e2e",
     "holder:up": "docker compose -f docker-compose.dev.yml up -d",
     "holder:down": "docker compose -f docker-compose.dev.yml down"
   },
