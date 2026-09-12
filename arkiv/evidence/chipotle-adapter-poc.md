@@ -1,4 +1,4 @@
-# H-65 — Lit Chipotle adapter live probe and offline proof
+# H-65/H-67 — Lit Chipotle adapter live probe and offline proof
 
 This records the outcome of `pnpm verify:chipotle-adapter-live`, the opt-in,
 non-destructive live probe backing `lib/key-release/chipotle.ts`, and of
@@ -14,6 +14,60 @@ from a PKP inside a TEE — one enclave, attested by Lit, not a quorum of
 independent operators voting on a threshold. Everything below describes an
 enclave service, never a "decentralised", "trustless", or threshold system.
 
+**H-67 update (2026-09-12):** H-65's HTTP client and Lit Action were
+placeholders, built with no network access, and said so. This story rewrites
+both against Lit's documented API, verified against
+`https://api.chipotle.litprotocol.com/core/v1/openapi.json` and
+`developer.litprotocol.com` (see `docs/stories/H-67.md` for the row-by-row
+table). The sections below describe the **current, real-API** adapter; the
+H-65 placeholder wire format it replaced is no longer in the codebase.
+
+## What changed from H-65's placeholder
+
+- **Base URL** is now the fixed, real `https://api.chipotle.litprotocol.com/core/v1`
+  (`lib/key-release/chipotle.ts`'s `CHIPOTLE_API_BASE`), not an env var — Lit
+  runs one Chipotle service, so there is nothing to override.
+  `NEXT_PUBLIC_CHIPOTLE_ENDPOINT` is removed from `.env.example`.
+- **Action invocation** is `POST /lit_action` with `{"ipfs_id": <cid>, "js_params": {...}}`
+  — never `code`, so only the one registered action can execute. Auth is the
+  `X-Api-Key` header.
+- **Env vars renamed/added.** `NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY` is now
+  `NEXT_PUBLIC_CHIPOTLE_PKP_ID`, matching `GET /list_wallets`' `id` field. A
+  new `NEXT_PUBLIC_CHIPOTLE_GROUP_ID` was added — matching `GET /list_groups`'
+  `id` field — because Lit's group-scoped permission model
+  (`developer.litprotocol.com/architecture/groups`) needs it to check the
+  single-action guarantee against real data (see below). This var was not
+  named in the story's table; see this story's report, "Choices".
+- **The single-action check now reads real group data.**
+  `ensureSingleAuthorizedAction` calls `GET /list_actions?group_id=` and
+  `GET /list_wallets_in_group?group_id=`, and fails closed if: the configured
+  PKP is not a member of the group; the group permits more than one action;
+  or the group permits *all* actions via the documented `0` wildcard in
+  `cid_hashes_permitted` (`developer.litprotocol.com/architecture/groups`,
+  "To permit all actions, include 0"). `list_actions` returns the **keccak256
+  hash** of each permitted CID, not the raw CID
+  (`developer.litprotocol.com/management/api_direct`, "Raw CID vs hashed
+  CID"), so the adapter hashes its own configured `actionCid` the same way
+  (`hashActionCid`, using `viem`'s `keccak256`/`stringToBytes`) to compare.
+- **The Lit Action rewrite.** `chipotle-action.js` now defines
+  `async function main({ pkpId, mode, ... })` that returns a value directly —
+  Lit's current entry point convention
+  (`developer.litprotocol.com/lit-actions/migration/changes`, "Breaking
+  Change: Action Entry Point and Response") — instead of the old
+  `(async () => {...})()` plus `Lit.Actions.setResponse`. Encryption/
+  decryption now call the confirmed primitives `Lit.Actions.Encrypt({ pkpId,
+  message })` and `Lit.Actions.Decrypt({ pkpId, ciphertext })` (both
+  `Promise<string>`), replacing H-65's placeholder
+  `chipotleTeeEncrypt`/`chipotleTeeDecrypt` names. The commitment check and
+  Arkiv liveness check (`grantIsLive`, `buildArkivClause`) are unchanged —
+  those were already verified against `@arkiv-network/sdk`'s own grammar.
+- **A new script, `pnpm chipotle:print-cid`**
+  (`scripts/chipotle-print-action-cid.mjs`), computes the action's real CID
+  via `POST /get_lit_action_ipfs_id` and prints the two operator-run calls
+  (`add_action`, `add_action_to_group`) that register it. It never calls
+  those endpoints itself — they need the account key, which this repo's app
+  and scripts never read.
+
 ## Live probe
 
 **Command:** `RUN_CHIPOTLE_LIVE_PROBE=1 pnpm verify:chipotle-adapter-live`
@@ -21,17 +75,18 @@ enclave service, never a "decentralised", "trustless", or threshold system.
 
 ### What the probe does
 
-1. Checks that `NEXT_PUBLIC_CHIPOTLE_ENDPOINT`, `NEXT_PUBLIC_CHIPOTLE_ACTION_CID`,
-   `NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY`, and `NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY`
-   are all set. Chipotle needs an account, a published action, and a usage
-   key before any network call can mean anything — see "Credentials" below.
-2. Resolves the endpoint's hostname in DNS.
-3. Confirms the endpoint answers HTTP at all (any response, including an
-   error status, counts — only a transport-level failure does not).
-4. Confirms the configured PKP authorizes **exactly one** action, matching
-   the configured action CID. A second, more permissive action on the same
-   PKP would bypass this adapter's gate entirely — see
-   `lib/key-release/chipotle.ts`'s module doc.
+1. Checks that `NEXT_PUBLIC_CHIPOTLE_ACTION_CID`, `NEXT_PUBLIC_CHIPOTLE_PKP_ID`,
+   `NEXT_PUBLIC_CHIPOTLE_GROUP_ID`, and `NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY`
+   are all set. Chipotle needs an account, a group, a published action, and a
+   usage key before any network call can mean anything — see "Credentials"
+   below.
+2. Resolves `api.chipotle.litprotocol.com` in DNS.
+3. Confirms `GET /version` answers HTTP (no auth needed).
+4. Confirms the configured group permits **exactly one** action, matching
+   the configured CID's hash, and that the configured PKP is a member of
+   that group. A second, more permissive action on the same group — or a
+   `0`-wildcard "permit all actions" entry — would bypass this adapter's gate
+   entirely.
 5. Invokes that action in `"release"` mode for a **fabricated** grant
    binding — a random grant id, owner, and expiry that cannot exist in
    Arkiv, wrapped in a correctly-computed commitment so the request passes
@@ -46,75 +101,90 @@ enclave service, never a "decentralised", "trustless", or threshold system.
 ### Observed stages
 
 ```
-Chipotle adapter live probe — 2026-09-12T20:30:23.996Z
+Chipotle adapter live probe — 2026-09-12T20:58:43.408Z
+Base URL: https://api.chipotle.litprotocol.com/core/v1
 Writes nothing to Arkiv. All inputs below are disposable.
 
-BLOCKED at stage "credentials": Chipotle needs an account, a published action, and a usage key.
-Missing: NEXT_PUBLIC_CHIPOTLE_ENDPOINT, NEXT_PUBLIC_CHIPOTLE_ACTION_CID,
-NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY, NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY.
-Create them at developer.litprotocol.com, then set these environment variables.
+BLOCKED at stage "credentials": Chipotle needs an account, a published action, a group, and a usage key.
+Missing: NEXT_PUBLIC_CHIPOTLE_ACTION_CID, NEXT_PUBLIC_CHIPOTLE_PKP_ID, NEXT_PUBLIC_CHIPOTLE_GROUP_ID,
+NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY. Create them at developer.litprotocol.com, then set these environment
+variables.
 ```
 
 **Classification: BLOCKED**, at stage `"credentials"`, exit code 3.
 
-This is the outcome `docs/stories/H-65.md`'s "Credentials" section
-anticipates: a worker cannot create a Lit account, mint a usage key, or
-publish the immutable Lit Action this adapter needs. No further stage could
-honestly be attempted without one — endpoint, action CID, and PKP are all
-things an account produces, so there was no real hostname to resolve.
+This worker's environment carries no `.env.local` and cannot read one if it
+existed (see `docs/stories/H-67.md`, "Credentials" — this is the operator's
+step). No further stage could honestly be attempted without those four
+values — action CID, PKP ID, group ID, and usage key are all things the
+operator's Lit account and this adapter's registered action produce.
 
 **Mechanical check, separate from the real outcome above:** to confirm the
-staging logic itself actually exercises the network rather than short-circuiting,
-the same probe was also run once against a live-but-wrong HTTPS endpoint
-(`https://example.com`, with fabricated action/PKP/usage values):
+staging logic itself exercises the real network rather than short-circuiting,
+the same probe was run twice more against the real base URL with fabricated
+action/PKP/group/usage-key values:
 
 ```
-stage 1/5  credentials configured — endpoint, action CID, PKP, and usage key are all set
-stage 2/5  endpoint resolves — example.com -> 104.20.23.154
-stage 3/5  endpoint answers HTTP — https://example.com
+stage 1/5  credentials configured — action CID, PKP, group, and usage key are all set
+stage 2/5  endpoint resolves — api.chipotle.litprotocol.com -> 66.220.6.104
+stage 3/5  endpoint answers HTTP — https://api.chipotle.litprotocol.com/core/v1
 
-BLOCKED at stage "single-action": Chipotle rejected the authorized-actions lookup: HTTP 404
+BLOCKED at stage "single-action": Chipotle /list_actions?group_id=999999&page_number=0&page_size=100 failed:
+HTTP 500 list_actions failed: server returned an error response: error code 3: execution reverted, data:
+"0xd4a84737132da1132de073055d34f47b729e08bde5fddd8f0a8cf2ad7d01879893d71cbd"
 ```
 
-This confirms stages 2 and 3 make a real DNS lookup and a real HTTP request
-(`example.com` is not Chipotle and correctly fails once the probe asks it
-something only a real Chipotle endpoint could answer). It is not evidence
-about Chipotle itself and is not the recorded outcome for this story — the
-credentials-blocked run above is.
+The same result was observed for `group_id=1` with the same fabricated usage
+key. This confirms stages 2 and 3 make a real DNS lookup and a real HTTP
+request, and that stage 4 reaches Lit's real chain-secured backend — a
+fabricated usage key produces a genuine on-chain-execution revert, not a
+generic "not found." `GET /version` was independently confirmed live via
+`curl`:
+
+```
+$ curl -s https://api.chipotle.litprotocol.com/core/v1/version
+{"name":"lit-api-server","version":"0.1.0","commit_version":"v1.1.10","submodule_versions":[]}
+```
+
+None of this is evidence about the operator's real account, group, or
+action — it is only evidence that this adapter's HTTP client is talking to
+the real, live Chipotle service and handling its real response shapes. The
+credentials-blocked run above is the recorded outcome for this story.
 
 ### What this shows, honestly
 
-- No claim is made here about Chipotle's actual infrastructure, encryption
-  model, or enclave attestation being reachable, because this session never
-  got past the point of needing an account to find out.
-- The wire format `lib/key-release/chipotle.ts`'s `createHttpChipotleClient`
-  speaks (a POST per action invocation, a GET for authorized-actions lookup,
-  bearer-token auth) is this adapter's own placeholder for what the research
-  (`docs/research/threshold-expiry-alternatives.md`) describes only as
-  "plain HTTP invocation" — this session had no network access to confirm
-  the current request/response schema against `developer.litprotocol.com`.
-  An operator setting up real credentials should expect to need to adjust
-  this client to match Chipotle's actual API before the probe can progress
-  past `"credentials"`.
-- The Lit Action source (`lib/key-release/chipotle-action.js`) names the
-  primitive it needs for "encrypt/decrypt under the PKP's TEE key" as
-  `chipotleTeeEncrypt`/`chipotleTeeDecrypt` — these are **not** verified Lit
-  Actions API calls. The exact primitive
-  `developer.litprotocol.com/lit-actions/migration/encryption` documents
-  could not be confirmed without network access in this session. Replace
-  both before publishing the action for real use.
-- The Arkiv liveness check inside that same action (`grantIsLive`,
-  `buildArkivClause`) **is** verified: its query grammar is copied
-  byte-for-byte from `@arkiv-network/sdk`'s own `render()`
-  (`node_modules/@arkiv-network/sdk/src/query/expression.ts`), not
-  approximated, and its endpoint matches `lib/arkiv.ts`'s resolved default.
+- No claim is made here about the operator's actual Chipotle account, PKP,
+  group, or action being reachable, because this worker has no credentials
+  for them and cannot read `.env.local`.
+- The wire format is now Lit's documented one, not a guess: `POST
+  /lit_action` with `{ipfs_id, js_params}`, `X-Api-Key` auth, `GET
+  /list_actions`/`GET /list_wallets_in_group` for the single-action check
+  (returning hashed CIDs, hashed client-side to compare), and
+  `Lit.Actions.Encrypt`/`Decrypt` inside the action. Every row was checked
+  against the live OpenAPI spec and `developer.litprotocol.com`, not assumed
+  — see `docs/stories/H-67.md`.
+- **One documented gap remains, by design of Lit's own API, not this
+  adapter's choice:** `list_actions` only returns metadata for actions
+  actually registered via `add_action`. A group's `0`-wildcard entry in
+  `cid_hashes_permitted` has no such registered metadata, so it is not
+  guaranteed to appear as a literal `"0"` item in `list_actions`' response —
+  there is no documented endpoint that exposes a group's raw
+  `cid_hashes_permitted` array directly. `ensureSingleAuthorizedAction`
+  checks for a literal zero-valued hash defensively, but this is the one
+  property this adapter cannot fully verify from outside Lit's own contract
+  state with the read endpoints Lit documents. Operators must never add `0`
+  to `cid_hashes_permitted` for this group (per
+  `developer.litprotocol.com/architecture/groups`). See this story's report,
+  "Choices", for the full reasoning.
 - **Credentials to create**, so an operator can re-run this probe to a real
-  conclusion: a Lit Chipotle account, a PKP restricted to exactly one
-  authorized action (the published CID of `chipotle-action.js`), and a
-  usage API key scoped to that PKP — never the account's master key. Set:
-  - `NEXT_PUBLIC_CHIPOTLE_ENDPOINT`
+  conclusion: a Lit Chipotle account, a PKP, a group containing that PKP and
+  permitting exactly one action (the published CID of `chipotle-action.js`,
+  registered via `pnpm chipotle:print-cid` plus the operator's own
+  `add_action`/`add_action_to_group` calls), and a usage API key scoped to
+  that group — never the account's master key. Set:
   - `NEXT_PUBLIC_CHIPOTLE_ACTION_CID`
-  - `NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY`
+  - `NEXT_PUBLIC_CHIPOTLE_PKP_ID`
+  - `NEXT_PUBLIC_CHIPOTLE_GROUP_ID`
   - `NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY`
   - `NEXT_PUBLIC_CHIPOTLE_ENABLED=true`
 
@@ -136,10 +206,11 @@ fail-closed contract was violated), `2` when skipped (missing
 
 Runs `scripts/chipotle-adapter-proof.mjs` against an injected fake
 `ChipotleClient` that plays both the HTTP transport and the Lit Action's own
-logic (`chipotle-action.js`'s commitment check and Arkiv liveness check).
-Every property was confirmed red before its guard existed — the exact guard
-in `lib/key-release/chipotle.ts` and the observed failure are recorded here,
-not just the passing run.
+logic (`chipotle-action.js`'s commitment check and Arkiv liveness check),
+hashing action CIDs the same way the real `list_actions` does. Every property
+was confirmed red before its guard existed — the exact guard in
+`lib/key-release/chipotle.ts` and the observed failure are recorded here, not
+just the passing run.
 
 ### Properties proved, and their red-first evidence
 
@@ -159,17 +230,25 @@ changes the observable behavior, which is what this proof pins down.)
 Restored, `pnpm verify:chipotle-adapter` passes: "release() refuses a share
 substituted onto a different grant, before invoking the action."
 
-**Only one action may use the PKP.** Guard: `ensureSingleAuthorizedAction`,
-called from both `protectShare` and `releaseShare`. With that call removed
-from `protectShare`, the proof failed:
+**Only one action may be permitted on the PKP's group, real data.** Guard:
+`ensureSingleAuthorizedAction`, called from both `protectShare` and
+`releaseShare`, now reading `getGroupAuthorization` (mirroring `GET
+/list_actions` + `GET /list_wallets_in_group`). With the PKP-membership and
+wildcard checks removed, the proof failed:
 
 ```
-AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
-  assert.ok(caught instanceof ChipotleUnavailableError)
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /wildcard/. Input:
+
+'group 7 permits 1 action(s) (0); expected exactly one, matching the configured action bafyreiabc123realaction
+(hash 0x419873c843c9a854ee42bdd0c2a2be13db8dd374eac4d534d0fcb852b9633966)'
 ```
 
-Restored, it passes: "a second authorized action on the same PKP is detected
-and refused before any invocation," with zero `invokeAction` calls made.
+This shows the wildcard case falling back to the generic "wrong number of
+actions" message instead of naming the wildcard specifically — the two
+guards are not redundant. Restored, all three single-action properties pass:
+a second permitted action, an all-actions `0` wildcard, and a PKP absent from
+the group are each detected and refused before any invocation, with zero
+`invokeAction` calls made in every case.
 
 **An expired (not-live) grant releases nothing.** Proved directly: a grant
 absent from the fake Arkiv ledger — exactly what a pruned or never-created
@@ -187,7 +266,9 @@ share — there is no module-level "last share" state to leak from.
 PASS  protect() then release() with the same live binding recovers the original share
 PASS  release() refuses a share substituted onto a different grant, before invoking the action
 PASS  release() refuses for a grant with no live Arkiv record, and never leaks the share
-PASS  a second authorized action on the same PKP is detected and refused before any invocation
+PASS  a second permitted action on the same group is detected and refused before any invocation
+PASS  a group that permits all actions via the 0 wildcard is detected and refused
+PASS  a PKP absent from the configured group is detected and refused before any invocation
 PASS  the single-action check is cached across protect() and release()
 PASS  a missing credential is refused as stage "credentials", never as denial
 PASS  a disabled provider refuses both calls without any network activity
