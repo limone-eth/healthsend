@@ -11,14 +11,21 @@
  * "decentralised", "trustless", or a "threshold network" — see
  * `docs/stories/H-65.md`, "The trust model, stated honestly".
  *
+ * This adapter speaks Lit's documented Chipotle API, verified 2026-09-12
+ * against `https://api.chipotle.litprotocol.com/core/v1/openapi.json` and
+ * `developer.litprotocol.com` — see `docs/stories/H-67.md` for the row-by-row
+ * comparison against H-65's placeholder. Every action invocation runs by
+ * **`ipfs_id`**, never `code`, so only the one registered, immutable action
+ * can ever execute against this PKP.
+ *
  * Two failure modes are specific to Chipotle and have no TACo analogue:
  *
  *   1. A single immutable Lit Action gates both `protect` and `release` on
  *      this adapter's PKP. If a *second*, more permissive action were ever
- *      authorized against the same PKP, it would bypass this gate entirely —
- *      the PKP does not care which authorized action asked it to sign or
- *      decrypt. `ensureSingleAuthorizedAction` checks this on every call and
- *      refuses to operate rather than assume it still holds.
+ *      authorized against the same PKP's group, it would bypass this gate
+ *      entirely — the PKP does not care which authorized action asked it to
+ *      encrypt or decrypt. `ensureSingleAuthorizedAction` checks this on
+ *      every call and refuses to operate rather than assume it still holds.
  *   2. Unlike TACo, where the release condition is baked into the capsule at
  *      encrypt time and the network evaluates it unprompted, Chipotle's public
  *      API takes the grant identity as a plain argument to the action
@@ -32,9 +39,9 @@
  *      before ever invoking the action if the two disagree. The Lit Action
  *      source (`chipotle-action.js`, alongside this file) performs the same
  *      check again, server-side, inside the enclave, because this adapter's
- *      own TypeScript is not a trust boundary — anyone with the endpoint, the
- *      action CID, and a usage key can invoke the action directly, bypassing
- *      this file entirely.
+ *      own TypeScript is not a trust boundary — anyone with the action's
+ *      `ipfs_id` and a usage key can invoke it directly, bypassing this file
+ *      entirely.
  *
  * Every non-success outcome here is `ChipotleUnavailableError`, named after
  * the stage that failed, exactly as `lib/key-release/taco.ts` does and for
@@ -49,10 +56,11 @@
  * variable: the story asks for walletless recipients to invoke Chipotle
  * directly from the browser under a *restricted* usage key scoped to this
  * group. The account's master key is a different thing entirely — it can
- * mint and revoke usage keys, and never appears in this file, in any
- * `NEXT_PUBLIC_*` variable, or in a commit. See `.env.example`.
+ * register actions and mint or revoke usage keys, and never appears in this
+ * file, in any `NEXT_PUBLIC_*` variable, or in a commit. See `.env.example`.
  */
 
+import { keccak256, stringToBytes } from "viem"
 import { encodeGrantBinding, toHex } from "../crypto"
 import type { GrantBinding, KeyReleaseProvider } from "./types"
 
@@ -80,7 +88,9 @@ export class ChipotleConfigError extends Error {
 }
 
 /**
- * The response shape this adapter expects back from an action invocation.
+ * The response shape this adapter expects back as `main`'s return value from
+ * an action invocation (`LitActionResponse.response` in Lit's own schema —
+ * see `createHttpChipotleClient`).
  *
  * `authorized: false` covers both "the enclave evaluated the request and
  * refused" and "the request was malformed" — this adapter does not try to
@@ -89,37 +99,41 @@ export class ChipotleConfigError extends Error {
  */
 export type ChipotleActionResponse = {
   authorized: boolean
-  /** Base64. Present only when `authorized` is true. */
+  /** Whatever `Lit.Actions.Encrypt`/`Decrypt` returned. Present only when `authorized` is true. */
   result?: string
   error?: string
+}
+
+/**
+ * What `GET /list_actions` and `GET /list_wallets_in_group` (scoped to this
+ * adapter's group) report, real data read fresh on every uncached check —
+ * see `ensureSingleAuthorizedAction`.
+ */
+export type ChipotleGroupAuthorization = {
+  /**
+   * The keccak256 hash of every action CID Lit's `/list_actions` reports as
+   * permitted for this group — `list_actions` returns the *hashed* CID, not
+   * the raw one (`developer.litprotocol.com/management/api_direct`, "Raw CID
+   * vs hashed CID"), so this adapter hashes its own configured `actionCid`
+   * the same way to compare.
+   */
+  hashedActionCids: string[]
+  /** Whether `list_wallets_in_group` reports the configured PKP as a member of this group. */
+  pkpInGroup: boolean
 }
 
 /**
  * The shape of the Chipotle HTTP API this adapter calls, injectable so the
  * offline proof (`scripts/chipotle-adapter-proof.mjs`) never has to make a
  * real network call.
- *
- * The wire format `createHttpChipotleClient` speaks below is this adapter's
- * own placeholder for what the research (`docs/research/threshold-expiry-alternatives.md`,
- * "Lit: separate the products and trust models") describes only as "plain
- * HTTP invocation" — this session had no network access to confirm the
- * current request/response schema against `developer.litprotocol.com`, and
- * building against a guessed schema is exactly the kind of URL/API guessing
- * this repo's own rules refuse to do. Confirm and adjust
- * `createHttpChipotleClient` once real credentials exist; the live probe
- * documents this as a named blocker rather than a silent assumption. Every
- * property this adapter is responsible for — commitment binding, expiry
- * refusal, the single-action guarantee, fail-closed error handling — is
- * proved offline against this interface regardless of the real wire shape.
  */
 export type ChipotleClient = {
   /** Non-destructive: proves the endpoint answers HTTP at all. */
   ping: () => Promise<void>
-  /** The action CIDs currently authorized to use this PKP. */
-  listAuthorizedActions: (pkpPublicKey: string) => Promise<string[]>
+  /** Real data behind the single-action guarantee — see `ChipotleGroupAuthorization`. */
+  getGroupAuthorization: (groupId: string) => Promise<ChipotleGroupAuthorization>
   invokeAction: (params: {
     actionCid: string
-    pkpPublicKey: string
     usageApiKey: string
     jsParams: Record<string, unknown>
   }) => Promise<ChipotleActionResponse>
@@ -127,12 +141,12 @@ export type ChipotleClient = {
 
 export type ChipotleConfig = {
   enabled: boolean
-  /** The Chipotle network's HTTPS base URL. No verified default exists — see the module doc. */
-  endpoint: string
-  /** IPFS CID of the immutable Lit Action published for this adapter. */
+  /** IPFS CID of the immutable Lit Action published for this adapter. Run by this, never by `code`. */
   actionCid: string
-  /** The PKP whose TEE-derived key this adapter's action is allowed to use. */
-  pkpPublicKey: string
+  /** The PKP whose TEE-derived key this adapter's action is allowed to use — `list_wallets`' `id` field. */
+  pkpId: string
+  /** The Chipotle group scoping the usage key below — `list_groups`' `id` field. */
+  groupId: string
   /** A restricted usage key scoped to this group — never the account's master key. */
   usageApiKey: string
 }
@@ -140,9 +154,9 @@ export type ChipotleConfig = {
 function parseChipotleConfigFromEnv(): Partial<ChipotleConfig> {
   return {
     enabled: process.env.NEXT_PUBLIC_CHIPOTLE_ENABLED === "true",
-    endpoint: process.env.NEXT_PUBLIC_CHIPOTLE_ENDPOINT ?? "",
     actionCid: process.env.NEXT_PUBLIC_CHIPOTLE_ACTION_CID ?? "",
-    pkpPublicKey: process.env.NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY ?? "",
+    pkpId: process.env.NEXT_PUBLIC_CHIPOTLE_PKP_ID ?? "",
+    groupId: process.env.NEXT_PUBLIC_CHIPOTLE_GROUP_ID ?? "",
     usageApiKey: process.env.NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY ?? "",
   }
 }
@@ -155,39 +169,24 @@ function parseChipotleConfigFromEnv(): Partial<ChipotleConfig> {
  * absent — an unconfigured account is the expected case here (see
  * `docs/stories/H-65.md`, "Credentials"), and it is classified as the named
  * `"credentials"` stage by `ensureCredentialsPresent`, not a constructor
- * failure. It still throws `ChipotleConfigError` for a value that is present
- * but malformed, because that is a code or deployment bug, not a missing
- * account.
+ * failure.
  */
 export function readChipotleConfig(overrides: Partial<ChipotleConfig> = {}): ChipotleConfig {
   const merged = { ...parseChipotleConfigFromEnv(), ...overrides } as ChipotleConfig
-
-  if (merged.endpoint) {
-    let url: URL
-    try {
-      url = new URL(merged.endpoint)
-    } catch {
-      throw new ChipotleConfigError(`NEXT_PUBLIC_CHIPOTLE_ENDPOINT is not a valid URL: ${merged.endpoint}`)
-    }
-    if (url.protocol !== "https:") {
-      throw new ChipotleConfigError(`NEXT_PUBLIC_CHIPOTLE_ENDPOINT must be HTTPS, got ${url.protocol}`)
-    }
-  }
-
   return {
     enabled: merged.enabled ?? false,
-    endpoint: merged.endpoint ?? "",
     actionCid: merged.actionCid ?? "",
-    pkpPublicKey: merged.pkpPublicKey ?? "",
+    pkpId: merged.pkpId ?? "",
+    groupId: merged.groupId ?? "",
     usageApiKey: merged.usageApiKey ?? "",
   }
 }
 
 function missingCredentialVars(config: ChipotleConfig): string[] {
   const missing: string[] = []
-  if (!config.endpoint) missing.push("NEXT_PUBLIC_CHIPOTLE_ENDPOINT")
   if (!config.actionCid) missing.push("NEXT_PUBLIC_CHIPOTLE_ACTION_CID")
-  if (!config.pkpPublicKey) missing.push("NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY")
+  if (!config.pkpId) missing.push("NEXT_PUBLIC_CHIPOTLE_PKP_ID")
+  if (!config.groupId) missing.push("NEXT_PUBLIC_CHIPOTLE_GROUP_ID")
   if (!config.usageApiKey) missing.push("NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY")
   return missing
 }
@@ -198,7 +197,7 @@ function ensureCredentialsPresent(config: ChipotleConfig): void {
   if (missing.length > 0) {
     throw new ChipotleUnavailableError(
       "credentials",
-      `Chipotle needs an account, usage key, and published action. Missing: ${missing.join(", ")}. ` +
+      `Chipotle needs an account, usage key, group, and published action. Missing: ${missing.join(", ")}. ` +
         `Create them at developer.litprotocol.com, then set these environment variables.`,
     )
   }
@@ -209,38 +208,82 @@ function describeError(error: unknown): string {
 }
 
 /**
- * One promise per (pkpPublicKey, actionCid) pair, shared across provider
+ * `list_actions` returns the keccak256 hash of each permitted action's raw
+ * IPFS CID, not the CID itself — see `ChipotleGroupAuthorization`. This
+ * mirrors the server's own hashing (`AccountConfig.sol`, via
+ * `add_action_to_group`'s `action_ipfs_cid`): keccak256 of the CID string's
+ * UTF-8 bytes.
+ */
+export function hashActionCid(actionCid: string): string {
+  return keccak256(stringToBytes(actionCid)).toLowerCase()
+}
+
+/**
+ * `developer.litprotocol.com/architecture/groups`: a group's
+ * `cid_hashes_permitted` array uses the literal integer `0` as a wildcard
+ * meaning "permit all actions" — a value with no corresponding registered
+ * action, so it cannot be told apart from "no such action" by CID comparison
+ * alone. Any hash that is numerically zero is treated as that wildcard.
+ */
+function isWildcardCidHash(hash: string): boolean {
+  try {
+    return BigInt(hash) === BigInt(0)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * One promise per (groupId, pkpId, actionCid) triple, shared across provider
  * instances and calls — re-checking on every `protect`/`release` would be
  * correct but wasteful; this still re-checks per distinct configuration, so a
- * PKP that gains a second authorized action after this process started is
+ * group that gains a second permitted action after this process started is
  * caught the next time a *different* configuration is used, and callers that
  * need a fresh check can `__resetChipotleAdapterStateForTests`.
  */
 let singleActionCache = new Map<string, Promise<void>>()
 
 /**
- * The adapter must refuse to operate if it cannot confirm that exactly one
- * action — this adapter's own — is authorized to use the PKP. A second,
- * more permissive decrypt action allowed on the same PKP would bypass this
- * gate entirely, so "cannot confirm" is treated the same as "confirmed
- * false": both throw.
+ * The adapter must refuse to operate if it cannot confirm, from real group
+ * data, that exactly one action — this adapter's own — is permitted to use
+ * the PKP within its group, and that the PKP actually belongs to that group.
+ * A second, more permissive action permitted on the same group, or a group
+ * that permits all actions via the `0` wildcard, would bypass this gate
+ * entirely, so "cannot confirm" is treated the same as "confirmed false":
+ * both throw.
  */
 async function ensureSingleAuthorizedAction(client: ChipotleClient, config: ChipotleConfig): Promise<void> {
-  const cacheKey = `${config.pkpPublicKey}:${config.actionCid}`
+  const cacheKey = `${config.groupId}:${config.pkpId}:${config.actionCid}`
   let promise = singleActionCache.get(cacheKey)
   if (!promise) {
     promise = (async () => {
-      let actions: string[]
+      let auth: ChipotleGroupAuthorization
       try {
-        actions = await client.listAuthorizedActions(config.pkpPublicKey)
+        auth = await client.getGroupAuthorization(config.groupId)
       } catch (error) {
         throw new ChipotleUnavailableError("single-action", describeError(error), { cause: error })
       }
-      if (actions.length !== 1 || actions[0] !== config.actionCid) {
+
+      if (!auth.pkpInGroup) {
         throw new ChipotleUnavailableError(
           "single-action",
-          `PKP ${config.pkpPublicKey} authorizes ${actions.length} action(s) (${actions.join(", ") || "none"}); ` +
-            `expected exactly one, matching the configured action ${config.actionCid}`,
+          `PKP ${config.pkpId} is not a member of group ${config.groupId} — list_wallets_in_group does not report it`,
+        )
+      }
+
+      if (auth.hashedActionCids.some(isWildcardCidHash)) {
+        throw new ChipotleUnavailableError(
+          "single-action",
+          `group ${config.groupId} permits all actions (cid_hashes_permitted includes the 0 wildcard) — refusing to trust a single-action gate that does not hold`,
+        )
+      }
+
+      const expectedHash = hashActionCid(config.actionCid)
+      if (auth.hashedActionCids.length !== 1 || auth.hashedActionCids[0] !== expectedHash) {
+        throw new ChipotleUnavailableError(
+          "single-action",
+          `group ${config.groupId} permits ${auth.hashedActionCids.length} action(s) (${auth.hashedActionCids.join(", ") || "none"}); ` +
+            `expected exactly one, matching the configured action ${config.actionCid} (hash ${expectedHash})`,
         )
       }
     })().catch((error: unknown) => {
@@ -267,7 +310,7 @@ async function computeCommitment(binding: GrantBinding): Promise<string> {
 /** The opaque envelope this adapter's `protect`/`release` exchange as `Uint8Array`. */
 type ChipotleEnvelope = {
   v: 1
-  /** Base64 of whatever the action returned as ciphertext. */
+  /** Whatever `Lit.Actions.Encrypt` returned. */
   ciphertext: string
   /** SHA-256 of the grant binding this envelope was protected for. */
   commitment: string
@@ -306,8 +349,15 @@ function fromBase64(value: string): Uint8Array {
   return out
 }
 
-function bindingJsParams(binding: GrantBinding): Record<string, unknown> {
+/**
+ * `chipotle-action.js`'s `main({ pkpId, mode, ... })` reads these as its
+ * single `js_params` argument. `pkpId` travels with every call because
+ * `Lit.Actions.Encrypt`/`Decrypt` both take it as a parameter — Chipotle has
+ * no separate top-level "which PKP" field on `POST /lit_action` itself.
+ */
+function bindingJsParams(binding: GrantBinding, config: ChipotleConfig): Record<string, unknown> {
   return {
+    pkpId: config.pkpId,
     grantId: binding.grantId,
     owner: binding.owner,
     expiresBlock: binding.expiresBlock.toString(10),
@@ -332,9 +382,8 @@ async function protectShare(
   try {
     response = await client.invokeAction({
       actionCid: config.actionCid,
-      pkpPublicKey: config.pkpPublicKey,
       usageApiKey: config.usageApiKey,
-      jsParams: { mode: "protect", payload: toBase64(heldShare), commitment, ...bindingJsParams(binding) },
+      jsParams: { mode: "protect", payload: toBase64(heldShare), commitment, ...bindingJsParams(binding, config) },
     })
   } catch (error) {
     throw new ChipotleUnavailableError("invoke", describeError(error), { cause: error })
@@ -375,13 +424,12 @@ async function releaseShare(
   try {
     response = await client.invokeAction({
       actionCid: config.actionCid,
-      pkpPublicKey: config.pkpPublicKey,
       usageApiKey: config.usageApiKey,
       jsParams: {
         mode: "release",
         ciphertext: envelope.ciphertext,
         commitment: envelope.commitment,
-        ...bindingJsParams(binding),
+        ...bindingJsParams(binding, config),
       },
     })
   } catch (error) {
@@ -483,42 +531,93 @@ export async function probeChipotleInfrastructure(
 }
 
 /**
- * The real HTTP client. Speaks the placeholder wire format documented on
- * `ChipotleClient` above — unverified against live Lit docs in this session.
- * `fetch` only, deliberately: no new dependency is pinned in `package.json`
- * for this, since no real package name or version could be confirmed without
- * network access, and guessing one would be worse than depending on the
- * platform's own `fetch`.
+ * Lit's documented Chipotle base URL — fixed, not caller-supplied, verified
+ * 2026-09-12 against `https://api.chipotle.litprotocol.com/core/v1/openapi.json`.
+ * There is exactly one Chipotle service, unlike TACo's per-deployment
+ * coordination RPC, so there is nothing for an env var to override.
+ */
+export const CHIPOTLE_API_BASE = "https://api.chipotle.litprotocol.com/core/v1"
+
+/** A page this large is treated as "possibly truncated" — see `fetchList`. */
+const LIST_PAGE_SIZE = 100
+
+function authHeaders(apiKey: string): HeadersInit {
+  return { "X-Api-Key": apiKey, "content-type": "application/json" }
+}
+
+/**
+ * Every read/write endpoint responds with `oneOf [<schema>, ErrMessage]`,
+ * where `ErrMessage` is a bare JSON string — so a parsed body that is a
+ * string, or a non-OK HTTP status, both mean the call failed.
+ */
+async function callChipotle(path: string, init: RequestInit): Promise<unknown> {
+  const res = await fetch(`${CHIPOTLE_API_BASE}${path}`, init)
+  const body: unknown = await res.json()
+  if (!res.ok || typeof body === "string") {
+    throw new Error(`Chipotle ${path} failed: HTTP ${res.status}${typeof body === "string" ? ` ${body}` : ""}`)
+  }
+  return body
+}
+
+/**
+ * `list_actions`/`list_wallets_in_group` are paginated; this adapter only
+ * ever needs "the complete list, or refuse" — never a specific page — so it
+ * requests one large page and refuses rather than silently truncate if the
+ * result looks like it might have overflowed that page.
+ */
+async function fetchList(path: string, apiKey: string): Promise<Array<{ id: string }>> {
+  const body = await callChipotle(`${path}&page_number=0&page_size=${LIST_PAGE_SIZE}`, {
+    method: "GET",
+    headers: authHeaders(apiKey),
+  })
+  if (!Array.isArray(body)) throw new Error(`Chipotle ${path} returned a non-array body`)
+  if (body.length >= LIST_PAGE_SIZE) {
+    throw new Error(`Chipotle ${path} returned ${body.length} items — cannot confirm the full list fits on one page`)
+  }
+  return body as Array<{ id: string }>
+}
+
+/**
+ * The real HTTP client, speaking Lit's documented Chipotle API — see the
+ * module doc's verification note. `fetch` only, deliberately: no new
+ * dependency is pinned in `package.json` for this.
  */
 export function createHttpChipotleClient(config: ChipotleConfig): ChipotleClient {
-  function authHeaders(): HeadersInit {
-    return { authorization: `Bearer ${config.usageApiKey}`, "content-type": "application/json" }
-  }
-
   return {
     async ping() {
-      // Any HTTP response — even an error status — proves the endpoint is
-      // live. Only a transport failure (DNS, connection, TLS, timeout) means
-      // "unreachable"; `fetch` throws for those and resolves for the rest.
-      await fetch(config.endpoint, { method: "GET" })
+      // GET /version needs no auth and any HTTP response — even an error
+      // status — proves the endpoint is live. Only a transport failure
+      // (DNS, connection, TLS, timeout) means "unreachable"; `fetch` throws
+      // for those and resolves for the rest.
+      await fetch(`${CHIPOTLE_API_BASE}/version`)
     },
-    async listAuthorizedActions(pkpPublicKey: string) {
-      const res = await fetch(`${config.endpoint}/pkps/${encodeURIComponent(pkpPublicKey)}/actions`, {
-        method: "GET",
-        headers: authHeaders(),
-      })
-      if (!res.ok) throw new Error(`Chipotle rejected the authorized-actions lookup: HTTP ${res.status}`)
-      const body = (await res.json()) as { actions?: string[] }
-      return body.actions ?? []
+    async getGroupAuthorization(groupId: string) {
+      const [actions, wallets] = await Promise.all([
+        fetchList(`/list_actions?group_id=${encodeURIComponent(groupId)}`, config.usageApiKey),
+        fetchList(`/list_wallets_in_group?group_id=${encodeURIComponent(groupId)}`, config.usageApiKey),
+      ])
+      return {
+        hashedActionCids: actions.map((action) => action.id.toLowerCase()),
+        pkpInGroup: wallets.some((wallet) => wallet.id === config.pkpId),
+      }
     },
-    async invokeAction({ actionCid, pkpPublicKey, usageApiKey, jsParams }) {
-      const res = await fetch(`${config.endpoint}/actions/${encodeURIComponent(actionCid)}/execute`, {
+    async invokeAction({ actionCid, usageApiKey, jsParams }) {
+      const body = await callChipotle("/lit_action", {
         method: "POST",
-        headers: { authorization: `Bearer ${usageApiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ pkpPublicKey, jsParams }),
+        headers: authHeaders(usageApiKey),
+        // ipfs_id, never code — only the one action registered under this
+        // CID may run. See the module doc.
+        body: JSON.stringify({ ipfs_id: actionCid, js_params: jsParams }),
       })
-      if (!res.ok) throw new Error(`Chipotle rejected the action invocation: HTTP ${res.status}`)
-      return (await res.json()) as ChipotleActionResponse
+      const { response, has_error, logs } = body as { response: unknown; has_error: boolean; logs: string }
+      if (has_error) {
+        // The action itself threw an uncaught exception rather than
+        // returning `{ authorized: false, error }` — Chipotle's own crash,
+        // not a considered refusal. See the module doc on never converting
+        // uncertainty into a verdict.
+        throw new Error(`Lit Action execution failed: ${logs || "no logs returned"}`)
+      }
+      return response as ChipotleActionResponse
     },
   }
 }

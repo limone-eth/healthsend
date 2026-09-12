@@ -1,8 +1,11 @@
 /**
  * Proves the Chipotle adapter (lib/key-release/chipotle.ts) offline, against
- * an injected fake `ChipotleClient` that plays the part of the real HTTP
- * endpoint AND the Lit Action's own logic (commitment check, Arkiv liveness
+ * an injected fake `ChipotleClient` that plays the part of Lit's real HTTP
+ * API AND the Lit Action's own logic (commitment check, Arkiv liveness
  * check) — see chipotle-action.js, which this fake's `invokeAction` mirrors.
+ * The fake hashes action CIDs the same way `hashActionCid` does, mirroring
+ * `list_actions`' real behavior of returning the *hashed* CID
+ * (developer.litprotocol.com/management/api_direct, "Raw CID vs hashed CID").
  *
  * Every property below was run red before the guard it exercises existed (or
  * with that guard temporarily removed) to confirm it actually fails without
@@ -20,9 +23,10 @@
  *   - a grant the fake Arkiv ledger reports as not live is refused, never
  *     released — the fake action's liveness check, mirroring
  *     chipotle-action.js's `grantIsLive`;
- *   - `ensureSingleAuthorizedAction` refuses to operate when the PKP
- *     authorizes more than one action, and does so *before* invoking the
- *     action at all;
+ *   - `ensureSingleAuthorizedAction` refuses to operate when the group
+ *     permits more than one action, when the group permits all actions via
+ *     the `0` wildcard, or when the PKP is not a member of the group, and
+ *     does so *before* invoking the action at all;
  *   - nothing persists: no error carries the held share, and the
  *     single-action cache holds no secret material.
  */
@@ -46,14 +50,15 @@ const { encodeGrantBinding, toHex } = await import("../lib/crypto.ts")
 const {
   createChipotleKeyReleaseProvider,
   ChipotleUnavailableError,
+  hashActionCid,
   __resetChipotleAdapterStateForTests,
 } = await import("../lib/key-release/chipotle.ts")
 
 const CONFIG = {
   enabled: true,
-  endpoint: "https://chipotle.invalid",
-  actionCid: "bafy-real-action",
-  pkpPublicKey: "0x04pkp",
+  actionCid: "bafyreiabc123realaction",
+  pkpId: "pkp-real-1",
+  groupId: "7",
   usageApiKey: "usage-key-for-tests",
 }
 
@@ -95,28 +100,34 @@ async function computeCommitment(grantId, owner, expiresBlockStr, ref) {
 }
 
 /**
- * Plays both the HTTP transport and the Lit Action's own logic. `arkivLedger`
- * maps a lowercase grantId to `{ owner, expiresBlock }` for grants this fake
- * Arkiv considers live — anything absent is "not live", exactly like a
- * pruned or never-created entity.
+ * Plays both the HTTP transport and the Lit Action's own logic.
+ * `arkivLedger` maps a lowercase grantId to `{ owner, expiresBlock }` for
+ * grants this fake Arkiv considers live — anything absent is "not live",
+ * exactly like a pruned or never-created entity. `permittedActionCids`
+ * defaults to just the configured action, hashed the same way `list_actions`
+ * really does; `pkpInGroup` defaults to true.
  */
 function makeFakeChipotleClient(overrides = {}) {
-  const calls = { listAuthorizedActions: 0, invokeAction: [] }
-  const authorizedActions = overrides.authorizedActions ?? [CONFIG.actionCid]
+  const calls = { getGroupAuthorization: 0, invokeAction: [] }
+  const permittedActionCids = overrides.permittedActionCids ?? [CONFIG.actionCid]
+  const pkpInGroup = overrides.pkpInGroup ?? true
   const arkivLedger = overrides.arkivLedger ?? new Map()
 
   const client = {
     async ping() {},
-    async listAuthorizedActions(pkpPublicKey) {
-      calls.listAuthorizedActions++
-      assert.equal(pkpPublicKey, CONFIG.pkpPublicKey)
-      return authorizedActions
+    async getGroupAuthorization(groupId) {
+      calls.getGroupAuthorization++
+      assert.equal(groupId, CONFIG.groupId)
+      return {
+        hashedActionCids: permittedActionCids.map((cid) => (cid === "0" ? "0" : hashActionCid(cid))),
+        pkpInGroup,
+      }
     },
-    async invokeAction({ actionCid, pkpPublicKey, usageApiKey, jsParams }) {
+    async invokeAction({ actionCid, usageApiKey, jsParams }) {
       calls.invokeAction.push(jsParams)
       assert.equal(actionCid, CONFIG.actionCid)
-      assert.equal(pkpPublicKey, CONFIG.pkpPublicKey)
       assert.equal(usageApiKey, CONFIG.usageApiKey)
+      assert.equal(jsParams.pkpId, CONFIG.pkpId)
       if (overrides.invokeImpl) return overrides.invokeImpl(jsParams)
 
       // Mirrors chipotle-action.js's own commitment check.
@@ -134,8 +145,10 @@ function makeFakeChipotleClient(overrides = {}) {
         if (!live) return { authorized: false, error: "grant is not live" }
       }
 
-      const inputBytes = jsParams.mode === "protect" ? fromBase64(jsParams.payload) : fromBase64(jsParams.ciphertext)
-      return { authorized: true, result: toBase64(xorTransform(inputBytes)) }
+      // Mirrors Lit.Actions.Encrypt/Decrypt: an opaque string transform.
+      const inputString = jsParams.mode === "protect" ? jsParams.payload : jsParams.ciphertext
+      const outputString = toBase64(xorTransform(fromBase64(inputString)))
+      return { authorized: true, result: outputString }
     },
   }
   return { client, calls, arkivLedger }
@@ -219,26 +232,72 @@ function makeFakeChipotleClient(overrides = {}) {
   console.log("PASS  release() refuses for a grant with no live Arkiv record, and never leaks the share")
 }
 
-// --- a second permissive action on the same PKP is detected -----------------
+// --- a second permitted action on the same group is detected ---------------
 // Exercises ensureSingleAuthorizedAction (lib/key-release/chipotle.ts). RED
 // before that check existed: protect()/release() would proceed straight to
-// invokeAction with no regard for how many actions the PKP authorizes.
+// invokeAction with no regard for how many actions the group permits.
 {
   __resetChipotleAdapterStateForTests()
-  const { client, calls } = makeFakeChipotleClient({ authorizedActions: [CONFIG.actionCid, "bafy-a-second-more-permissive-action"] })
+  const { client, calls } = makeFakeChipotleClient({
+    permittedActionCids: [CONFIG.actionCid, "bafy-a-second-more-permissive-action"],
+  })
   const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
 
   let caught
   try {
     await provider.protect(new Uint8Array(32), bindingA)
-    assert.fail("protect() must refuse when the PKP authorizes more than one action")
+    assert.fail("protect() must refuse when the group permits more than one action")
   } catch (error) {
     caught = error
   }
   assert.ok(caught instanceof ChipotleUnavailableError)
   assert.equal(caught.stage, "single-action")
-  assert.equal(calls.invokeAction.length, 0, "a second authorized action must be caught before invoking anything")
-  console.log("PASS  a second authorized action on the same PKP is detected and refused before any invocation")
+  assert.equal(calls.invokeAction.length, 0, "a second permitted action must be caught before invoking anything")
+  console.log("PASS  a second permitted action on the same group is detected and refused before any invocation")
+}
+
+// --- a group that permits all actions (the 0 wildcard) is detected ---------
+// Exercises the wildcard branch of ensureSingleAuthorizedAction. RED before
+// that check existed: a group permitting everything looks like "exactly one
+// action" from a naive length check alone if that action happens to also be
+// individually listed, so this needs its own guard, not just a length check.
+{
+  __resetChipotleAdapterStateForTests()
+  const { client, calls } = makeFakeChipotleClient({ permittedActionCids: ["0"] })
+  const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
+
+  let caught
+  try {
+    await provider.protect(new Uint8Array(32), bindingA)
+    assert.fail("protect() must refuse when the group permits all actions via the 0 wildcard")
+  } catch (error) {
+    caught = error
+  }
+  assert.ok(caught instanceof ChipotleUnavailableError)
+  assert.equal(caught.stage, "single-action")
+  assert.match(caught.message, /wildcard/)
+  assert.equal(calls.invokeAction.length, 0, "a wildcard-permitted group must be caught before invoking anything")
+  console.log("PASS  a group that permits all actions via the 0 wildcard is detected and refused")
+}
+
+// --- a PKP that is not a member of the configured group is detected --------
+{
+  __resetChipotleAdapterStateForTests()
+  const { client, calls } = makeFakeChipotleClient({ pkpInGroup: false })
+  const provider = createChipotleKeyReleaseProvider({ client, config: CONFIG })
+
+  let caught
+  try {
+    await provider.protect(new Uint8Array(32), bindingA)
+    assert.fail("protect() must refuse when the PKP is not a member of the configured group")
+  } catch (error) {
+    caught = error
+  }
+  assert.ok(caught instanceof ChipotleUnavailableError)
+  assert.equal(caught.stage, "single-action")
+  assert.match(caught.message, /not a member/)
+  assert.equal(calls.invokeAction.length, 0)
+  console.log("PASS  a PKP absent from the configured group is detected and refused before any invocation")
 }
 
 // --- the single-action check is shared across calls, not repeated every time ---
@@ -250,7 +309,7 @@ function makeFakeChipotleClient(overrides = {}) {
 
   const protectedShare = await provider.protect(new Uint8Array(32).fill(1), bindingA)
   await provider.release(protectedShare, bindingA)
-  assert.equal(calls.listAuthorizedActions, 1, "the single-action check must be cached, not repeated on every call")
+  assert.equal(calls.getGroupAuthorization, 1, "the single-action check must be cached, not repeated on every call")
   console.log("PASS  the single-action check is cached across protect() and release()")
 }
 
@@ -277,7 +336,7 @@ function makeFakeChipotleClient(overrides = {}) {
   await assert.rejects(() => disabled.protect(new Uint8Array(32), bindingA), ChipotleUnavailableError)
   await assert.rejects(() => disabled.release(new Uint8Array(32), bindingA), ChipotleUnavailableError)
   assert.equal(calls.invokeAction.length, 0)
-  assert.equal(calls.listAuthorizedActions, 0)
+  assert.equal(calls.getGroupAuthorization, 0)
   console.log("PASS  a disabled provider refuses both calls without any network activity")
 }
 
