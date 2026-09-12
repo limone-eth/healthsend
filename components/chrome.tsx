@@ -18,10 +18,14 @@ import { TabBar } from "@/components/ui"
 
 export type SenderDestination = "archive" | "shares" | "assistant"
 
-const DESTINATIONS: { key: SenderDestination; label: string; icon: PhosphorIcon }[] = [
-  { key: "archive", label: "Your archive", icon: GridFour },
-  { key: "shares", label: "Your shares", icon: PaperPlaneTilt },
-  { key: "assistant", label: "Your assistant", icon: Sparkle },
+// The rail (desktop/tablet, `label`) spells out "Your archive" per
+// ACUf3/HMa4U/hCcwO/LKFS1; the mobile tab bar (`mobileLabel`) uses TdVX6's
+// shorter "Archive" — the two frames give the same destinations different
+// copy, so this is two fields, not one reused string.
+const DESTINATIONS: { key: SenderDestination; label: string; mobileLabel: string; icon: PhosphorIcon }[] = [
+  { key: "archive", label: "Your archive", mobileLabel: "Archive", icon: GridFour },
+  { key: "shares", label: "Your shares", mobileLabel: "Shares", icon: PaperPlaneTilt },
+  { key: "assistant", label: "Your assistant", mobileLabel: "Assistant", icon: Sparkle },
 ]
 
 // ---------------------------------------------------------------------------
@@ -128,7 +132,11 @@ export function SenderChrome({
       </main>
 
       <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-5 pb-5 md:hidden">
-        <TabBar active={active} onSelect={(key) => onNavigate?.(key as SenderDestination)} items={DESTINATIONS} />
+        <TabBar
+          active={active}
+          onSelect={(key) => onNavigate?.(key as SenderDestination)}
+          items={DESTINATIONS.map(({ key, mobileLabel, icon }) => ({ key, label: mobileLabel, icon }))}
+        />
       </div>
     </div>
   )
