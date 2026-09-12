@@ -225,8 +225,8 @@ What that buys, precisely:
   - We also built a TACo (threshold) adapter. It is parked until TACo's network is reachable
     ([evidence](./arkiv/evidence/taco-adapter-poc.md)).
 - **The code that decrypts comes from our deployment.** Encrypting in the browser limits what a
-  thief of stored data can reach. It doesn't limit what someone who controls our published code
-  can reach.
+  thief of stored data can reach. It does not limit what an attacker who controls the *build*
+  reaches: a tampered deployment can read documents as they pass through the page.
 - **PDFs are shared as issued.** A name or date of birth printed on a PDF goes with it, and the
   share screen says so before the link exists.
 
@@ -292,9 +292,11 @@ lib/assets.ts            pack and seal the documents for one share
 lib/arkiv.ts             grants: typed attributes, atBlock expiry, queries
 lib/key-release/         Lit Chipotle (live), TACo (parked), one factory choosing between them
 lib/sends.ts             create a share and open a share, end to end
-app/(sender)/            your archive, new share, your shares
+app/(sender)/            your archive, with add and remove
+app/(sender)/new/        new share: pick documents, set when it ends, get the link
+app/(sender)/shares/     your shares: countdowns, end one early, when they looked
 app/s/[key]/             recipient: no account, renders in place, no download
-app/api/holder/          key-share holder: share, unlock, revoke, access log
+app/api/holder/          key-share holder: /share, /unlock, /api/holder/revoke, /api/holder/access-log
 app/api/fund/            gas top-ups for user-derived Arkiv keys (hackathon scaffolding)
 arkiv/                   schema, and recorded evidence
 scripts/                 doctor and every verify:* proof
@@ -323,7 +325,9 @@ Built at ETHRome 2026, Friday 11 September 18:00 – Sunday 13 September 10:00.
 ## Where it goes next
 
 **Next: share the rest of a health record.** That means wearable exports and structured lab values,
-with identifiers removed before they leave the device. It also means letting practitioners who
+with identifiers removed before they leave the device. The start is already there for CSV and JSON
+imports: `lib/deident.ts` sets labelled identifiers aside, also catches an unlabeled date of birth
+by its shape and year, and flags them on `/import-review`. PDFs are shared as issued. It also means letting practitioners who
 receive one link start sending their own.
 
 **Built but hidden for now:** an assistant connector (MCP) that gives an AI tool an expiring slice
