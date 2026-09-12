@@ -26,7 +26,7 @@
  */
 
 const KEY_BYTES = 32
-const IV_BYTES = 12
+export const IV_BYTES = 12
 
 /**
  * Entropy in the link secret, in bytes.
@@ -351,6 +351,98 @@ export async function joinContentKey(
  * same bytes in base64url cost 43. Nothing is lost — it is the same value in a
  * denser alphabet — and a link people paste into WhatsApp is shorter for it.
  * ------------------------------------------------------------------------- */
+
+/* ------------------------------------------------------------------------- *
+ * Grant packages — binding a held share to one grant, not just one link
+ *
+ * `splitContentKey` above binds a share to the link secret. A threshold
+ * release adds a second, independent thing to bind to: the grant itself —
+ * its random id, its native Arkiv owner, its original native expiry block.
+ * `encodeGrantBinding` is that binding's canonical byte form.
+ *
+ * It is used twice, for two different reasons. As the HKDF salt in
+ * `deriveGrantPackageKey`, it makes the outer wrapping key itself specific to
+ * this grant, so the same link secret produces unrelated keys for two
+ * different grants. As the AEAD additional data in `sealBound`/`openBound`,
+ * it makes the ciphertext's authentication tag depend on the binding, so a
+ * caller cannot present the ciphertext of a live grant alongside a different
+ * grant's id, owner, or expiry and have it verify — that substitution fails
+ * at the tag check, before any release logic runs.
+ * ------------------------------------------------------------------------- */
+
+const INFO_GRANT_PACKAGE = "healthsend/grant-package/v1"
+
+/** Canonical bytes for a grant binding — never serialize the object directly. */
+export function encodeGrantBinding(binding: {
+  grantId: string
+  owner: string
+  expiresBlock: bigint
+  ref: string
+}): Uint8Array {
+  return new TextEncoder().encode(
+    [
+      "healthsend",
+      "grant-binding",
+      "v1",
+      binding.grantId.toLowerCase(),
+      binding.owner.toLowerCase(),
+      binding.expiresBlock.toString(10),
+      binding.ref.toLowerCase(),
+    ].join("\n"),
+  )
+}
+
+/** The outer wrapping key for a grant package, specific to link secret AND binding. */
+export async function deriveGrantPackageKey(
+  secret: Uint8Array,
+  bindingBytes: Uint8Array,
+): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey("raw", secret as BufferSource, "HKDF", false, [
+    "deriveBits",
+  ])
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: bindingBytes as BufferSource,
+      info: new TextEncoder().encode(INFO_GRANT_PACKAGE) as BufferSource,
+    },
+    material,
+    KEY_BYTES * 8,
+  )
+  return new Uint8Array(bits)
+}
+
+/** Like `seal`, but authenticates `additionalData` without encrypting it. */
+export async function sealBound(
+  keyRaw: Uint8Array,
+  plaintext: Uint8Array,
+  additionalData: Uint8Array,
+): Promise<Sealed> {
+  const iv = randomBytes(IV_BYTES)
+  const key = await importAesKey(keyRaw, ["encrypt"])
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv as BufferSource, additionalData: additionalData as BufferSource },
+    key,
+    plaintext as BufferSource,
+  )
+  return { iv, ciphertext: new Uint8Array(ciphertext) }
+}
+
+/** Like `open`, but rejects unless `additionalData` matches what was sealed. */
+export async function openBound(
+  keyRaw: Uint8Array,
+  sealed: Sealed,
+  additionalData: Uint8Array,
+): Promise<Uint8Array> {
+  const key = await importAesKey(keyRaw, ["decrypt"])
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: sealed.iv as BufferSource, additionalData: additionalData as BufferSource },
+    key,
+    sealed.ciphertext as BufferSource,
+  )
+  return new Uint8Array(plaintext)
+}
 
 /** `0x…` hex to the short form used in share links. */
 export function packEntityKey(entityKeyHex: string): string {
