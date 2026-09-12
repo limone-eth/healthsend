@@ -118,7 +118,7 @@ const CHIP_SPEC: Record<
     border: "border-haze",
   },
   "on-device": {
-    label: "On her device",
+    label: "On their device",
     icon: Fingerprint,
     fill: "bg-sage",
     text: "text-moss",

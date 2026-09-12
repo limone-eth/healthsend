@@ -289,7 +289,7 @@ action.
 
 | Token | Value | Use |
 |---|---|---|
-| `sage` | `#A8B7AB` | "On her device" chip; the success glyph container |
+| `sage` | `#A8B7AB` | "On their device" chip; the success glyph container |
 | `moss` | `#657563` | Type and glyphs on `sage` |
 | `error` | `#B84332` | **"End access now" and nothing else in this product** |
 
@@ -405,8 +405,8 @@ into the sender's archive.** The only thing that resembles navigation is the sin
 *Create your archive* invitation below the readings (see Growth hook).
 
 It is a **data page, not a hero page**: no cover surface, no display-size headline,
-no photograph. The first thing in the column is a one-line attribution, and the second
-is a chart. Desktop uses the extra width for a real table with lab reference ranges
+no photograph. The first thing in the column is a one-line attribution — *"Shared with
+you"*, naming nobody (see Decisions from the brief) — and the second is a chart. Desktop uses the extra width for a real table with lab reference ranges
 side by side; the phone stacks the range under the marker name. Both views show the
 **same markers** — a share is a share, and the two renderings must never disagree
 about what is in it.
@@ -562,7 +562,7 @@ not a state of the share at all:
 |---|---|---|---|
 | Not opened yet | `grouped` / `secondary` | `user-circle` | Nobody has opened the link |
 | Active | `haze` / `navy` | `check-circle` | Opened, and inside its window |
-| On her device | `sage` / `moss` | `fingerprint` | Tied to the phone that opened it first |
+| On their device | `sage` / `moss` | `fingerprint` | Tied to the phone that opened it first |
 | Ending soon | `chalk` / `umber` | `calendar-blank` | A week or less to go. Nothing to renew |
 | Ended | `grouped` / `muted` | `lock-simple` | Past the date. Nothing left to open |
 | Ended by you | `surface` / `error`, `error` border | `x-circle` | The only state a person's action produces |
@@ -1195,7 +1195,7 @@ preference, it is the interface.
 | The ciphertext becomes noise | **There is nothing left to open** | Same fact, no vocabulary lesson |
 | Expires in 84 days | **Ends 4 December** | A date can be planned around; a duration has to be computed |
 | Bearer link · anyone-with-link | **Anyone with the link can open it** | Say the risk in the sentence that offers the option |
-| Claim on first open · device binding | **Lock it to her phone the first time she opens it** | What happens, in the order it happens |
+| Claim on first open · device binding | **Lock it to their phone the first time they open it** | What happens, in the order it happens |
 | Pairing code · MCP server | **Connect your assistant · Connection code** | She is connecting an assistant she already uses. The protocol is our problem |
 | Connector · bundle · extension | **The HealthSend app**, then just *the app* | Connector is our word for our own plumbing. Nobody arrives knowing it, and a setup screen is the worst place to teach a noun. The downloaded file is named `HealthSend` for the same reason |
 | Access log · audit trail | **When she looked** | Audit sounds like something done to her. This is a record she owns |
@@ -1218,8 +1218,8 @@ judgement call, recorded here with its reasoning so it is not re-argued from scr
 
 ### Whose name appears on the recipient page
 
-**Attribution: first name only, above the readings. No surname, no date of birth, and
-never inside a data block.**
+**Nobody's. The attribution line reads "Shared with you" and names no one.**
+Settled 2026-09-12, superseding an earlier "first name only" rule recorded here.
 
 The brief is firm that the *payload* carries no identifiers (§5.2 "no name, no date of
 birth"; §8 identifiers are split off at import; the demo script's line 230 is
@@ -1227,15 +1227,28 @@ literally "data renders — no name on it"). It is equally firm that this is not
 anonymity: §8 concedes "the nutritionist necessarily knows it's Giulia", and §9 warns
 that a distinctive lab timeline re-identifies on its own.
 
-So hiding the name protects nothing *against the recipient* — she got the link from
-Giulia. What it protects is a **leaked screenshot**, and §8's stated benefit is exactly
-that: "a leaked screenshot is numbers without an owner, not a named panel." A surname
-sitting above a thyroid panel destroys that property in one frame.
+That tension produced the earlier rule — a first name, on the reasoning that hiding it
+protects nothing against a recipient who already knows who sent the link, while a
+*surname* above a thyroid panel would destroy §8's stated benefit that "a leaked
+screenshot is numbers without an owner, not a named panel."
 
-First name resolves both: the recipient gets the human context she needs to know which
-client this is, and a leaked screenshot still is not a named medical record. The
-attribution line sits **outside** the data cards, because identity binds at grant time
-and travels separately from the readings (§8) — the layout should say so.
+The reasoning was sound and the premise was not: **this product has no name to print.**
+Identity here is a passkey-derived Swarm ID. There is no profile, no first name, no
+last name, nothing the sender ever typed — which is also why the sidebar avatar was
+removed rather than restyled. Rendering any name would mean inventing a field, and a
+fabricated one is worse than none.
+
+That leaves one option that would have worked — a **"from" the sender types per send**
+— and it is **declined for now** (2026-09-12). It buys human context at the cost of a
+free-text field on the send path that is, by construction, unverified: whatever the
+sender types is what the recipient trusts. A recipient who needs to know who sent a
+link already knows, because a link arrives inside a conversation. Revisit only if a
+real recipient reports being unable to tell.
+
+So the line names nobody, and the leaked-screenshot property is stronger than either
+alternative would have made it. It sits **outside** the data cards, because identity
+binds at grant time and travels separately from the readings (§8) — the layout should
+say so.
 
 The sender is told plainly what this means: screen C's summary row reads *"What she
 sees about you — No name, no date of birth."*

@@ -35,7 +35,7 @@ import { useSenderIdentity } from "@/components/use-sender-identity"
  *
  * The frame's right column ("Settings Panel", `B6zXII`) is DESIGN.md's own
  * name for what this story calls the summary panel (see DESIGN.md's Layout
- * section: "a sticky summary panel right"). Its "Lock it to her phone",
+ * section: "a sticky summary panel right"). Its "Lock it to their phone",
  * "Add a PIN" and "Let her assistant read it too" controls have no backing
  * code path — `lib/sends.ts`'s `createSend` takes only files, a recipient
  * label and a TTL — and building them would mean inventing behaviour `lib/`

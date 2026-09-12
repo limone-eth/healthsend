@@ -182,7 +182,7 @@ function SharesList({ address }: { address: string }) {
 
 // ---------------------------------------------------------------------------
 // Chip state — the fixed vocabulary from DESIGN.md § Share state chip, plus
-// the seventh state that is deliberately not one of the six. "On her device"
+// the seventh state that is deliberately not one of the six. "On their device"
 // has no data source here: the access log is a list of timestamps with no
 // device binding, so it is never produced — see `## Choices`.
 // ---------------------------------------------------------------------------
