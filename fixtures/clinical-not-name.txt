@@ -1,0 +1,3 @@
+Patient: denies chest pain today.
+
+Plan: monitor, repeat panel in twelve weeks.
