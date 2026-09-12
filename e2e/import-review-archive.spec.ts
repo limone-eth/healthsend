@@ -143,12 +143,15 @@ test("confirming a blood panel writes through the archive and survives reload", 
   expect(encrypted!.includes(Buffer.from("TSH"))).toBe(false)
 
   // Cross-route: the archive screen reads through the same store `/add` uses.
+  // H-60 renders the archive as list rows on mobile and cards on desktop, both in
+  // the DOM with one hidden by CSS, so this text exists twice. Assert the copy a
+  // person can see, not a single-element DOM match.
   await page.goto("/")
-  await expect(page.getByText(/1 panel · latest 12 August/)).toBeVisible()
+  await expect(page.getByText(/1 panel · latest 12 August/).filter({ visible: true })).toBeVisible()
 
   // Reload: a page refresh must not lose it — this is the state React alone cannot survive.
   await page.reload()
-  await expect(page.getByText(/1 panel · latest 12 August/)).toBeVisible()
+  await expect(page.getByText(/1 panel · latest 12 August/).filter({ visible: true })).toBeVisible()
 })
 
 // Broke by design: remove the `kind !== "blood-panel"` guard in `confirm` and drop
