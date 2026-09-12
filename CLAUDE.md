@@ -19,6 +19,26 @@ git config core.hooksPath .githooks
 
 GitHub operations use the `limone-eth` account: `gh auth switch --user limone-eth`.
 
+## Never `git add -A` in this checkout
+
+Stage explicit paths. `git add -A` has swept four separate things into unrelated
+commits here: the fleet concurrency config, two `.claude/worktrees/agent-*`
+directories (embedded git repos — git warned and the warning was missed), a
+Playwright `test-results/` artifact, and a pair of in-progress research
+documents that another session was still writing to.
+
+This checkout almost always has someone else's uncommitted work in it: fleet
+worktrees share the repo, and research and design sessions edit files here
+directly. A commit that quietly includes them attributes their work to your
+message and can capture a file mid-write.
+
+```bash
+git add DESIGN.md docs/stories/H-44.md     # yes
+git add -A                                  # no
+```
+
+Run `git status` before every commit and stage what you actually changed.
+
 ## Deployment
 
 Vercel project `healthsend`, connected to this repo — pushes to `main` deploy.
