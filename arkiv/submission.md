@@ -15,8 +15,8 @@ Mission selected: **02 — Built to expire.** Also entered for Best Use of Arkiv
 
 | Entity | Created by | Creation transaction | State |
 |---|---|---|---|
-| `0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3` | `0x44757555…80d3A` (demo sender) | [`0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7`](https://tiramisu.explorer.arkiv.network/tx/0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7) (block 351104) | **Live** until block 653502. It is the README's demo link: 3 files, `filetype=mixed`, blinded `recipient`/`label`. |
-| `0xc700be5fade0b91323acd45634d13a9097cf4a291db9ef99dae94a5d5a905b91` | `0x44757555…80d3A` (demo sender) | [`0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d`](https://tiramisu.explorer.arkiv.network/tx/0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d) (block 373909) | **Live** until block 4002706 (6 December 2026). v3 grant, Lit Chipotle key release under the fixed action (H-72), no code. 1 synthetic PDF; opened successfully after the action swap. |
+| `0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3` | `0x44757555…80d3A` (demo sender) | [`0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7`](https://tiramisu.explorer.arkiv.network/tx/0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7) (block 351104) | **Live** until block 653502. A v1 grant from before the split key (its payload wraps the content key, the design [What expiry does and does not do](../README.md#what-expiry-does-and-does-not-do) retires): 3 files, `filetype=mixed`, blinded `recipient`/`label`. Kept as evidence, no longer the demo link. |
+| `0xc700be5fade0b91323acd45634d13a9097cf4a291db9ef99dae94a5d5a905b91` | `0x44757555…80d3A` (demo sender) | [`0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d`](https://tiramisu.explorer.arkiv.network/tx/0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d) (block 373909) | **Live** until block 4002706 (6 December 2026). v3 grant, Lit Chipotle key release under the fixed action (H-72), no code. 1 synthetic PDF; opened successfully after the action swap. The README's demo link. |
 | `0xdc828120d7507b95526df4235dcc2dacf860df036a352743230927c3b786d42a` | `0x44757555…80d3A` (demo sender) | [`0xf2ac28b6a081a6ecebeb5e485b9a8ac8dc1072325816e31a0493d57f0c6dbd47`](https://tiramisu.explorer.arkiv.network/tx/0xf2ac28b6a081a6ecebeb5e485b9a8ac8dc1072325816e31a0493d57f0c6dbd47) (block 373027) | **Live** until block 4001826 (6 December 2026). v2 grant, key-share holder, four-digit code. 1 synthetic PDF. |
 | `0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905` | `0x3579…682C` (funder / test signer) | [`0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6`](https://tiramisu.explorer.arkiv.network/tx/0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6) | **Expired on its own**, 60-second lifetime. Recorded run: [`arkiv/evidence/mission-02-expiry.txt`](./evidence/mission-02-expiry.txt). |
 
@@ -81,7 +81,7 @@ README sections:
 - [What expiry does and does not do](../README.md#what-expiry-does-and-does-not-do)
 - [Verifying the claims](../README.md#verifying-the-claims)
 
-Video timestamps: *added once the demo recording exists.*
+Demo video: <https://youtu.be/3vc52Wtfm5s>
 
 ## Known limitations
 

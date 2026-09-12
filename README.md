@@ -7,7 +7,7 @@ set how long they can see them. Then send the link over WhatsApp or email. They 
 no wallet. When the time is up, the link stops opening on its own. Nobody has to remember to revoke
 anything.
 
-**Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · Built at ETHRome 2026 · MIT licence
+**Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · **[Demo video](https://youtu.be/3vc52Wtfm5s)** · Built at ETHRome 2026 · MIT licence
 · Bounties: **Swarm**, **Arkiv** (Mission 02, Built to expire, and Best Use)
 
 - [Try it in two minutes](#try-it-in-two-minutes)
@@ -34,13 +34,15 @@ ended; it's not something we decide.
 ## Try it in two minutes
 
 **As a recipient (no setup at all):**
-**[open a live send →](https://healthsend.vercel.app/s/0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3#ugjTYmA8gV5bdy6hLXNGxc3g3_bRQEy-0a2tA_3XPww)**
-in a private window. It holds three synthetic health documents, shared for seven days from
-12 September 2026.
+**[open a live share →](https://healthsend.vercel.app/s/xwC-X63guRMjrNRWNNE6kJfPSikdue-Z2ulKXVqQW5E#P2STNZ6_HsL3KdTVY--MJw)**
+in a private window. It holds one synthetic PDF, a mock vitamin D panel, and stays open until
+6 December 2026. Its second key half is released by Lit Chipotle after a check against Arkiv.
 - No sign-in is offered, and there is no download button.
 - The countdown comes from a real block height, not a timer in the page.
-- After the window closes, the same URL shows "This link has expired", and nobody will have done
-  anything.
+- When it ends, the same URL shows "This link has expired", and nobody will have done anything. To
+  watch that happen today, make a 2-minute share as a sender (below).
+- [`arkiv/submission.md`](./arkiv/submission.md) has a second live share that asks for a four-digit
+  code.
 
 **As a sender:**
 
@@ -158,7 +160,7 @@ it, be compelled to, or get it wrong, and nobody outside could tell. On Arkiv:
 | Where | What it does with Arkiv |
 |---|---|
 | [`lib/arkiv.ts`](./lib/arkiv.ts) | Writes grants with typed attributes (`app`, `kind`, `sender`, `filetype`, `file_count`, `recipient`, `label`, `expires_block`) and `atBlock` expiry. Also the dashboard's compound query, and the binding query (`$owner`, `$expiresAt`) a key release uses |
-| [`lib/key-release/chipotle-action.js`](./lib/key-release/chipotle-action.js) | The Lit action: re-checks the grant's commitment, then queries Arkiv directly before releasing piece 2 |
+| [`lib/key-release/chipotle-action.js`](./lib/key-release/chipotle-action.js) | The Lit action: decrypts first, reads the grant it was sealed for (id, owner, deadline, Swarm reference) from inside the ciphertext, then queries Arkiv for exactly that grant before releasing piece 2 |
 | [`app/api/holder/unlock/route.ts`](./app/api/holder/unlock/route.ts) | The holder's check that the grant is still live before it serves anything |
 | [`app/(sender)/shares/page.tsx`](./app/(sender)/shares/page.tsx) | Your shares: live grants, their countdowns, ending one early |
 | [`arkiv/schema.md`](./arkiv/schema.md) · [`friction.md`](./friction.md) | Attributes, queries and lifetime (its payload section is the superseded v1 model; the current payload is `GrantPayload` in `lib/arkiv.ts`), and what broke along the way |
@@ -268,7 +270,7 @@ Two things can't be scripted, so do them first:
 pnpm verify:crypto        # split key round-trips; the holder's own view can't decrypt; no key in the commitment
 pnpm verify:expiry 60     # writes a 60-second grant, runs the same query before and after, no delete call
 pnpm e2e                  # recipient states in a clean browser: expired, ended early, unavailable, wrong link
-RUN_CHIPOTLE_LIVE_PROBE=1 pnpm verify:chipotle-adapter-live   # Lit refuses a release for a grant Arkiv doesn't have
+RUN_CHIPOTLE_LIVE_PROBE=1 pnpm verify:chipotle-adapter-live   # Lit is reachable and permits exactly one action (the refusal stage is being reworked)
 ```
 
 A recorded Mission 02 run against Tiramisu. The full file,
