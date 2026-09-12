@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# This repository commits as limone-eth, always.
+#
+# It is enforced here rather than trusted to config because the failure is
+# silent and only visible later: a commit lands under the wrong name, gets
+# pushed, and fixing it means rewriting published history. Cheaper to refuse.
+
+EXPECTED_NAME="limone-eth"
+AUTHOR=$(git var GIT_AUTHOR_IDENT)
+NAME=${AUTHOR%% <*}
+
+if [ "$NAME" != "$EXPECTED_NAME" ]; then
+  cat >&2 <<MSG
+
+  Refusing to commit as "$NAME".
+
+  This repository commits as "$EXPECTED_NAME". Fix it with:
+
+      git config user.name "limone-eth"
+
+  If you passed -c user.name=... on the command line, drop it and let the
+  repository config decide.
+
+MSG
+  exit 1
+fi
