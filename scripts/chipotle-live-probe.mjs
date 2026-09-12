@@ -8,12 +8,13 @@
  * beyond what a single fabricated, disposable release attempt costs: the
  * grant id, owner, and ciphertext it uses cannot correspond to anything Lit
  * or Arkiv has a real record of. A pass proves the endpoint resolves,
- * answers HTTP, the configured PKP authorizes exactly one action, that
- * action is invocable, and — the one property that actually matters — a
- * real enclave refuses to release for a grant Arkiv has no record of. It
- * does not prove a live release for a grant that actually exists; that
- * needs real asset/grant issuance and is explicitly out of scope for this
- * story (see docs/stories/H-65.md, "Non-goals").
+ * answers HTTP, the configured group permits exactly one action and
+ * contains the configured PKP, that action is invocable, and — the one
+ * property that actually matters — a real enclave refuses to release for a
+ * grant Arkiv has no record of. It does not prove a live release for a
+ * grant that actually exists; that needs real asset/grant issuance and is
+ * explicitly out of scope for this story (see docs/stories/H-65.md,
+ * "Non-goals").
  *
  * Per docs/stories/H-65.md, "Credentials": a worker cannot create a Lit
  * account, mint a usage key, or publish the action this adapter needs. In
@@ -41,18 +42,19 @@ if (process.env.RUN_CHIPOTLE_LIVE_PROBE !== "1") {
   console.log("Skipped — this probe makes real network calls, so it is opt-in only.")
   console.log("Set RUN_CHIPOTLE_LIVE_PROBE=1 to run it. Configuration that would be used:")
   console.log({
-    endpoint: process.env.NEXT_PUBLIC_CHIPOTLE_ENDPOINT || "(unset)",
     actionCid: process.env.NEXT_PUBLIC_CHIPOTLE_ACTION_CID || "(unset)",
-    pkpPublicKey: process.env.NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY || "(unset)",
+    pkpId: process.env.NEXT_PUBLIC_CHIPOTLE_PKP_ID || "(unset)",
+    groupId: process.env.NEXT_PUBLIC_CHIPOTLE_GROUP_ID || "(unset)",
     usageApiKey: process.env.NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY ? "(set)" : "(unset)",
   })
   process.exit(2)
 }
 
-const { readChipotleConfig, createHttpChipotleClient } = await import("../lib/key-release/chipotle.ts")
+const { readChipotleConfig, createHttpChipotleClient, CHIPOTLE_API_BASE } = await import("../lib/key-release/chipotle.ts")
 const { encodeGrantBinding, toHex } = await import("../lib/crypto.ts")
 
 console.log(`Chipotle adapter live probe — ${new Date().toISOString()}`)
+console.log(`Base URL: ${CHIPOTLE_API_BASE}`)
 console.log("Writes nothing to Arkiv. All inputs below are disposable.\n")
 
 function blocked(stage, error) {
@@ -72,28 +74,23 @@ const config = readChipotleConfig()
 
 // --- stage 1: credentials ---------------------------------------------------
 const missing = []
-if (!config.endpoint) missing.push("NEXT_PUBLIC_CHIPOTLE_ENDPOINT")
 if (!config.actionCid) missing.push("NEXT_PUBLIC_CHIPOTLE_ACTION_CID")
-if (!config.pkpPublicKey) missing.push("NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY")
+if (!config.pkpId) missing.push("NEXT_PUBLIC_CHIPOTLE_PKP_ID")
+if (!config.groupId) missing.push("NEXT_PUBLIC_CHIPOTLE_GROUP_ID")
 if (!config.usageApiKey) missing.push("NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY")
 if (missing.length > 0) {
   blocked(
     "credentials",
     new Error(
-      `Chipotle needs an account, a published action, and a usage key. Missing: ${missing.join(", ")}. ` +
+      `Chipotle needs an account, a published action, a group, and a usage key. Missing: ${missing.join(", ")}. ` +
         "Create them at developer.litprotocol.com (see docs/stories/H-65.md, \"Credentials\"), then set these.",
     ),
   )
 }
-console.log("stage 1/5  credentials configured — endpoint, action CID, PKP, and usage key are all set")
+console.log("stage 1/5  credentials configured — action CID, PKP, group, and usage key are all set")
 
 // --- stage 2: endpoint resolves ---------------------------------------------
-let hostname
-try {
-  hostname = new URL(config.endpoint).hostname
-} catch (error) {
-  blocked("credentials", error)
-}
+const hostname = new URL(CHIPOTLE_API_BASE).hostname
 try {
   const resolved = await lookup(hostname)
   console.log(`stage 2/5  endpoint resolves — ${hostname} -> ${resolved.address}`)
@@ -105,29 +102,43 @@ try {
 const client = createHttpChipotleClient(config)
 try {
   await client.ping()
-  console.log(`stage 3/5  endpoint answers HTTP — ${config.endpoint}`)
+  console.log(`stage 3/5  endpoint answers HTTP — ${CHIPOTLE_API_BASE}`)
 } catch (error) {
   blocked("reachable", error)
 }
 
-// --- stage 4: exactly one action is authorized on the PKP, and it is invocable ---
-let actions
+// --- stage 4: the group permits exactly the one configured action, and contains the PKP ---
+let auth
 try {
-  actions = await client.listAuthorizedActions(config.pkpPublicKey)
+  auth = await client.getGroupAuthorization(config.groupId)
 } catch (error) {
   blocked("single-action", error)
 }
-if (actions.length !== 1 || actions[0] !== config.actionCid) {
+if (!auth.pkpInGroup) {
+  failed(
+    "single-action",
+    new Error(`PKP ${config.pkpId} is not a member of group ${config.groupId} — list_wallets_in_group does not report it`),
+  )
+}
+if (auth.hashedActionCids.some((hash) => { try { return BigInt(hash) === BigInt(0) } catch { return false } })) {
+  failed(
+    "single-action",
+    new Error(`group ${config.groupId} permits all actions via the 0 wildcard — see developer.litprotocol.com/architecture/groups`),
+  )
+}
+const { hashActionCid } = await import("../lib/key-release/chipotle.ts")
+const expectedHash = hashActionCid(config.actionCid)
+if (auth.hashedActionCids.length !== 1 || auth.hashedActionCids[0] !== expectedHash) {
   failed(
     "single-action",
     new Error(
-      `PKP ${config.pkpPublicKey} authorizes ${actions.length} action(s) (${actions.join(", ") || "none"}); ` +
-        `expected exactly one, matching the configured action ${config.actionCid}. A second, more ` +
-        "permissive action on this PKP bypasses this adapter's gate entirely — see docs/stories/H-65.md.",
+      `group ${config.groupId} permits ${auth.hashedActionCids.length} action(s) (${auth.hashedActionCids.join(", ") || "none"}); ` +
+        `expected exactly one, matching the configured action ${config.actionCid} (hash ${expectedHash}). A second, more ` +
+        "permissive action on this group bypasses this adapter's gate entirely — see docs/stories/H-65.md.",
     ),
   )
 }
-console.log(`stage 4/5  action invocable — PKP ${config.pkpPublicKey} authorizes exactly this one action`)
+console.log(`stage 4/5  action invocable — group ${config.groupId} permits exactly this one action and contains the PKP`)
 
 // --- stage 5: a release against a fabricated, nonexistent grant is refused ---
 //
@@ -153,10 +164,10 @@ const fabricatedCiphertext = toHex(crypto.getRandomValues(new Uint8Array(32)))
 try {
   const response = await client.invokeAction({
     actionCid: config.actionCid,
-    pkpPublicKey: config.pkpPublicKey,
     usageApiKey: config.usageApiKey,
     jsParams: {
       mode: "release",
+      pkpId: config.pkpId,
       ciphertext: btoa(fabricatedCiphertext),
       commitment,
       grantId: fabricatedBinding.grantId,
@@ -180,9 +191,9 @@ try {
   failed("invoke", error)
 }
 
-console.log("\nLIVE: the endpoint resolved and answered, the PKP authorizes exactly the one configured action,")
-console.log("and a real enclave correctly refused to release for a grant that Arkiv has no record of — the")
-console.log("exact fail-closed behavior an expired or absent grant must produce.")
+console.log("\nLIVE: the endpoint resolved and answered, the group permits exactly the one configured action and")
+console.log("contains the PKP, and a real enclave correctly refused to release for a grant that Arkiv has no")
+console.log("record of — the exact fail-closed behavior an expired or absent grant must produce.")
 console.log("Not tested here: release for a grant Arkiv actually has a live record for — that needs real")
 console.log("asset/grant issuance and is out of this proof's scope (see docs/stories/H-65.md, \"Non-goals\").")
 process.exit(0)

@@ -52,11 +52,11 @@ test("/ — the last archive row clears the tab bar at 400px", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Your archive" })).toBeVisible()
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
 
-  // "Notes" is the last of the four actionable buckets — Identity, the fifth row, never
-  // opens (see app/(sender)/page.tsx's IdentityRow comment), so it is not this test's target.
-  const notes = page.getByRole("link", { name: /Notes/ })
-  await expect(notes).toBeVisible()
-  await notes.click()
+  // H-66: an empty archive is the empty-state card's own "Add blood tests" CTA, the
+  // last actionable element on the page — not a bucket row (those are gone).
+  const addBloodTests = page.getByRole("link", { name: "Add blood tests" }).last()
+  await expect(addBloodTests).toBeVisible()
+  await addBloodTests.click()
   await expect(page).toHaveURL(/\/add$/)
 })
 

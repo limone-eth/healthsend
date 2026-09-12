@@ -35,6 +35,7 @@
     "verify:taco-unlock": "node --experimental-strip-types scripts/taco-unlock-proof.mjs",
     "verify:chipotle-adapter": "node --experimental-strip-types scripts/chipotle-adapter-proof.mjs",
     "verify:chipotle-adapter-live": "node --experimental-strip-types scripts/chipotle-live-probe.mjs",
+    "chipotle:print-cid": "node --experimental-strip-types scripts/chipotle-print-action-cid.mjs",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm verify:e2e-server-select && pnpm e2e",
