@@ -4,9 +4,14 @@
  * The recipient's view.
  *
  * No account, no wallet, no Swarm ID. The link carries half the key in its
- * fragment; the Arkiv grant carries the other half until it expires. This page
- * is the only place both halves ever meet, and they meet in the recipient's
- * browser rather than on a server that could be asked to keep serving.
+ * fragment; the holder keeps the other half under a TTL and hands it over only
+ * while the Arkiv grant is still live. The grant itself carries no key material
+ * — that was the whole point of the split-key rewrite, since anything written
+ * to Arkiv survives in the creating transaction's calldata permanently.
+ *
+ * This page is the only place both halves ever meet, and they meet in the
+ * recipient's browser rather than on a server that could be asked to keep
+ * serving.
  */
 
 import { use, useEffect, useRef, useState } from "react"
