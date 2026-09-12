@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { ArrowDown, Eye, FileText, FileX } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
-import { recordsFromPdfFiles } from "@/lib/archive-input"
+import { NotAPdfError, recordsFromPdfFiles } from "@/lib/archive-input"
 import { addRecordsToMyArchive, loadMyArchive } from "@/lib/archive-store"
 import type { ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
 import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
@@ -108,7 +108,13 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
       setAdding({ status: "idle" })
       await refreshArchive()
     } catch (cause) {
-      setAdding({ status: "error", message: (cause as Error).message })
+      setAdding({
+        status: "error",
+        message:
+          cause instanceof NotAPdfError
+            ? cause.message
+            : `Could not add ${files.length === 1 ? "this PDF" : "these PDFs"}: ${(cause as Error).message}`,
+      })
     }
   }
 
@@ -207,7 +213,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
       )}
       {adding.status === "error" && (
         <div role="alert" className="rounded-inset border border-error/20 bg-grouped p-[18px] text-[15px] text-error">
-          Could not add these PDFs: {adding.message}
+          {adding.message}
         </div>
       )}
 

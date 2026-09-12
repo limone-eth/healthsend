@@ -291,7 +291,11 @@ test("a non-PDF renamed .pdf is rejected and nothing is uploaded", async ({ page
   })
   await page.getByRole("button", { name: "Add to archive" }).click()
 
-  await expect(page.getByText(/not-really-a-pdf\.pdf/)).toBeVisible()
+  // The rejection says the file name once and ends the sentence, with no "Could not add
+  // these PDFs: Not a PDF:" stutter. Broke by design: restore the old message in
+  // lib/archive-input.ts's NotAPdfError and this goes red.
+  await expect(page.getByText("“not-really-a-pdf.pdf” isn't a PDF, so nothing was added.", { exact: true })).toBeVisible()
+  await expect(page.getByText(/Could not add/)).toHaveCount(0)
   await expect(page).toHaveURL(/\/add$/)
   expect(backend.blobs.size).toBe(0)
 })

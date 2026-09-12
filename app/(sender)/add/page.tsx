@@ -33,7 +33,7 @@ import {
   UserCircle,
 } from "@phosphor-icons/react"
 import { Action, Card, Field, InsetNote, ScreenHeader, inputClass } from "@/components/ui"
-import { recordsFromPdfFiles, recordsFromUpload } from "@/lib/archive-input"
+import { NotAPdfError, recordsFromPdfFiles, recordsFromUpload } from "@/lib/archive-input"
 import { addRecordsToMyArchive } from "@/lib/archive-store"
 
 type ArchiveKind = "blood-panel" | "wearable-series" | "document"
@@ -247,7 +247,11 @@ function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
       await addRecordsToMyArchive(records)
       router.replace("/")
     } catch (cause) {
-      setError((cause as Error).message)
+      setError(
+        cause instanceof NotAPdfError
+          ? cause.message
+          : `${isDocument ? (files.length === 1 ? "Could not add this PDF" : "Could not add these PDFs") : "Could not add this file"}: ${(cause as Error).message}`,
+      )
       setSaving(false)
     }
   }
@@ -288,7 +292,7 @@ function FilePicker({ kind, onBack }: { kind: Kind; onBack: () => void }) {
           )}
           {error && (
             <p role="alert" className="text-sm text-error">
-              {isDocument ? "Could not add these PDFs" : "Could not add this file"}: {error}
+              {error}
             </p>
           )}
           <Action

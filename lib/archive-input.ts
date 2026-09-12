@@ -40,6 +40,23 @@ export async function recordsFromUpload(params: {
  * not a PDF, the whole pick is rejected and named, rather than silently
  * archiving the rest — see docs/stories/H-63.md.
  */
+/**
+ * A pick that contains something other than a PDF. Its message is complete,
+ * user-facing copy on its own — callers show it as is, without a "Could not
+ * add…" prefix, so the file name is said once and "PDF" is not repeated.
+ */
+export class NotAPdfError extends Error {
+  constructor(readonly fileNames: string[]) {
+    const quoted = fileNames.map((name) => `“${name}”`)
+    super(
+      fileNames.length === 1
+        ? `${quoted[0]} isn't a PDF, so nothing was added.`
+        : `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)} aren't PDFs, so nothing was added.`,
+    )
+    this.name = "NotAPdfError"
+  }
+}
+
 export async function recordsFromPdfFiles(files: File[]): Promise<DocumentRecord[]> {
   if (files.length === 0) throw new Error("Pick at least one PDF")
 
@@ -48,7 +65,7 @@ export async function recordsFromPdfFiles(files: File[]): Promise<DocumentRecord
   )
   const notPdf = read.filter(({ bytes }) => !looksLikePdf(bytes)).map(({ file }) => file.name)
   if (notPdf.length > 0) {
-    throw new Error(`Not a PDF: ${notPdf.join(", ")}`)
+    throw new NotAPdfError(notPdf)
   }
 
   const importedAt = new Date().toISOString()

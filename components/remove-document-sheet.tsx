@@ -80,7 +80,9 @@ export function RemoveDocumentSheet({
           <div className="h-1 w-[38px] rounded-full bg-silver" />
         </div>
 
-        <div className="flex w-full flex-col gap-[18px] px-[26px] pb-[26px] pt-1.5">
+        {/* i90sl keeps its 26px grabber row at every width; the grabber itself is phone-only,
+            so desktop takes that row back as padding rather than crowding the title against the edge. */}
+        <div className="flex w-full flex-col gap-[18px] px-[26px] pb-[26px] pt-1.5 md:pt-8">
           <h2
             id="remove-document-title"
             className="text-[26px] font-bold leading-[1.2] tracking-[-0.6px] text-ink"
