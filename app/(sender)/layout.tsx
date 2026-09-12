@@ -14,7 +14,7 @@
 
 import type { ReactNode } from "react"
 import { useRouter, usePathname } from "next/navigation"
-import { CONNECT_CONTAINER_ID, type ConnectionInfo } from "@/lib/swarm"
+import { CONNECT_CONTAINER_ID, disconnect, type ConnectionInfo } from "@/lib/swarm"
 import { Card, Mono } from "@/components/ui"
 import { SenderChrome, type SenderDestination } from "@/components/chrome"
 import { useSenderIdentity, type SenderIdentity } from "@/components/use-sender-identity"
@@ -31,13 +31,13 @@ export default function SenderLayout({ children }: { children: ReactNode }) {
   return (
     <SenderChrome
       active={active}
-      accountName={info.identity?.name ?? "Sign in"}
       onNavigate={(destination) => {
         if (destination === "archive") router.push("/")
         if (destination === "shares") router.push("/shares")
         // "assistant" has no route yet; the nav item is inert until that story lands.
       }}
       onNewShare={() => router.push("/new")}
+      onSignOut={() => void disconnect()}
     >
       <div className="mx-auto w-full max-w-[1176px]">
         <header className="mb-10">

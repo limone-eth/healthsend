@@ -111,7 +111,7 @@ export default function ImportReviewPage() {
   const reviews = FIXTURES.map(buildReview)
 
   return (
-    <SenderChrome active="archive" accountName={SENDER_ACCOUNT_NAME}>
+    <SenderChrome active="archive">
       <ReviewScreen reviews={reviews} />
     </SenderChrome>
   )
