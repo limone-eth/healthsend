@@ -143,9 +143,12 @@ export type ChipotleConfig = {
   enabled: boolean
   /** IPFS CID of the immutable Lit Action published for this adapter. Run by this, never by `code`. */
   actionCid: string
-  /** The PKP whose TEE-derived key this adapter's action is allowed to use — `list_wallets`' `id` field. */
+  /**
+   * The PKP whose TEE-derived key this adapter's action is allowed to use — its `wallet_address`
+   * from `list_wallets`. Not the `id` field: a live account reports `id: "0"` for every wallet.
+   */
   pkpId: string
-  /** The Chipotle group scoping the usage key below — `list_groups`' `id` field. */
+  /** The Chipotle group scoping the usage key below — its integer id (`list_groups` shows it as 0x…01 for group 1). */
   groupId: string
   /** A restricted usage key scoped to this group — never the account's master key. */
   usageApiKey: string
@@ -565,7 +568,7 @@ async function callChipotle(path: string, init: RequestInit): Promise<unknown> {
  * requests one large page and refuses rather than silently truncate if the
  * result looks like it might have overflowed that page.
  */
-async function fetchList(path: string, apiKey: string): Promise<Array<{ id: string }>> {
+async function fetchList(path: string, apiKey: string): Promise<Array<{ id: string; wallet_address?: string }>> {
   const body = await callChipotle(`${path}&page_number=0&page_size=${LIST_PAGE_SIZE}`, {
     method: "GET",
     headers: authHeaders(apiKey),
@@ -574,7 +577,7 @@ async function fetchList(path: string, apiKey: string): Promise<Array<{ id: stri
   if (body.length >= LIST_PAGE_SIZE) {
     throw new Error(`Chipotle ${path} returned ${body.length} items — cannot confirm the full list fits on one page`)
   }
-  return body as Array<{ id: string }>
+  return body as Array<{ id: string; wallet_address?: string }>
 }
 
 /**
@@ -598,7 +601,13 @@ export function createHttpChipotleClient(config: ChipotleConfig): ChipotleClient
       ])
       return {
         hashedActionCids: actions.map((action) => action.id.toLowerCase()),
-        pkpInGroup: wallets.some((wallet) => wallet.id === config.pkpId),
+        // Matched on wallet_address, not id: on a live account (2026-09-12)
+        // list_wallets and list_wallets_in_group report `id: "0"` for every
+        // wallet, the Account Master Wallet included, so an id match cannot
+        // tell the group's wallet from the master one.
+        pkpInGroup: wallets.some(
+          (wallet) => wallet.wallet_address?.toLowerCase() === config.pkpId.toLowerCase(),
+        ),
       }
     },
     async invokeAction({ actionCid, usageApiKey, jsParams }) {
