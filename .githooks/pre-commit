@@ -5,23 +5,42 @@
 # It is enforced here rather than trusted to config because the failure is
 # silent and only visible later: a commit lands under the wrong name, gets
 # pushed, and fixing it means rewriting published history. Cheaper to refuse.
+#
+# Author AND committer are both checked, and so is the address. An unattended
+# worker in a git worktree inherits this repository's config, but an engine that
+# exports GIT_COMMITTER_NAME, or a command that passes -c user.email=..., would
+# slip past a name-only check on the author alone.
 
 EXPECTED_NAME="limone-eth"
-AUTHOR=$(git var GIT_AUTHOR_IDENT)
-NAME=${AUTHOR%% <*}
+EXPECTED_EMAIL="simonestaffa96@gmail.com"
 
-if [ "$NAME" != "$EXPECTED_NAME" ]; then
-  cat >&2 <<MSG
+check() {
+  role="$1"
+  ident="$2"
+  name=${ident%% <*}
+  rest=${ident#*<}
+  email=${rest%%>*}
 
-  Refusing to commit as "$NAME".
+  if [ "$name" != "$EXPECTED_NAME" ] || [ "$email" != "$EXPECTED_EMAIL" ]; then
+    cat >&2 <<MSG
 
-  This repository commits as "$EXPECTED_NAME". Fix it with:
+  Refusing to commit: $role is "$name <$email>".
+
+  This repository commits as "$EXPECTED_NAME <$EXPECTED_EMAIL>", as both author
+  and committer. Fix it with:
 
       git config user.name "limone-eth"
+      git config user.email "simonestaffa96@gmail.com"
 
-  If you passed -c user.name=... on the command line, drop it and let the
-  repository config decide.
+  If you passed -c user.name=... or -c user.email=... on the command line, drop
+  it and let the repository config decide. If an environment variable is setting
+  it (GIT_AUTHOR_NAME, GIT_COMMITTER_EMAIL and friends), unset that instead.
 
 MSG
-  exit 1
-fi
+    return 1
+  fi
+  return 0
+}
+
+check author "$(git var GIT_AUTHOR_IDENT)" || exit 1
+check committer "$(git var GIT_COMMITTER_IDENT)" || exit 1
