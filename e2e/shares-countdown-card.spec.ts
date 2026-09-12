@@ -31,28 +31,39 @@ async function expectCardHoldsItsContent(page: Page) {
   const word = page.getByText("CLOSING", { exact: true }).filter({ visible: true }).first()
   await expect(word).toBeVisible()
   const card = word.locator("xpath=ancestor::div[contains(@class,'rounded-control')][1]")
-  const date = card.getByText(/^Expires /)
-  const remaining = card.getByText(/ left$/)
+  await expect(card.getByText(/^Expires /)).toContainText(" at ")
 
-  const cardBox = (await card.boundingBox())!
-  const wordBox = (await word.boundingBox())!
-  const dateBox = (await date.boundingBox())!
-  const remainingBox = (await remaining.boundingBox())!
+  // Every rect is read in ONE evaluate, so all of them come from the same layout frame. Separate
+  // boundingBox() calls raced the share's status chip swapping in (skeleton -> chip) and read
+  // the card and its word from two different frames, 0.75px apart (merged-tree run, 2026-09-13).
+  const rects = await card.evaluate((cardEl) => {
+    const find = (re: RegExp) =>
+      Array.from(cardEl.querySelectorAll("span")).find((el) => re.test(el.textContent ?? "")) as HTMLElement
+    const box = (el: Element) => {
+      const r = el.getBoundingClientRect()
+      return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, height: r.height }
+    }
+    return {
+      card: box(cardEl),
+      word: box(find(/^CLOSING$/)),
+      date: box(find(/^Expires /)),
+      remaining: box(find(/ left$/)),
+    }
+  })
 
-  // Everything inside the card's border.
+  const EPS = 1 // sub-pixel rounding, never a real overflow
   for (const [name, box] of [
-    ["state word", wordBox],
-    ["date line", dateBox],
-    ["time left", remainingBox],
+    ["state word", rects.word],
+    ["date line", rects.date],
+    ["time left", rects.remaining],
   ] as const) {
-    expect(box.y, `${name} top inside the card`).toBeGreaterThanOrEqual(cardBox.y)
-    expect(box.y + box.height, `${name} bottom inside the card`).toBeLessThanOrEqual(cardBox.y + cardBox.height)
-    expect(box.x + box.width, `${name} right edge inside the card`).toBeLessThanOrEqual(cardBox.x + cardBox.width)
+    expect(box.y, `${name} top inside the card`).toBeGreaterThanOrEqual(rects.card.y - EPS)
+    expect(box.bottom, `${name} bottom inside the card`).toBeLessThanOrEqual(rects.card.bottom + EPS)
+    expect(box.right, `${name} right edge inside the card`).toBeLessThanOrEqual(rects.card.right + EPS)
   }
 
   // The date line is one line of 14px text, not two.
-  expect(dateBox.height, "date line stays on one line").toBeLessThan(24)
-  await expect(date).toContainText(" at ")
+  expect(rects.date.height, "date line stays on one line").toBeLessThan(24)
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBe(0)
