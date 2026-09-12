@@ -99,6 +99,26 @@ function redis(): Redis {
   return client
 }
 
+/**
+ * A real round trip to the store — H-58/R3-003.
+ *
+ * `createSend`'s preflight (`lib/sends.ts`) needs to know the store itself is
+ * reachable, not just that its own route is configured and parses requests.
+ * This uses its own client rather than the memoized one `redis()` hands the
+ * write paths above: those benefit from the client's default retries against
+ * a transient blip mid-send, but a preflight exists to fail fast, so it
+ * disables them — a slow "Checking key-share holder" step that still ends in
+ * failure is worse than a quick one.
+ */
+export async function pingHolder(): Promise<void> {
+  const probe = new Redis({
+    url: process.env.KV_REST_API_URL!,
+    token: process.env.KV_REST_API_TOKEN!,
+    retry: false,
+  })
+  await probe.ping()
+}
+
 const key = (entityKey: string) => `healthsend:share:${entityKey.toLowerCase()}`
 const accessLogKey = (entityKey: string) => `healthsend:access:${entityKey.toLowerCase()}`
 const tombstoneKey = (entityKey: string) => `healthsend:revoked:${entityKey.toLowerCase()}`

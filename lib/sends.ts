@@ -83,25 +83,25 @@ const defaultCreateSendDependencies: CreateSendDependencies = {
 }
 
 /**
- * Reach the holder route before any send work starts.
+ * Reach the holder store itself before any send work starts.
  *
- * The empty submission is intentionally invalid. A configured route rejects it
- * with 400 before it can read Arkiv or write Redis. A missing configuration is
- * reported by the route's earlier 501 guard, and a dead route rejects fetch.
+ * H-58/R3-003: an earlier version of this posted an empty body and treated a
+ * 400 as healthy. That only proved the route was configured and parsed the
+ * request — `validateShareRequest` rejects `{}` before `putShare` is ever
+ * called, so it passed even with Redis down. The route's `GET` (see
+ * `app/api/holder/share/route.ts`) pings the store directly instead, so a
+ * dead store is reported as unavailable here rather than discovered after the
+ * grant and ciphertext are already written.
  */
 async function preflightHolder(request: typeof fetch): Promise<void> {
   let response: Response
   try {
-    response = await request("/api/holder/share", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    })
+    response = await request("/api/holder/share", { method: "GET" })
   } catch (error) {
     throw new Error(`The key-share holder is unavailable: ${(error as Error).message}`)
   }
 
-  if (response.status === 400) return
+  if (response.ok) return
 
   const detail = await response.json().catch(() => ({}))
   throw new Error(
