@@ -129,6 +129,32 @@ test.describe("the five ways a share link resolves, offline", () => {
     await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
   })
 
+  test("revoked — the sender ended it early, distinct from expiry", async ({ page, context }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    // The holder tells a revoke apart from a lapsed grant with the same 410 plus
+    // a `revoked` flag — see lib/unlock.ts and app/api/holder/unlock/route.ts.
+    await mockHolderUnlock(context, () => ({
+      status: 410,
+      body: { error: "expired", revoked: true },
+    }))
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+    await expect(page.getByText("Access to this send has ended")).toBeVisible()
+    await expect(page.getByText(/the sender ended it early/i)).toBeVisible()
+    // Direction one: a revoke must never read as the natural-expiry copy.
+    await expect(page.getByText("This link has expired")).toHaveCount(0)
+    await expect(page.getByText(/nobody ended this early/i)).toHaveCount(0)
+  })
+
   test("no-key — a link missing its fragment says so", async ({ page }) => {
     await page.goto(`/s/0x${"ef".repeat(32)}`)
     await expect(page.getByText("Incomplete link")).toBeVisible()

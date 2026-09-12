@@ -18,6 +18,7 @@ type State =
   | { status: "loading" }
   | { status: "ok"; send: OpenedSend }
   | { status: "expired" }
+  | { status: "revoked" }
   | { status: "no-key" }
   | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
@@ -46,6 +47,7 @@ export default function SharePage({ params }: { params: Promise<{ key: string }>
         <Viewer send={state.send} onExpired={() => setState({ status: "expired" })} />
       )}
       {state.status === "expired" && <Expired />}
+      {state.status === "revoked" && <Revoked />}
       {state.status === "unavailable" && <Unavailable message={state.message} />}
       {state.status === "no-key" && <NoKey />}
       {state.status === "error" && <Failed message={state.message} />}
@@ -269,7 +271,7 @@ function Expired() {
         half to put this one together with.
       </p>
       <p className="mt-3 text-sm text-muted">
-        Nobody revoked this. No job ran. The access simply ran out.
+        Nobody ended this early. No job ran. The access simply ran out.
       </p>
       {/* An earlier version of this page said there was "no key anywhere that
           opens it, including ours". That was false, and it is not the kind of
@@ -278,6 +280,34 @@ function Expired() {
         To be precise about what that does and does not mean: the encrypted document is still on
         Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Expiry ends
         access through this app. It is not erasure.
+      </p>
+    </Card>
+  )
+}
+
+/**
+ * The sender ended access before the window closed on its own.
+ *
+ * A revoke and a lapsed grant both leave the holder with no share, so they
+ * surface through the same 410 (see `lib/unlock.ts`). But they are not the
+ * same fact for the reader: nobody chose the one above, and someone did
+ * choose this one. Neither reads as a failure — the sender ending a share
+ * they made is the feature working, not an error — and neither may claim
+ * more than expiry claims: the document still exists on Swarm and in chain
+ * history, unreachable through this app rather than gone.
+ */
+function Revoked() {
+  return (
+    <Card>
+      <h1 className="text-lg font-semibold">Access to this send has ended</h1>
+      <p className="mt-2 text-sm text-muted">
+        The sender ended it early, before the window they set had closed. Nothing went wrong on
+        either side.
+      </p>
+      <p className="mt-4 text-xs text-muted">
+        To be precise about what that does and does not mean: the encrypted document is still on
+        Swarm, and the grant&rsquo;s contents remain in the transaction that created it. Ending
+        access stops it being reopened through this app. It is not erasure.
       </p>
     </Card>
   )
