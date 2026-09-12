@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import type { Icon as PhosphorIcon } from "@phosphor-icons/react"
-import { GridFour, PaperPlaneTilt, Sparkle, UserCircle } from "@phosphor-icons/react"
+import { GridFour, PaperPlaneTilt, SignOut, Sparkle } from "@phosphor-icons/react"
 import { TabBar } from "@/components/ui"
 
 /**
@@ -37,14 +37,14 @@ const DESTINATIONS: { key: SenderDestination; label: string; mobileLabel: string
 
 function Rail({
   active,
-  accountName,
   onNavigate,
   onNewShare,
+  onSignOut,
 }: {
   active: SenderDestination
-  accountName: string
   onNavigate?: (destination: SenderDestination) => void
   onNewShare?: () => void
+  onSignOut?: () => void
 }) {
   return (
     <nav className="sticky top-0 hidden h-screen shrink-0 flex-col gap-1.5 border-r border-hairline bg-surface px-2 py-7 md:flex md:w-[72px] xl:w-[264px] xl:px-5">
@@ -95,10 +95,15 @@ function Rail({
 
       <div className="h-2.5" />
 
-      <div className="flex h-11 items-center justify-center gap-3 px-0 xl:justify-start xl:px-3.5">
-        <UserCircle size={20} weight="light" className="shrink-0 text-muted" />
-        <span className="hidden truncate text-sm text-secondary xl:inline">{accountName}</span>
-      </div>
+      <button
+        type="button"
+        title="Sign out"
+        onClick={onSignOut}
+        className="flex h-11 items-center justify-center gap-3 px-0 xl:justify-start xl:px-3.5"
+      >
+        <SignOut size={20} weight="light" className="shrink-0 text-muted" />
+        <span className="hidden truncate text-sm text-secondary xl:inline">Sign out</span>
+      </button>
     </nav>
   )
 }
@@ -112,22 +117,29 @@ function Rail({
 
 export function SenderChrome({
   active,
-  accountName,
   onNavigate,
   onNewShare,
+  onSignOut,
   children,
 }: {
   active: SenderDestination
-  accountName: string
   onNavigate?: (destination: SenderDestination) => void
   onNewShare?: () => void
+  onSignOut?: () => void
   children: ReactNode
 }) {
   return (
     <div className="flex min-h-screen w-full bg-canvas">
-      <Rail active={active} accountName={accountName} onNavigate={onNavigate} onNewShare={onNewShare} />
+      <Rail active={active} onNavigate={onNavigate} onNewShare={onNewShare} onSignOut={onSignOut} />
 
-      <main className="mx-auto w-full max-w-[1080px] flex-1 px-5 py-11 pb-28 md:px-8 md:pb-11 xl:px-12">
+      {/* The mobile tab bar below is `$glass-raised` and translucent, not a
+          solid occluder someone could naively "peek past" — but it still owns
+          its full painted box: the 72px bar plus the 20px `pb-5` gap the fixed
+          wrapper holds it above the viewport edge, 92px in total. `pb-28`
+          (112px) cleared that with only 20px to spare, too tight to hold once
+          any page's last control sits close to the fold. `pb-44` reserves a
+          full spare tab-bar height above that 92px floor. */}
+      <main className="mx-auto w-full max-w-[1080px] flex-1 px-5 py-11 pb-44 md:px-8 md:pb-11 xl:px-12">
         {children}
       </main>
 

@@ -230,7 +230,7 @@ export default function WhatAreYouAdding() {
   const [selected, setSelected] = useState<Kind | null>(null)
 
   return (
-    <SenderChrome active="archive" accountName="Giulia">
+    <SenderChrome active="archive">
       {selected ? (
         <FilePicker kind={selected} onBack={() => setSelected(null)} />
       ) : (

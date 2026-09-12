@@ -18,7 +18,7 @@ export default function ChromePreview() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <SenderChrome active={active} accountName="Giulia" onNavigate={setActive}>
+      <SenderChrome active={active} onNavigate={setActive}>
         <div className="flex flex-col gap-6">
           <ScreenHeader
             title="Your archive"
