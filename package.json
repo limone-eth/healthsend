@@ -22,6 +22,7 @@
     "verify:import-review": "node --experimental-strip-types scripts/import-review-proof.mjs",
     "verify:mcp": "node --no-warnings --experimental-strip-types scripts/mcp-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
+    "verify:taco-condition": "node --experimental-strip-types scripts/arkiv-taco-condition-proof.mjs",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm e2e",
     "holder:up": "docker compose -f docker-compose.dev.yml up -d",
