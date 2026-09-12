@@ -24,7 +24,7 @@ FLEET_START_CMD=pnpm start
 # "unproven". The failure mode is a rejected handshake, which the patched build
 # retries internally.
 FLEET_ANTHROPIC_MAX_CONCURRENT=4
-FLEET_CODEX_MAX_CONCURRENT=5
+FLEET_CODEX_MAX_CONCURRENT=4
 
 # Raised to 5 for one adversarial review lane alongside four builders. Note
 # run-worker.sh's own warning: every session shares one proxy on
