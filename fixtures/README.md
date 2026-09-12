@@ -17,3 +17,15 @@ Worth sending several at once: each send gets its own content key, its own link
 secret and its own grant, so expiring one must leave the others untouched. Give
 them different windows (2 minutes, 10 minutes, 1 hour) and watch them drop out of
 the dashboard one at a time.
+
+## De-identification fixtures
+
+Two more files carry a made-up name, date of birth, address and patient
+identifier — placed somewhere a naive import would miss it — so
+`scripts/deident-proof.mjs` (`pnpm verify:deident`) has a real leak to catch,
+not just an absence to describe.
+
+| File | Kind | Where the identifier hides |
+|---|---|---|
+| `patient-panel.csv` | csv | A metadata line ahead of the real CSV header, not a data cell. |
+| `patient-summary.pdf` | pdf | Inside a PDF text run, including a name that wraps across a line. |
