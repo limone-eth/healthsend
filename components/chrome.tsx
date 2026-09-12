@@ -28,6 +28,16 @@ const DESTINATIONS: { key: SenderDestination; label: string; mobileLabel: string
   { key: "assistant", label: "Your assistant", mobileLabel: "Assistant", icon: Sparkle },
 ]
 
+// H-68: the PDF-only proof of concept has nothing for the assistant (H-22) to
+// connect to, so the rail and tab bar hide it. `/assistant` still builds and
+// loads by URL — see docs/stories/H-68.md. Flip this back to `true` (one
+// line) once the assistant can read the archive this build offers.
+const SHOW_ASSISTANT_TAB = false
+
+const VISIBLE_DESTINATIONS = SHOW_ASSISTANT_TAB
+  ? DESTINATIONS
+  : DESTINATIONS.filter((destination) => destination.key !== "assistant")
+
 // ---------------------------------------------------------------------------
 // Rail — pen ids ACUf3/HMa4U/hCcwO/LKFS1 "Rail". 264px, $surface, 1px
 // hairline right edge, 28/20 padding. Collapses to a 72px icon rail at the
@@ -56,7 +66,7 @@ function Rail({
 
       <div className="h-3.5" />
 
-      {DESTINATIONS.map((destination) => {
+      {VISIBLE_DESTINATIONS.map((destination) => {
         const Icon = destination.icon
         const isActive = destination.key === active
         return (
@@ -155,7 +165,7 @@ export function SenderChrome({
         <TabBar
           active={active}
           onSelect={(key) => onNavigate?.(key as SenderDestination)}
-          items={DESTINATIONS.map(({ key, mobileLabel, icon }) => ({ key, label: mobileLabel, icon }))}
+          items={VISIBLE_DESTINATIONS.map(({ key, mobileLabel, icon }) => ({ key, label: mobileLabel, icon }))}
         />
       </div>
     </div>

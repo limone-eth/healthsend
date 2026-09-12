@@ -83,7 +83,6 @@ export default function LandingPage() {
       <Problem />
       <HowItWorks />
       <Claim />
-      <Assistant />
       <Final />
     </main>
   )
@@ -302,24 +301,6 @@ function Claim() {
             </p>
           </div>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Assistant() {
-  return (
-    <div className="flex w-full flex-col items-center px-6 pb-11 pt-9 md:px-16 md:pb-20 md:pt-0">
-      <div className="flex w-full max-w-[1120px] flex-col gap-3 md:gap-[26px]">
-        <Eyebrow className="text-muted md:text-navy">AND YOUR ASSISTANT</Eyebrow>
-        <h2 className="text-[26px] font-semibold leading-[1.15] tracking-[-0.6px] text-ink md:w-[860px] md:text-[38px] md:font-bold md:tracking-[-0.9px]">
-          Let it read four weeks of sleep. Not your name, and not for ever.
-        </h2>
-        <p className="text-[14.5px] leading-[1.5] text-secondary md:w-[820px] md:text-[17px] md:leading-[1.55]">
-          Connect the assistant you already use to a slice of your archive for a set number of
-          weeks. It answers from your real numbers in summaries, is never told whose they are, and
-          on the date you chose it simply stops being able to read anything.
-        </p>
       </div>
     </div>
   )
