@@ -20,6 +20,7 @@
     "verify:copy": "node scripts/copy-claims-proof.mjs",
     "verify:new-expiry": "node --experimental-strip-types scripts/new-expiry-proof.mjs",
     "verify:import-review": "node --experimental-strip-types scripts/import-review-proof.mjs",
+    "verify:mcp": "node --no-warnings --experimental-strip-types scripts/mcp-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm e2e",
@@ -28,13 +29,15 @@
   },
   "dependencies": {
     "@arkiv-network/sdk": "0.8.1",
+    "@modelcontextprotocol/sdk": "1.27.1",
     "@phosphor-icons/react": "^2.1.10",
     "@snaha/swarm-id": "0.4.1",
     "@upstash/redis": "^1.38.4",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "^2.56.3"
+    "viem": "^2.56.3",
+    "zod": "4.6.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

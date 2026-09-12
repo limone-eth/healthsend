@@ -1038,67 +1038,55 @@ does not control.
 
 ### Why the connector is local, and not a remote endpoint
 
-Recorded because it will be asked again. The brief settles it at §5.3 under *"Why not
-remote MCP (decided, don't reopen)"*: a remote custom connector is a public HTTPS
-endpoint that **Claude reaches from Anthropic's cloud, even when the user is in the
-desktop app**. So a remote server has to decrypt in order to serve, which means it
-holds key material at request time and can be compelled during the window — "the
-DocSend gatekeeper wearing an MCP hat", against a product whose entire positioning is
-*except there's no DocSend*. It also costs a compliant OAuth 2.1 implementation, which
-is a day spent building the thing that weakens the story.
+This heading records the old decision so the reversal stays visible. The connector is
+now a remote MCP endpoint.
 
-**What is public either way — the claim is narrower than "no database".** There *are*
-databases in this design; they are simply not ours, and they hold nothing readable.
-Swarm holds ciphertext. Arkiv holds one grant entity per share — a Swarm reference, a
-SHA-256 commitment to the link's authenticator, and the expiry block, and **no key
-material of any kind** — and its indexed attributes are **publicly queryable**,
-which is why §6's rule is that nothing semantic goes in them and sensitive values are
-HMAC'd under a user-held key, with only timestamps left plaintext for range queries.
+The original objection assumed that there was no HealthSend gatekeeper. Under that
+premise, a remote endpoint had to be the recipient of the whole encrypted archive. It
+would keep the private key that opened the archive for the full consent window. A
+compelled or compromised server could then read more than the user selected. That was
+a sound objection to that design.
 
-So an observer of Arkiv can see *that* a share exists, to some public key, expiring on
-some date, and roughly when it was read. They cannot see who, or what. **This metadata
-exposure is identical in the local and remote designs** — it is not part of the
-trade-off, and the interface must never imply the existence of a share is secret.
+The split-key holder invalidated the premise. HealthSend already has a server-side
+gatekeeper that asks Arkiv whether a grant still exists before it completes an unlock.
+The product no longer rests on the claim that no HealthSend service can refuse access.
+The relevant question is now what a service receives and how far its power reaches.
 
-The one thing that genuinely changes with remote is not a database appearing. It is
-that **a decryption capability appears, and it sits with us**: the server becomes the
-recipient, so it must hold the private key that unwraps the grant.
+The remote MCP receives only a slice made in the browser. The browser opens the archive,
+selects the allowed records and sends no archive key and no route back to the archive.
+The endpoint stores the slice under a fresh per-grant encryption key. The store contains
+ciphertext; the bearer capability carries or derives the key. The endpoint decrypts
+separately for each request and does not persist that key.
 
-The **holder** is not that, and the difference is the whole architecture. It keeps one
-XOR half of a content key under a TTL. It never receives the other half, never sees the
-link fragment, and never touches the ciphertext — so it cannot decrypt anything, alone
-or under compulsion, and a dump of it yields nothing. A remote connector would hold a
-whole capability. The holder holds half of one, and its only power is to refuse to
-complete it. That is the delta, and it should be described in exactly those terms
-rather than as "less secure".
+The browser signs once at consent with the existing `signedMessage` scheme and the
+`mcp` action. That signed request mints the bearer capability and pairing code. This is
+not OAuth. The capability cannot extend the Arkiv grant. Before every tool response,
+the endpoint asks Arkiv whether the grant still exists. If Arkiv says it does not, the
+endpoint serves nothing. If Arkiv cannot answer, the endpoint also serves nothing.
+Every tool call is checked against the scoped records, and an out-of-scope request is
+refused rather than represented as an empty result.
 
-It exists because the grant cannot carry key material: a payload written to Arkiv
-survives in the creating transaction's calldata permanently, whatever the entity's
-expiry says. That finding rewrote this architecture, and it is set out in the README
-under *"What expiry does and does not do"*.
+The assistant receives a per-grant pseudonym, not the sender's stable derived address.
+The assistant is never told whose numbers these are. This sentence is deliberately
+narrower than a claim that identity can never be inferred from the records or from a
+conversation.
 
-**What local genuinely costs, stated plainly** — a remote endpoint is easier and more
-portable, and pretending otherwise would be dishonest:
+**The remaining exposure is real.** A running endpoint must see one active grant's
+scoped slice while it answers. A stolen bearer capability can open that same slice
+until Arkiv expires the grant. A compelled or compromised running service can see it
+during that window. The boundary is one grant's selected records and Arkiv expiry, not
+the whole archive and not an indefinite server-held key. A dump of the store alone has
+ciphertext without the nearby key needed to read it.
 
-- The connector only answers **while that machine is awake and online.** Ask from a
-  phone in a waiting room and there is nothing there. This is the real limitation, and
-  it is not a copy problem.
-- Reach is per-machine and per-host. Hosts that run local servers work; hosts that
-  reach connectors from their own cloud cannot.
-- Every install is a six-step flow with a third-party dialog in the middle (screen I).
+Anything the assistant writes into its own conversation history can remain on that
+assistant company's systems after the grant ends. Expiry stops new reads; it cannot
+remove an answer already returned. Screen 4.1 and the permission sheet state both facts
+before consent.
 
-The brief parks the honest version as where-next, not weekend: a **hosted tier** where
-the remote server holds only the scoped, time-bound ephemeral key, so the trusted base
-grows from "your machine" to "your machine + our server, one slice, one window." If
-that is ever built, the design obligation is that the user *chooses* it knowingly — a
-tier selector that states the trust difference in the same plain language as the rest
-of the product, never a silent default. It is not drawn.
-
-**Liveness, not analytics.** The connected card shows "checked 2 minutes ago" so a
-laptop that is asleep or offline is visibly stale rather than silently wrong. If the
-poll is failing, the chip becomes **Reconnecting** (`chalk`/`umber`) — a recoverable
-connectivity state, and the parent kit's reject list already forbids dressing one as
-an alarm-red error.
+The endpoint is internet-reachable, so it rate-limits capability and network sources,
+caps request size and range width, and refuses when the abuse-control store is
+unavailable. These controls reduce scraping and resource abuse. They do not turn a
+bearer capability into an identity or remove the running-server exposure above.
 
 ### Top bar (recipient)
 
