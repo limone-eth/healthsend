@@ -1,19 +1,28 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   CalendarBlank,
   CaretDown,
   CaretRight,
   Check,
+  CheckCircle,
+  Copy,
   Files,
   FileText,
+  Fingerprint,
+  FirstAidKit,
+  LinkSimple,
   PaperPlaneTilt,
   UploadSimple,
+  UserCircle,
+  type Icon as PhosphorIcon,
 } from "@phosphor-icons/react"
 import { createSend, type CreateSendResult } from "@/lib/sends"
-import { ARKIV_EXPLORER } from "@/lib/arkiv"
-import { Action, Card, Field, ScreenHeader, inputClass, Mono, timeLeft } from "@/components/ui"
+import { classifyBundle } from "@/lib/envelope"
+import type { FileKind } from "@/lib/arkiv"
+import { Action, Card, Field, ScreenHeader, inputClass } from "@/components/ui"
 import { DemoNotice } from "@/components/demo-notice"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 
@@ -96,6 +105,7 @@ export default function NewSendPage() {
 }
 
 function ComposeSend({ canUpload }: { canUpload: boolean }) {
+  const router = useRouter()
   const [files, setFiles] = useState<File[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [expanded, setExpanded] = useState(false)
@@ -108,6 +118,11 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
   const [mobileStep, setMobileStep] = useState<1 | 2>(1)
   const [stage, setStage] = useState<string | null>(null)
   const [result, setResult] = useState<CreateSendResult | null>(null)
+  // Captured from the compose form at the moment of submit, before it resets —
+  // `result` (a `Grant`-derived value from `lib/sends.ts`, off-limits to this
+  // story) carries only blinded attributes, never the plaintext label or the
+  // file list the sender actually picked.
+  const [sentSummary, setSentSummary] = useState<SentSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const tickState: "none" | "some" | "all" =
@@ -170,6 +185,12 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         onProgress: setStage,
       })
       setResult(send)
+      setSentSummary({
+        recipientLabel: recipient.trim(),
+        fileCount: selectedFiles.length,
+        fileKind: classifyBundle(selectedFiles),
+        ttlSeconds,
+      })
       setFiles([])
       setSelected(new Set())
       setRecipient("")
@@ -185,6 +206,23 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
     selectedFiles.length === 0
       ? "Nothing included yet"
       : `${selectedFiles.length} of ${files.length} file${files.length === 1 ? "" : "s"} included`
+
+  // The WeTransfer moment (2.5, `LKFS1`/`uQP20`) is its own screen, not a
+  // panel appended under the compose form — it replaces the form entirely
+  // once a send exists, matching how the frame draws it as a full page.
+  if (result && sentSummary) {
+    return (
+      <LinkReady
+        result={result}
+        summary={sentSummary}
+        onDone={() => router.push("/shares")}
+        onMakeAnother={() => {
+          setResult(null)
+          setSentSummary(null)
+        }}
+      />
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -297,8 +335,6 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
       </div>
 
       {error && <p className="text-sm text-error">{error}</p>}
-
-      {result && <ShareResult result={result} />}
     </div>
   )
 }
@@ -633,42 +669,238 @@ function AccessModeRow({
 }
 
 // ---------------------------------------------------------------------------
-// Post-create feedback. Deliberately minimal — the WeTransfer-moment "link
-// ready" screen is H-9, a non-goal here; this is just enough to hand the link
-// over and confirm the send worked end to end.
+// 2.5 Link ready — pen ids `LKFS1` (desktop) / `uQP20` (mobile), read via the
+// pencil MCP tool. The WeTransfer moment: the link, and four rows on what is
+// in it, who can open it, when it ends, and what the recipient learns about
+// the sender. Retires the interim panel this replaced (`ShareResult`, which
+// carried the stale claim that "the other half is the Arkiv grant" — the
+// grant has held no key material since the split-key rewrite; the holder
+// holds the other half under a TTL, and the grant only decides when the
+// holder stops serving it).
+//
+// Two frame values assume a feature this build does not have — a four-digit
+// device-lock code (H-7's non-goal here) — and are adapted rather than
+// copied verbatim, the same way the compose screen above narrows "How they
+// open it" to the one real access mode:
+//   - the sub-headline drops the code clause entirely;
+//   - "Who can open it" reads "Anyone with the link" (the one real mode from
+//     `AccessModeRow`, not "the first phone, with your code").
+// "What she sees about you" also departs from the frame's "No name, no date
+// of birth" — that line describes a parsed archive record with a date-of-
+// birth field this app does not have (H-13/H-36 are not built). What is true
+// today, and is what the recipient page actually shows, is that no sender
+// attribution reaches the page at all (`app/s/[key]/page.tsx`'s "Shared with
+// you" names no one) — so the value says that instead. See `## Choices`.
+//
+// The row *labels* are the one place the two frames disagree with each
+// other, not just with this app: desktop's `A4L3dx` reads "What she sees
+// about you", mobile's `eonlR` reads "She sees about you". Both are kept
+// verbatim, per platform.
 // ---------------------------------------------------------------------------
 
-function ShareResult({ result }: { result: CreateSendResult }) {
+type SentSummary = {
+  /** Plaintext, as the sender typed it — never the blinded attribute a grant carries. */
+  recipientLabel: string
+  fileCount: number
+  fileKind: FileKind
+  ttlSeconds: number
+}
+
+const LINK_READY_FILE_KIND_LABEL: Record<FileKind, string> = {
+  pdf: "PDF",
+  csv: "CSV",
+  text: "Text",
+  mixed: "Mixed",
+}
+
+const dateFormatShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" })
+
+function whatsInIt(summary: SentSummary): string {
+  const noun = summary.fileCount === 1 ? "document" : "documents"
+  return `${summary.fileCount} ${noun} · ${LINK_READY_FILE_KIND_LABEL[summary.fileKind]}`
+}
+
+/** The chosen window's length in plain words — "84 days" for 12 weeks, matching how `LKFS1`/`uQP20` state it. */
+function durationLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"}`
+  if (seconds < 3600) {
+    const minutes = Math.round(seconds / 60)
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`
+  }
+  if (seconds < 86400) {
+    const hours = Math.round(seconds / 3600)
+    return `${hours} hour${hours === 1 ? "" : "s"}`
+  }
+  const days = Math.round(seconds / 86400)
+  return `${days} day${days === 1 ? "" : "s"}`
+}
+
+function greeting(recipientLabel: string): string {
+  return recipientLabel
+    ? `Send it to ${recipientLabel} however you normally talk to them.`
+    : "Send it however you normally talk to them."
+}
+
+/** Host + path only — never the fragment, which carries half the key. */
+function truncateLink(url: string): string {
+  let visible: string
+  try {
+    const parsed = new URL(url)
+    visible = `${parsed.host}${parsed.pathname}`
+  } catch {
+    visible = url.split("#")[0]
+  }
+  return visible.length > 26 ? `${visible.slice(0, 26)}…` : `${visible}…`
+}
+
+function LinkReady({
+  result,
+  summary,
+  onDone,
+  onMakeAnother,
+}: {
+  result: CreateSendResult
+  summary: SentSummary
+  onDone: () => void
+  onMakeAnother: () => void
+}) {
   const [copied, setCopied] = useState(false)
+  const expiresDate = new Date(result.expiresAt * 1000)
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(result.url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const inItValue = whatsInIt(summary)
+  const linkDisplay = truncateLink(result.url)
+  const durationValue = durationLabel(summary.ttlSeconds)
 
   return (
-    <Card>
-      <p className="text-label uppercase tracking-wide text-muted">Share this link</p>
-      <p className="mt-2 break-all font-mono text-xs">{result.url}</p>
-      <div className="mt-3 flex items-center gap-2">
-        <Action
-          variant="secondary"
-          onClick={() => {
-            navigator.clipboard.writeText(result.url)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </Action>
-        <a
-          href={`${ARKIV_EXPLORER}/tx/${result.txHash}`}
-          target="_blank"
-          rel="noreferrer"
-          className="text-xs text-muted underline underline-offset-2"
-        >
-          Grant transaction
-        </a>
+    <div className="mx-auto flex w-full max-w-[640px] flex-col gap-3.5 md:gap-[22px]">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-inset bg-sage md:h-13 md:w-13">
+        <CheckCircle size={25} weight="regular" className="text-surface md:hidden" />
+        <CheckCircle size={26} weight="regular" className="hidden text-surface md:block" />
       </div>
-      <p className="mt-3 text-label text-secondary">
-        The part after <Mono>#</Mono> is half the key and never reaches a server. The other half is the
-        Arkiv grant — {timeLeft(result.expiresAt)}.
+
+      <h1 className="text-[32px] font-bold leading-[1.12] tracking-[-0.7px] text-ink md:text-[38px] md:leading-[1.1] md:tracking-[-0.85px]">
+        Your link is ready
+      </h1>
+
+      <p className="text-[15px] leading-[1.5] text-secondary md:hidden">
+        {greeting(summary.recipientLabel)} On {dateFormatShort.format(expiresDate)} it stops
+        working, whether or not you remember.
       </p>
-    </Card>
+      <p className="hidden text-[17px] leading-[1.5] text-secondary md:block">
+        {greeting(summary.recipientLabel)} They need no account and no app, and on{" "}
+        {dateFormat.format(expiresDate)} it stops working, whether or not you remember.
+      </p>
+
+      <LinkRow display={linkDisplay} copied={copied} onCopy={copyLink} />
+
+      <div className="w-full overflow-hidden rounded-inset border border-black/[0.05] bg-surface shadow-card md:rounded-card">
+        <SummaryRow icon={FirstAidKit} label="What's in it" value={inItValue} />
+        <SummaryRow
+          icon={Fingerprint}
+          label="Who can open it"
+          value="Anyone with the link"
+          desktopValue="Anyone with the link, until it ends"
+        />
+        <SummaryRow
+          icon={CalendarBlank}
+          label="When it ends"
+          value={`${dateFormatShort.format(expiresDate)} · ${durationValue}`}
+          desktopValue={`${dateFormat.format(expiresDate)} · ${durationValue}`}
+        />
+        <SummaryRow
+          icon={UserCircle}
+          label="She sees about you"
+          desktopLabel="What she sees about you"
+          value="Nothing — not your name"
+          desktopValue="Nothing — not your name, not your address"
+          last
+        />
+      </div>
+
+      <div className="flex gap-2.5">
+        <div className="flex-1">
+          <Action fullWidth onClick={onDone}>
+            Done
+          </Action>
+        </div>
+        <div className="flex-1">
+          <Action fullWidth variant="secondary" onClick={onMakeAnother}>
+            Make another
+          </Action>
+        </div>
+      </div>
+
+      <p className="text-center text-[12.5px] leading-[1.45] text-muted md:text-[13px]">
+        Changed your mind? End it early from Your shares and she loses access straight away.
+      </p>
+    </div>
+  )
+}
+
+function LinkRow({
+  display,
+  copied,
+  onCopy,
+}: {
+  display: string
+  copied: boolean
+  onCopy: () => void
+}) {
+  const CopyIcon = copied ? Check : Copy
+  return (
+    <div className="flex h-14 w-full items-center gap-2.5 rounded-control bg-grouped py-0 pl-3.5 pr-2 md:h-15 md:gap-3 md:pl-[18px]">
+      <LinkSimple size={16} weight="light" className="shrink-0 text-muted md:hidden" />
+      <LinkSimple size={18} weight="light" className="hidden shrink-0 text-muted md:block" />
+      <span className="flex-1 truncate text-[14px] font-medium text-ink md:text-[16px]">{display}</span>
+      <button
+        type="button"
+        onClick={onCopy}
+        className="flex h-10 shrink-0 items-center gap-1.5 rounded-[11px] bg-ink px-3.5 text-[13px] font-semibold text-surface md:h-11 md:gap-2 md:rounded-[12px] md:px-4 md:text-[14px]"
+      >
+        <CopyIcon size={14} weight={copied ? "bold" : "regular"} className="md:hidden" />
+        <CopyIcon size={16} weight={copied ? "bold" : "regular"} className="hidden md:block" />
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  )
+}
+
+function SummaryRow({
+  icon: Icon,
+  label,
+  desktopLabel,
+  value,
+  desktopValue,
+  last = false,
+}: {
+  icon: PhosphorIcon
+  label: string
+  desktopLabel?: string
+  value: string
+  desktopValue?: string
+  last?: boolean
+}) {
+  return (
+    <div>
+      <div className="flex h-[50px] items-center gap-2.5 px-3.5 md:h-[58px] md:gap-3 md:px-5">
+        <Icon size={16} weight="light" className="shrink-0 text-secondary md:hidden" />
+        <Icon size={18} weight="light" className="hidden shrink-0 text-secondary md:block" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] text-secondary md:text-[14px]">
+          <span className="md:hidden">{label}</span>
+          <span className="hidden md:inline">{desktopLabel ?? label}</span>
+        </span>
+        <span className="min-w-0 flex-1 truncate text-right text-[13px] font-semibold text-ink md:text-[14px]">
+          <span className="md:hidden">{value}</span>
+          <span className="hidden md:inline">{desktopValue ?? value}</span>
+        </span>
+      </div>
+      {!last && <div className="h-px w-full bg-hairline" />}
+    </div>
   )
 }
