@@ -415,3 +415,45 @@ describe for the index, and we would have landed there had we read them better.
 
 Mission 02 is unaffected: it asks that something in the app change because data
 expired on its own, and that is precisely what still happens.
+
+---
+
+## 14. `buttonConfig` has no font option, so the connect button cannot match the page's typeface — `@snaha/swarm-id`
+
+**Severity:** low. Cosmetic, and the story that surfaced it (H-73) only needed
+the label text fixed; the mismatched font is a known, undocumented limit.
+
+The sign-in button is painted inside the Swarm ID iframe (`CONNECT_CONTAINER_ID`
+in `lib/swarm.ts`), and `buttonConfig` is the only way to style it from our
+side. Its shape, read from the installed `@snaha/swarm-id@0.4.1` types
+(`dist/types.d.ts`, `ButtonConfig`), is:
+
+```ts
+export interface ButtonConfig {
+    connectText?: string;
+    disconnectText?: string;
+    loadingText?: string;
+    backgroundColor?: string;
+    color?: string;
+    borderRadius?: string;
+}
+```
+
+**Expected:** a `fontFamily` (or similar typography) field, so the button text
+could be set to the app's UI face — `"Switzer", var(--font-figtree),
+-apple-system, Helvetica, Arial, sans-serif` (`app/globals.css`, `--font-ui`).
+
+**Actual:** no such field exists. `backgroundColor`, `color` and
+`borderRadius` are the whole surface. The button's font is whatever the
+iframe's own stylesheet sets, independent of the embedding page.
+
+**Fix on our side:** none available. This is not a workaround we declined to
+write — there is no documented hook to reach the iframe's font, and reaching
+into its DOM or stylesheet from outside would break on the next SDK release
+(and is exactly what `snaha/swarm-id#613`, cited elsewhere in this file, warns
+against for the connect button specifically).
+
+**Suggestion:** add `buttonConfig.fontFamily` (a CSS font-family string,
+applied inside the iframe with the same graceful-fallback behaviour a
+font-family stack already has) alongside the existing colour and radius
+knobs.

@@ -27,6 +27,7 @@
     "verify:import-flags": "node --experimental-strip-types scripts/import-flag-proof.mjs",
     "verify:holder": "node --experimental-strip-types scripts/holder-preflight-proof.mjs",
     "verify:copy": "node scripts/copy-claims-proof.mjs",
+    "verify:sign-in-button": "node scripts/sign-in-button-proof.mjs",
     "verify:new-expiry": "node --experimental-strip-types scripts/new-expiry-proof.mjs",
     "verify:import-review": "node --experimental-strip-types scripts/import-review-proof.mjs",
     "verify:mcp": "node --no-warnings --experimental-strip-types scripts/mcp-proof.mjs",
