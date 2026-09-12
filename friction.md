@@ -449,9 +449,8 @@ iframe's own stylesheet sets, independent of the embedding page.
 
 **Fix on our side:** none available. This is not a workaround we declined to
 write — there is no documented hook to reach the iframe's font, and reaching
-into its DOM or stylesheet from outside would break on the next SDK release
-(and is exactly what `snaha/swarm-id#613`, cited elsewhere in this file, warns
-against for the connect button specifically).
+into its DOM or stylesheet from outside would break on the next SDK release.
+The iframe is cross-origin, so its stylesheet is out of reach anyway.
 
 **Suggestion:** add `buttonConfig.fontFamily` (a CSS font-family string,
 applied inside the iframe with the same graceful-fallback behaviour a
