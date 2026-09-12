@@ -21,7 +21,7 @@
  * index opaque to everyone else. Timestamps stay plaintext so ranges still work.
  */
 
-import { createPublicClient, createWalletClient } from "@arkiv-network/sdk"
+import { createPublicClient, createWalletClient, NoEntityFoundError } from "@arkiv-network/sdk"
 import { tiramisu } from "@arkiv-network/sdk/chains"
 import { addr, str, u64 } from "@arkiv-network/sdk/attr"
 import { and, eq, gte } from "@arkiv-network/sdk/query"
@@ -68,6 +68,20 @@ export type LegacyGrantPayload = {
   v: 1
   ref: string
   wrap: { iv: string; ct: string }
+}
+
+/**
+ * The entity is live — Arkiv answered, it exists — but its payload will not parse. Distinct from
+ * "gone" on purpose: a caller that lets this collapse into `null` tells the reader their access
+ * ended, when what actually happened is that our own data is corrupt.
+ */
+export class MalformedGrantError extends Error {
+  constructor(entityKey: string, cause: unknown) {
+    super(`Grant entity ${entityKey} is live but its payload could not be read: ${String(cause)}`, {
+      cause,
+    })
+    this.name = "MalformedGrantError"
+  }
 }
 
 export type Grant = {
@@ -216,7 +230,15 @@ export async function listGrants(params: {
     getCurrentBlock(),
   ])
 
-  return result.entities.map((e) => toGrant(e, head)).filter((g): g is Grant => g !== null)
+  const grants: Grant[] = []
+  for (const entity of result.entities) {
+    try {
+      grants.push(toGrant(entity, head))
+    } catch {
+      // A malformed entry does not fail the whole dashboard listing — just this row.
+    }
+  }
+  return grants
 }
 
 /**
@@ -224,8 +246,15 @@ export async function listGrants(params: {
  *
  * A missing entity and an unreachable node are not the same event and must not
  * look the same: reporting "this expired" because an RPC timed out tells the
- * reader something false about their access. Only a genuine not-found returns
- * `null`; everything else throws and is surfaced as an error.
+ * reader something false about their access. Only `NoEntityFoundError` — the
+ * SDK's own signal that a query round-tripped and came back with zero rows —
+ * means "gone". Everything else, structurally, is something we could not
+ * finish or could not read, and it throws so the caller has to say so rather
+ * than guess: an HTTP status from a wrong RPC URL or a proxy is a transport
+ * error, never a JSON-RPC result at all, so it cannot be this one; a query the
+ * node itself rejected (`QueryError`) is a protocol error, not an absence
+ * either; and a live entity whose payload will not parse throws
+ * `MalformedGrantError` rather than reaching this function's return at all.
  */
 export async function getGrant(entityKey: string): Promise<Grant | null> {
   const client = getPublicClient()
@@ -234,56 +263,43 @@ export async function getGrant(entityKey: string): Promise<Grant | null> {
       client.getEntity(entityKey as Hex),
       getCurrentBlock(),
     ])
-    if (!entity) return null
     return toGrant(entity, head)
   } catch (error) {
-    if (isNotFound(error)) return null
+    if (error instanceof NoEntityFoundError) return null
     throw error
   }
 }
 
-/**
- * The engine reports an expired, pruned or never-created entity through the same
- * error, which is exactly the condition we treat as "gone".
- */
-function isNotFound(error: unknown): boolean {
-  const message = String((error as Error)?.message ?? error).toLowerCase()
-  return (
-    message.includes("no live entity") ||
-    message.includes("not found") ||
-    message.includes("does not exist")
-  )
-}
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function toGrant(entity: any, head: bigint): Grant | null {
-  try {
-    const attributes = normaliseAttributes(entity.attributes)
-    const expiresBlock = Number(attributes.expires_block ?? 0)
-    const payload: GrantPayload | LegacyGrantPayload =
-      typeof entity.toJson === "function" ? entity.toJson() : JSON.parse(String(entity.payload))
-    if (!payload?.ref) return null
+function toGrant(entity: any, head: bigint): Grant {
+  const entityKey = entity.key ?? entity.entityKey
+  const attributes = normaliseAttributes(entity.attributes)
+  const expiresBlock = Number(attributes.expires_block ?? 0)
 
-    const legacy = payload.v !== 2
-    return {
-      entityKey: entity.key ?? entity.entityKey,
-      payload,
-      authCommitment: legacy ? "" : ((payload as GrantPayload).authCommitment ?? ""),
-      legacy,
-      sender: String(attributes.sender ?? ""),
-      fileKind: (attributes.filetype as FileKind) ?? "text",
-      createdAt: Number(attributes.created_at ?? 0),
-      expiresBlock,
-      // Blocks remaining, converted at the nominal block time. Approximate as a
-      // clock, exact as a boundary — and it is the boundary that matters.
-      expiresAt:
-        Math.floor(Date.now() / 1000) + Math.max(0, expiresBlock - Number(head)) * BLOCK_TIME,
-      recipient: String(attributes.recipient ?? ""),
-      label: String(attributes.label ?? ""),
-      fileCount: Number(attributes.file_count ?? 1),
-    }
-  } catch {
-    return null
+  let payload: GrantPayload | LegacyGrantPayload
+  try {
+    payload = typeof entity.toJson === "function" ? entity.toJson() : JSON.parse(String(entity.payload))
+  } catch (cause) {
+    throw new MalformedGrantError(entityKey, cause)
+  }
+  if (!payload?.ref) throw new MalformedGrantError(entityKey, "missing payload reference")
+
+  const legacy = payload.v !== 2
+  return {
+    entityKey,
+    payload,
+    authCommitment: legacy ? "" : ((payload as GrantPayload).authCommitment ?? ""),
+    legacy,
+    sender: String(attributes.sender ?? ""),
+    fileKind: (attributes.filetype as FileKind) ?? "text",
+    createdAt: Number(attributes.created_at ?? 0),
+    expiresBlock,
+    // Blocks remaining, converted at the nominal block time. Approximate as a
+    // clock, exact as a boundary — and it is the boundary that matters.
+    expiresAt: Math.floor(Date.now() / 1000) + Math.max(0, expiresBlock - Number(head)) * BLOCK_TIME,
+    recipient: String(attributes.recipient ?? ""),
+    label: String(attributes.label ?? ""),
+    fileCount: Number(attributes.file_count ?? 1),
   }
 }
 
