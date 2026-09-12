@@ -6,12 +6,13 @@
  * comes first because it decides the parser, the destination group, and
  * whether a review step exists at all (DESIGN.md § Adding data).
  *
- * Only "blood-panel" and "wearable-series" exist in lib/archive.ts (H-13).
- * The frame itself only greys "A letter or report", but the other three
- * kinds it draws as available — medications, the health-history
- * questionnaire, notes — have no shape in the archive model either, so this
- * story's contract (not the frame) is what marks all four as Later. See
- * docs/stories/H-14.md `## Choices`.
+ * Only "blood-panel" and "wearable-series" exist in lib/archive.ts (H-13), so
+ * only those two kinds are selectable — that split is unchanged from H-13/H-14.
+ * The badge is a kind descriptor, not an availability flag, though: every
+ * card keeps its own `kindLabel` ("You type it", "A questionnaire", "10
+ * minutes") regardless of whether it is selectable yet. Only "A letter or
+ * report" is genuinely "Later" — that is the one card gxi6Y/TdVX6 draw
+ * greyed out. See docs/stories/H-37.md `## Choices`.
  */
 
 import { useState } from "react"
@@ -146,7 +147,7 @@ function DesktopKindCard({ kind, onSelect }: { kind: Kind; onSelect: () => void 
             available ? "border-grouped bg-grouped text-secondary" : "border-silver bg-surface text-muted"
           }`}
         >
-          {available ? kind.desktop.kindLabel : "Later"}
+          {kind.desktop.kindLabel}
         </span>
       </div>
       <p className={`text-[17px] font-semibold leading-[1.3] tracking-[-0.25px] ${available ? "text-ink" : "text-secondary"}`}>
@@ -189,7 +190,7 @@ function MobileKindRow({ kind, onSelect }: { kind: Kind; onSelect: () => void })
           available ? "border-grouped bg-grouped text-secondary" : "border-silver bg-surface text-muted"
         }`}
       >
-        {available ? kind.mobile.kindLabel : "Later"}
+        {kind.mobile.kindLabel}
       </span>
     </button>
   )
