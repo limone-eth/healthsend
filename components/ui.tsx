@@ -306,6 +306,13 @@ export const inputClass =
 // parent kit's photo-behind-gradient is replaced everywhere in this product
 // by the flat `grad-focus` gradient, and the panel over it is flat, not
 // glass — there is nothing behind a gradient to blur.
+//
+// H-27: the gradient never themes (it is the one surface DESIGN.md always
+// draws dark), so its foreground must not either. The headline and stat
+// value use a fixed `text-white` rather than `text-surface` — `surface` now
+// flips dark for its card role elsewhere, which would have paired this
+// fixed-dark background with fixed-dark text. `haze-strong` (eyebrow) and
+// `silver` (stat label) are pinned in `app/globals.css` for the same reason.
 // ---------------------------------------------------------------------------
 
 export function FocusCard({
@@ -332,13 +339,13 @@ export function FocusCard({
         <Sparkle size={16} weight="light" className="text-haze-strong" />
         <span className="text-eyebrow uppercase text-haze-strong">{eyebrow}</span>
       </div>
-      <p className="mt-3 text-headline text-surface">{headline}</p>
+      <p className="mt-3 text-headline text-white">{headline}</p>
       <p className="mt-3 text-body text-[#E4E5E7]">{body}</p>
       {stats && stats.length > 0 && (
         <div className="mt-4 flex gap-5 rounded-control bg-panel-on-dark p-3.5">
           {stats.map((stat) => (
             <div key={stat.label} className="flex flex-col gap-0.5">
-              <span className="text-[17px] font-semibold tracking-[-0.2px] text-surface">{stat.value}</span>
+              <span className="text-[17px] font-semibold tracking-[-0.2px] text-white">{stat.value}</span>
               <span className="text-xs text-silver">{stat.label}</span>
             </div>
           ))}

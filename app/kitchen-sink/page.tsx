@@ -59,7 +59,7 @@ const NOW = Math.floor(Date.now() / 1000)
 
 export default function KitchenSink() {
   return (
-    <div className="kitchen-sink-scope min-h-full bg-background text-foreground">
+    <div className="min-h-full bg-background text-foreground">
     <main className="mx-auto flex w-full max-w-[1080px] flex-col gap-14 px-6 py-16 md:px-[48px]">
       <ScreenHeader
         title="Kitchen sink"
