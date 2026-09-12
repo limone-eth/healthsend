@@ -238,9 +238,10 @@ function Preview({ file }: { file: PackedFile }) {
  * holds the link secret in its fragment. A file that is not really a PDF now
  * simply fails to display, which is the right outcome.
  *
- * The frame is then sandboxed with nothing granted at all — no scripts, no
- * same-origin, no forms, no top-level navigation. The built-in PDF viewer is
- * browser chrome rather than page script, so it still renders.
+ * The frame carries no `sandbox` attribute — Chrome refuses to run its
+ * built-in PDF viewer inside a sandboxed frame at all. The byte check is
+ * what stands in for it, and the long comment on the `<iframe>` below
+ * records what that costs and why it is survivable.
  *
  * The URL is set imperatively so that creating and revoking it belong to one
  * effect: a discarded render cannot leak an allocation, and a replayed effect
