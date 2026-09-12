@@ -72,6 +72,45 @@ const FIXTURES = [
       dateOfBirth: "14 March 1988",
     },
   },
+  {
+    file: "comma-identifiers.txt",
+    format: "text",
+    expectIdentifiers: true,
+    // review-2 R2-003: label values stop at the first comma, so a name
+    // written "Rivera, Jane" and a date written "March 14, 1988" both left a
+    // fragment (", Jane" / ", 1988") behind. The value must survive whole.
+    identifiers: {
+      name: "Rivera, Jane",
+      dateOfBirth: "March 14, 1988",
+    },
+  },
+  {
+    file: "clinical-not-name.txt",
+    format: "text",
+    expectIdentifiers: false,
+    // review-2 R2-004, bullet 1: a `Patient:` label with no name in it —
+    // "denies chest pain today." is a clinical statement, not a name — must
+    // not be read as one, and the line must survive untouched.
+    mustContain: ["Patient: denies chest pain today.", "Plan: monitor, repeat panel in twelve weeks."],
+  },
+  {
+    file: "collection-date-not-dob.txt",
+    format: "text",
+    expectIdentifiers: false,
+    // review-2 R2-004, bullet 2: a date near the top is not a date of birth
+    // merely for being near the top — "Collected: 2019-01-04" is already
+    // somebody else's labeled value and must survive untouched.
+    mustContain: ["Collected: 2019-01-04"],
+  },
+  {
+    file: "account-name-word-boundary.txt",
+    format: "text",
+    expectIdentifiers: false,
+    // review-2 R2-004, bullet 3: account-name removal must respect word
+    // boundaries. Account name "Ann" must not match inside "Annual".
+    accountName: "Ann",
+    mustContain: ["Annual physical review"],
+  },
 ]
 
 const senderKey = crypto.getRandomValues(new Uint8Array(32))
@@ -153,6 +192,18 @@ for (const fixture of FIXTURES) {
       assert.ok(
         !recipientText.includes(word),
         `identifier fragment leaked into recipient bytes for ${fixture.file}: ${word}`,
+      )
+    }
+  }
+
+  // The other half of the proof: a heuristic that overreaches does not just
+  // leave a placeholder behind, it can take clinical content with it. Any
+  // text a fixture says must survive has to still be there, verbatim.
+  if (fixture.mustContain) {
+    for (const text of fixture.mustContain) {
+      assert.ok(
+        recipientText.includes(text),
+        `clinical content wrongly removed from recipient bytes for ${fixture.file}: ${JSON.stringify(text)}`,
       )
     }
   }

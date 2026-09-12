@@ -21,14 +21,26 @@ type LabelPattern = { key: keyof SetAsideIdentifiers; source: string }
  * happened to put it, not where a parser would prefer.
  */
 const LABEL_PATTERNS: LabelPattern[] = [
-  { key: "name", source: "\\b(?:patient\\s*name|patient|name)\\s*[:\\-]\\s*([^\\n\\r,|]+)" },
-  { key: "dateOfBirth", source: "\\b(?:date of birth|dob)\\s*[:\\-]\\s*([^\\n\\r,|]+)" },
+  { key: "name", source: "\\b(?:patient\\s*name|patient|name)\\s*[:\\-]\\s*([^\\n\\r|]+)" },
+  { key: "dateOfBirth", source: "\\b(?:date of birth|dob)\\s*[:\\-]\\s*([^\\n\\r|]+)" },
   { key: "address", source: "\\baddress\\s*[:\\-]\\s*([^\\n\\r|]+)" },
   {
     key: "patientId",
-    source: "\\b(?:mrn|patient id|patient number|record\\s*#|record number)\\s*[:\\-]\\s*([^\\n\\r,|]+)",
+    source: "\\b(?:mrn|patient id|patient number|record\\s*#|record number)\\s*[:\\-]\\s*([^\\n\\r|]+)",
   },
 ]
+
+/**
+ * A name is a short run of capitalized words — "Rivera, Jane", "Jane Rivera".
+ * A clinical sentence read off the same label ("denies chest pain today.")
+ * starts each word lowercase and runs longer than a name ever does, so it
+ * fails here and is left as the clinical content it is.
+ */
+function looksLikeName(value: string): boolean {
+  const words = value.trim().split(/\s+/)
+  if (words.length === 0 || words.length > 5) return false
+  return words.every((word) => /^[A-Z][A-Za-z'.-]*,?$/.test(word))
+}
 
 const SET_ASIDE_PLACEHOLDER = "[set aside]"
 
@@ -38,11 +50,12 @@ const SET_ASIDE_PLACEHOLDER = "[set aside]"
  * literal, or a PDF's fixed line width would let the name straight through.
  */
 function wordPattern(value: string): string {
-  return value
+  const escaped = value
     .trim()
     .split(/\s+/)
     .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("\\s+")
+  return `\\b${escaped}\\b`
 }
 
 function containsWordSequence(text: string, value: string): boolean {
@@ -84,6 +97,10 @@ function findUnlabeledDateOfBirth(raw: string): string | undefined {
   let match: RegExpExecArray | null
   while ((match = pattern.exec(nearTop))) {
     const year = Number(match.groups?.isoYear ?? match.groups?.slashYear ?? match.groups?.longYear)
+    const precedingText = nearTop.slice(0, match.index)
+    // Already somebody else's labeled value ("Collected: 2019-01-04") — not
+    // an unlabeled date, so it is not this heuristic's to claim.
+    if (/:\s*$/.test(precedingText)) continue
     if (year >= MIN_BIRTH_YEAR && year <= maxBirthYear()) return match[0].trim()
   }
   return undefined
@@ -111,13 +128,21 @@ export type DeidentifyOptions = {
 export function deidentifyText(raw: string, options: DeidentifyOptions = {}): { cleaned: string; setAside: SetAsideIdentifiers } {
   const setAside: SetAsideIdentifiers = {}
   const scrubValues = new Set<string>()
+
+  // Stripped one match at a time rather than "find first, then blanket-erase
+  // every occurrence of the pattern": a `name` match that does not look like
+  // a name is not an identifier, and must survive as the clinical line it is
+  // rather than being erased alongside the ones that are.
+  let cleaned = raw
   for (const { key, source } of LABEL_PATTERNS) {
-    const match = new RegExp(source, "i").exec(raw)
-    const value = match?.[1]?.trim()
-    if (value) {
-      setAside[key] = value
+    cleaned = cleaned.replace(new RegExp(source, "gi"), (full: string, capture: string) => {
+      const value = capture?.trim()
+      if (!value) return full
+      if (key === "name" && !looksLikeName(value)) return full
+      if (setAside[key] === undefined) setAside[key] = value
       scrubValues.add(value)
-    }
+      return ""
+    })
   }
 
   const accountName = options.accountName?.trim()
@@ -134,10 +159,6 @@ export function deidentifyText(raw: string, options: DeidentifyOptions = {}): { 
     }
   }
 
-  let cleaned = raw
-  for (const { source } of LABEL_PATTERNS) {
-    cleaned = cleaned.replace(new RegExp(source, "gi"), "")
-  }
   for (const value of scrubValues) {
     cleaned = cleaned.replace(new RegExp(wordPattern(value), "gi"), SET_ASIDE_PLACEHOLDER)
   }
