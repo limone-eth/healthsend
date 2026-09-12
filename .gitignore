@@ -46,3 +46,6 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /blob-report/
+
+# agent worktrees (embedded git repos, never ours to commit)
+.claude/worktrees/
