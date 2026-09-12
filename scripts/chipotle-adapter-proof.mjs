@@ -1,8 +1,11 @@
 /**
  * Proves the Chipotle adapter (lib/key-release/chipotle.ts) offline, against
  * an injected fake `ChipotleClient` that plays the part of Lit's real HTTP
- * API AND the Lit Action's own logic (commitment check, Arkiv liveness
- * check) — see chipotle-action.js, which this fake's `invokeAction` mirrors.
+ * API AND a simplified stand-in for the Lit Action (commitment check, Arkiv
+ * liveness check). The stand-in checks the caller's binding, not a binding
+ * sealed in the ciphertext, so it proves the adapter's wiring only. The real
+ * `chipotle-action.js`, sealed binding included, runs in
+ * `scripts/chipotle-binding-proof.mjs` (H-72).
  * The fake hashes action CIDs the same way `hashActionCid` does, mirroring
  * `list_actions`' real behavior of returning the *hashed* CID
  * (developer.litprotocol.com/management/api_direct, "Raw CID vs hashed CID").
@@ -153,7 +156,7 @@ function makeFakeChipotleClient(overrides = {}) {
 
       if (overrides.invokeImpl) return overrides.invokeImpl(jsParams)
 
-      // Mirrors chipotle-action.js's own commitment check.
+      // A stand-in for the action's refusal of a mismatched binding — see the module doc.
       const expected = await computeCommitment(jsParams.grantId, jsParams.owner, jsParams.expiresBlock, jsParams.ref)
       if (expected !== jsParams.commitment) {
         return { authorized: false, error: "commitment does not match the supplied grant binding" }

@@ -209,7 +209,7 @@ What that buys, precisely:
 |---|---|
 | Documents are encrypted on your device; no server of ours receives plaintext | **Yes** |
 | After the deadline, someone opening the link gets nothing | **Yes** |
-| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes** for holder shares. **Not yet** for Lit Chipotle shares: our review found the Lit action can be fed a self-made live grant, so anyone who kept a Chipotle link can still recover its key after it ends. The fix (H-72) seals the grant into the Lit ciphertext. |
+| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes** for holder shares. **Yes** for Lit Chipotle shares once the H-72 action is registered: the Lit ciphertext carries the grant it was made for, and the action checks that grant, not one the caller names. Before H-72, anyone who kept a Chipotle link could recover its key after it ended, using a self-made live grant (`pnpm verify:chipotle-binding`). |
 | Expiry erases the document | **No.** Encrypted files on Swarm and grant calldata are permanent. Expiry ends *access*, not *existence*. |
 | Expiry takes back what someone already saw | **No.** A screenshot taken during the window stays a screenshot. |
 
@@ -221,6 +221,8 @@ What that buys, precisely:
 - **You trust the key release to refuse.**
   - Lit Chipotle is an enclave service run by Lit, with a TEE-derived key. It is not a
     decentralised or threshold network.
+  - The Chipotle usage key ships to browsers, so the Lit account is only as safe as that key's
+    scopes: they must be execute-only, for group 1.
   - Our holder is a server of ours.
   - We also built a TACo (threshold) adapter. It is parked until TACo's network is reachable
     ([evidence](./arkiv/evidence/taco-adapter-poc.md)).

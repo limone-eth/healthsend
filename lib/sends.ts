@@ -775,9 +775,50 @@ type EndSendDependencies = {
   getGrant: typeof getGrant
   deleteGrant: typeof deleteGrant
   fetch: typeof fetch
+  /** The pause between delete read-backs. Injected so proofs never sleep. */
+  wait: (ms: number) => Promise<void>
 }
 
-const defaultEndSendDependencies: EndSendDependencies = { getIdentity, getGrant, deleteGrant, fetch }
+const defaultEndSendDependencies: EndSendDependencies = {
+  getIdentity,
+  getGrant,
+  deleteGrant,
+  fetch,
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}
+
+/**
+ * How many times `endSend` reads a deleted v3 grant back before it gives up
+ * on confirming the delete. A read served by a node a block behind can still
+ * show the entity, so one stale read is not proof the delete failed.
+ */
+const DELETE_READBACK_ATTEMPTS = 3
+const DELETE_READBACK_DELAY_MS = 1_500
+
+/**
+ * "Ended" for a v3 share means the entity is gone from Arkiv's current state,
+ * because that is what the Lit action checks. A delete transaction that
+ * resolved is not the same claim, so read the grant back and say "ended"
+ * only once it is absent (review-8 F5, docs/stories/H-72.md).
+ */
+async function confirmGrantDeleted(entityKey: string, dependencies: EndSendDependencies): Promise<EndSendResult> {
+  let readFailed = false
+  for (let attempt = 0; attempt < DELETE_READBACK_ATTEMPTS; attempt++) {
+    if (attempt > 0) await dependencies.wait(DELETE_READBACK_DELAY_MS)
+    try {
+      if ((await dependencies.getGrant(entityKey)) === null) return { status: "ended" }
+      readFailed = false
+    } catch {
+      readFailed = true
+    }
+  }
+  return {
+    status: "error",
+    message: readFailed
+      ? "The end request was sent, but Arkiv couldn't be read to confirm the share is gone. Try again."
+      : "The end request was sent, but Arkiv still shows this share as live. Try again.",
+  }
+}
 
 /**
  * End a share before its date.
@@ -802,22 +843,27 @@ export async function endSend(
   const dependencies = { ...defaultEndSendDependencies, ...dependencyOverrides }
   const identity = await dependencies.getIdentity()
 
-  let grant: Grant | null = null
+  let grant: Grant | null
   try {
     grant = await dependencies.getGrant(entityKey)
-  } catch {
-    // A lookup that fails does not tell us this is a v3 grant either way —
-    // fall through to the holder path below, which has its own honest
-    // failure handling.
+  } catch (error) {
+    // A lookup that fails does not tell us whether this is a v3 grant. The
+    // holder path cannot end a v3 share — its revoke succeeds as a no-op
+    // while the entity stays live — so falling through would report "ended"
+    // for a share that still opens (review-8 F5). Say it did not end.
+    return {
+      status: "error",
+      message: `Couldn't read this share from Arkiv, so it wasn't ended. Try again. (${(error as Error).message})`,
+    }
   }
 
   if (grant && grant.payload.v === 3) {
     try {
       await dependencies.deleteGrant({ privateKey: identity.privateKey, entityKey })
-      return { status: "ended" }
     } catch (error) {
       return { status: "error", message: (error as Error).message }
     }
+    return confirmGrantDeleted(entityKey, dependencies)
   }
 
   const timestamp = Math.floor(Date.now() / 1000)

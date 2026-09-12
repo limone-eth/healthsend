@@ -29,8 +29,12 @@ H-65 placeholder wire format it replaced is no longer in the codebase.
   runs one Chipotle service, so there is nothing to override.
   `NEXT_PUBLIC_CHIPOTLE_ENDPOINT` is removed from `.env.example`.
 - **Action invocation** is `POST /lit_action` with `{"ipfs_id": <cid>, "js_params": {...}}`
-  — never `code`, so only the one registered action can execute. Auth is the
+  — `code` only for the cache-miss retry H-69 added. Which code a usage key may
+  run is Lit's rule, not verified by this app (review-8 F2, H-72). Auth is the
   `X-Api-Key` header.
+- **The usage key ships to browsers** (`NEXT_PUBLIC_CHIPOTLE_USAGE_API_KEY`), so
+  the account's safety depends on that key's scopes being execute-only for
+  group 1.
 - **Env vars renamed/added.** `NEXT_PUBLIC_CHIPOTLE_PKP_PUBLIC_KEY` is now
   `NEXT_PUBLIC_CHIPOTLE_PKP_ID`, matching `GET /list_wallets`' `id` field. A
   new `NEXT_PUBLIC_CHIPOTLE_GROUP_ID` was added — matching `GET /list_groups`'

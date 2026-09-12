@@ -6,8 +6,12 @@
  * network, no chain.
  *
  * What this proves:
- *   - `endSend` on a v3 grant deletes the Arkiv entity, and never calls the
- *     holder's `/api/holder/revoke` at all;
+ *   - `endSend` on a v3 grant deletes the Arkiv entity, reads it back, and
+ *     reports "ended" only once it is gone. It never calls the holder's
+ *     `/api/holder/revoke` at all;
+ *   - H-72 (review-8 F5): a `getGrant` that throws returns an error and never
+ *     falls through to the holder; a delete whose read-back still shows the
+ *     entity, or cannot read it, returns an error rather than "ended";
  *   - `endSend` on a v2/legacy grant is unaffected — it still calls the
  *     holder, exactly as before;
  *   - once the entity is deleted, a release attempt against the same
@@ -46,6 +50,11 @@ async function getIdentity() {
 const { endSend } = await import("../lib/sends.ts")
 const { ChipotleUnavailableError } = await import("../lib/key-release/chipotle.ts")
 
+async function unreachableFetch() {
+  throw new Error("endSend must not call the holder for a v3 grant")
+}
+async function noWait() {}
+
 // --- a v3 grant deletes the entity, and never calls the holder -------------
 {
   const entityKey = "0x" + "7a".repeat(32)
@@ -64,25 +73,98 @@ const { ChipotleUnavailableError } = await import("../lib/key-release/chipotle.t
     label: "",
     fileCount: 1,
   }
+  let getGrantCalls = 0
+  let deleted = false
   async function getGrant() {
-    return grant
+    getGrantCalls++
+    return deleted ? null : grant
   }
   let deleteCalls = 0
   let deletedEntityKey = null
   async function deleteGrant(params) {
     deleteCalls++
     deletedEntityKey = params.entityKey
+    deleted = true
     return { txHash: "0x" + "cc".repeat(32) }
   }
-  async function unreachableFetch() {
-    throw new Error("endSend must not call the holder for a v3 grant")
-  }
 
-  const result = await endSend(entityKey, { getIdentity, getGrant, deleteGrant, fetch: unreachableFetch })
+  const result = await endSend(entityKey, { getIdentity, getGrant, deleteGrant, fetch: unreachableFetch, wait: noWait })
   assert.deepEqual(result, { status: "ended" })
   assert.equal(deleteCalls, 1, "ending a v3 share must delete exactly one Arkiv entity")
   assert.equal(deletedEntityKey, entityKey, "it must delete the entity the caller actually named")
-  console.log("PASS  ending a v3 share deletes the Arkiv entity and never calls the holder")
+  assert.equal(getGrantCalls, 2, "it must read the grant back after the delete before saying ended")
+  console.log("PASS  ending a v3 share deletes the Arkiv entity, confirms it is gone, and never calls the holder")
+}
+
+// --- H-72 (review-8 F5): a failed grant read never falls through to the holder ---
+{
+  let deleteCalls = 0
+  const result = await endSend("0x" + "7c".repeat(32), {
+    getIdentity,
+    async getGrant() {
+      throw new Error("HTTP 502 from the Arkiv RPC")
+    },
+    async deleteGrant() {
+      deleteCalls++
+      return { txHash: "0x" + "cc".repeat(32) }
+    },
+    fetch: async () => {
+      throw new Error("endSend must not call the holder when it could not read the grant")
+    },
+    wait: noWait,
+  })
+  assert.equal(result.status, "error", "a thrown getGrant must never report ended")
+  assert.match(result.message, /wasn't ended/)
+  assert.equal(deleteCalls, 0)
+  console.log("PASS  a thrown getGrant returns an error and never reaches the holder revoke")
+}
+
+// --- H-72 (review-8 F5): the delete read-back decides "ended" ---------------
+{
+  const v3Grant = { payload: { v: 3 } }
+
+  async function endWithReadBack(readBack) {
+    let reads = 0
+    let waits = 0
+    const result = await endSend("0x" + "7d".repeat(32), {
+      getIdentity,
+      async getGrant() {
+        reads++
+        if (reads === 1) return v3Grant
+        return readBack(reads - 1)
+      },
+      async deleteGrant() {
+        return { txHash: "0x" + "cc".repeat(32) }
+      },
+      fetch: unreachableFetch,
+      async wait() {
+        waits++
+      },
+    })
+    return { result, readBacks: reads - 1, waits }
+  }
+
+  const stillLive = await endWithReadBack(() => v3Grant)
+  assert.equal(stillLive.result.status, "error", "an entity still live after the delete must never report ended")
+  assert.match(stillLive.result.message, /still shows this share as live/)
+  assert.equal(stillLive.readBacks, 3)
+  assert.equal(stillLive.waits, 2)
+  console.log("PASS  a delete whose read-back still shows the entity returns an error, after 3 read-backs")
+
+  const unreadable = await endWithReadBack(() => {
+    throw new Error("timeout")
+  })
+  assert.equal(unreadable.result.status, "error", "a read-back that never succeeds must never report ended")
+  assert.match(unreadable.result.message, /couldn't be read/)
+  console.log("PASS  a delete whose read-back cannot read Arkiv returns an error")
+
+  const lagging = await endWithReadBack((n) => {
+    if (n === 1) throw new Error("timeout")
+    return null
+  })
+  assert.deepEqual(lagging.result, { status: "ended" })
+  assert.equal(lagging.readBacks, 2)
+  console.log("PASS  a read-back that fails once and then finds the entity gone reports ended")
 }
 
 // --- a v2/legacy grant is unaffected: it still calls the holder -----------
@@ -123,9 +205,11 @@ const { ChipotleUnavailableError } = await import("../lib/key-release/chipotle.t
 }
 
 // --- once deleted, the enclave itself refuses a release for that grant -----
-// Mirrors `chipotle-action.js`'s own liveness check
-// (`scripts/chipotle-adapter-proof.mjs`'s "an expired (not-live) grant
-// releases nothing" case): a grant absent from Arkiv's ledger — whether
+// A simplified stand-in for `chipotle-action.js`'s liveness check — the real
+// action, with the binding sealed in its ciphertext, runs in
+// `scripts/chipotle-binding-proof.mjs` (H-72). As in
+// `scripts/chipotle-adapter-proof.mjs`'s "an expired (not-live) grant
+// releases nothing" case, a grant absent from Arkiv's ledger — whether
 // because it lapsed naturally or because its owner deleted it — is refused
 // identically. This is what "the enclave refuses afterwards" means in
 // practice, proved with a fake client offline.

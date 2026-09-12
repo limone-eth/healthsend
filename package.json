@@ -41,6 +41,7 @@
     "verify:key-release-factory": "node --experimental-strip-types scripts/key-release-factory-proof.mjs",
     "verify:archive-send-chipotle": "node --experimental-strip-types scripts/archive-send-chipotle-proof.mjs",
     "verify:end-v3-send": "node --experimental-strip-types scripts/end-v3-send-proof.mjs",
+    "verify:chipotle-binding": "node --experimental-strip-types scripts/chipotle-binding-proof.mjs",
     "verify:chipotle-adapter-live": "node --experimental-strip-types scripts/chipotle-live-probe.mjs",
     "chipotle:print-cid": "node --experimental-strip-types scripts/chipotle-print-action-cid.mjs",
     "chipotle:generate-action-source": "node scripts/chipotle-generate-action-source.mjs",

@@ -15,8 +15,9 @@
  * against `https://api.chipotle.litprotocol.com/core/v1/openapi.json` and
  * `developer.litprotocol.com` — see `docs/stories/H-67.md` for the row-by-row
  * comparison against H-65's placeholder. Every action invocation runs by
- * **`ipfs_id`**, never `code`, so only the one registered, immutable action
- * can ever execute against this PKP.
+ * **`ipfs_id`**, except the one cache-miss retry described below. Which code
+ * a usage key may run against this PKP is decided by Lit, not by this app —
+ * see the amendments paragraph.
  *
  * Two failure modes are specific to Chipotle and have no TACo analogue:
  *
@@ -30,18 +31,18 @@
  *      encrypt time and the network evaluates it unprompted, Chipotle's public
  *      API takes the grant identity as a plain argument to the action
  *      invocation. A caller could supply the ciphertext from an expired grant
- *      alongside the `binding` of a still-live one, and an action that only
- *      checks "is the *supplied* grant live" would release it. This adapter
- *      closes that gap itself: `protectShare` embeds a commitment — a SHA-256
- *      of the grant binding's canonical bytes, `lib/crypto.ts`'s
- *      `encodeGrantBinding` — inside the envelope it returns. `releaseShare`
- *      recomputes that commitment from the caller's `binding` and refuses
- *      before ever invoking the action if the two disagree. The Lit Action
- *      source (`chipotle-action.js`, alongside this file) performs the same
- *      check again, server-side, inside the enclave, because this adapter's
- *      own TypeScript is not a trust boundary — anyone with the action's
- *      `ipfs_id` and a usage key can invoke it directly, bypassing this file
- *      entirely.
+ *      alongside the `binding` of a still-live one — including a live Arkiv
+ *      entity they wrote themselves — and an action that only checks "is the
+ *      *supplied* grant live" would release it (review-8 F1). The Lit Action
+ *      (`chipotle-action.js`, alongside this file) closes that gap inside the
+ *      enclave: `protect` seals the binding into the Lit ciphertext next to
+ *      the share, and `release` decrypts first and checks Arkiv for the
+ *      *sealed* binding, refusing any supplied field that disagrees. The
+ *      commitment `protectShare` keeps in the envelope — a SHA-256 of
+ *      `lib/crypto.ts`'s `encodeGrantBinding` — only lets `releaseShare`
+ *      refuse a mismatched binding early, before any network call. It is not
+ *      a trust boundary: anyone with the action's `ipfs_id` and a usage key
+ *      can invoke the action directly, bypassing this file entirely.
  *
  * Every non-success outcome here is `ChipotleUnavailableError`, named after
  * the stage that failed, exactly as `lib/key-release/taco.ts` does and for
@@ -67,14 +68,21 @@
  * running. `invokeActionWithCacheMissRetry` retries **exactly once**, and
  * **only** on that exact response, resubmitting with `code` set to
  * `chipotle-action-source.ts`'s bundled copy of `chipotle-action.js` — never
- * on any other 400. Lit computes the CID of whatever `code` is submitted and
- * refuses to run it unless that CID is the group's one permitted action, so
- * this retry cannot execute anything but the already-registered action; this
- * adapter still checks its own bundled copy against
- * `NEXT_PUBLIC_CHIPOTLE_ACTION_CID` first (`ensureBundledActionSourceMatches`,
- * via `POST /get_lit_action_ipfs_id`) and refuses rather than submit code it
+ * on any other 400. The retry submits exactly the registered source: this
+ * adapter checks its bundled copy against `NEXT_PUBLIC_CHIPOTLE_ACTION_CID`
+ * first (`ensureBundledActionSourceMatches`, via
+ * `POST /get_lit_action_ipfs_id`) and refuses rather than submit code it
  * cannot confirm is the same, because a mismatch there means this build's copy
  * of the action has drifted from what is actually registered.
+ *
+ * What inline `code` a usage key may run is Lit's rule, and this app does not
+ * verify it (review-8 F2). Lit's published API spec does not say that inline
+ * `code` must match a group-permitted CID. One observation only: on
+ * 2026-09-12, before the action was registered, `POST /lit_action` with
+ * inline `code` and the production usage key answered `403 "The provided API
+ * key is not authorized to execute the specified action (QmR32N27…/…)"`. So
+ * Lit gated inline code by its CID for that key on that day. That is not a
+ * guarantee this file can rely on or check.
  */
 
 import { keccak256, stringToBytes } from "viem"
@@ -540,8 +548,8 @@ async function releaseShare(
   if (envelope.commitment !== expectedCommitment) {
     // The envelope was protected for a different grant. Refuse here, before
     // ever invoking the action — see the module doc, failure mode 2. The
-    // action re-checks this same commitment independently, because a caller
-    // that skips this adapter entirely would skip this line too.
+    // action does not rely on this line: a caller that skips this adapter
+    // skips it too, so the action checks the binding sealed in its ciphertext.
     throw new ChipotleUnavailableError(
       "invoke",
       "Protected share's commitment does not match the supplied grant binding — refusing a substituted grant",
