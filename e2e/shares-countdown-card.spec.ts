@@ -79,7 +79,7 @@ test.describe("mobile, 400px", () => {
  * ran under "42 seconds left". /kitchen-sink renders Countdown at 380, 300 and 240px without
  * any network; on every card the date and the time left must not overlap, and both must stay
  * inside the border. Broke by design: restore `min-w-0` on Countdown's left block and drop
- * `flex-wrap`, and the 300px card goes red.
+ * `flex-wrap`, and the 300px card goes red on the overflow check (verified against b4cfde5's ui.tsx).
  */
 test.describe("kitchen sink, narrow slots", () => {
   test.use({ viewport: { width: 1440, height: 1600 } })
@@ -94,6 +94,13 @@ test.describe("kitchen sink, narrow slots", () => {
       const remaining = card.getByText(/ left$|^Access ended$/)
       const [c, d, r] = await Promise.all([card.boundingBox(), date.boundingBox(), remaining.boundingBox()])
       if (!c || !d || !r) throw new Error(`card ${i} has no layout box`)
+      // A box check alone is not enough: under the old layout the date's box shrank to 104px
+      // while its nowrap text kept drawing into "42 seconds left" — the boxes never touched.
+      // So also require that neither piece of text overflows its own box.
+      for (const [name, el] of [["date", date], ["time left", remaining]] as const) {
+        const spill = await el.evaluate((node) => node.scrollWidth - node.clientWidth)
+        expect(spill, `card ${i}: the ${name} text overflows its box by ${spill}px`).toBeLessThanOrEqual(1)
+      }
       const overlaps = d.x < r.x + r.width && r.x < d.x + d.width && d.y < r.y + r.height && r.y < d.y + d.height
       expect(overlaps, `card ${i}: "${await date.textContent()}" overlaps "${await remaining.textContent()}"`).toBe(false)
       for (const box of [d, r]) {
