@@ -12,6 +12,15 @@
  * `readAccessLog` takes its Arkiv and holder access as injected dependencies
  * so `scripts/access-log-proof.mjs` can prove this offline, the same way
  * `scripts/revoke-proof.mjs` proves `lib/revoke.ts`.
+ *
+ * The result carries `reliable` alongside `opened`. A served unlock can leave
+ * no record — `lib/unlock.ts` never lets bookkeeping fail the unlock itself —
+ * so an empty (or short) `opened` is not always proof that nothing happened.
+ * `reliable` is false once a write for this entity is known to have been
+ * dropped (see `recordAccessWith` in `lib/holder-store.ts`), and a caller must
+ * not render a confident "Not opened yet" while it is false — the same
+ * expired-versus-unavailable distinction `lib/unlock.ts` makes for the
+ * recipient, applied here for the sender. `DESIGN.md` § Share state chip.
  */
 
 import { recoverSigner, signedMessage, validateSignedEntityRequest, type SignedEntityRequest } from "./revoke.ts"
@@ -26,11 +35,11 @@ export function accessLogMessage(entityKey: string, timestamp: number): string {
 
 export type AccessLogDeps = {
   getGrant: (entityKey: string) => Promise<{ sender: string } | null>
-  getAccessLog: (entityKey: string) => Promise<number[]>
+  getAccessLog: (entityKey: string) => Promise<{ opened: number[]; reliable: boolean }>
 }
 
 export type AccessLogResult =
-  | { ok: true; opened: number[] }
+  | { ok: true; opened: number[]; reliable: boolean }
   | { ok: false; status: number; error: string }
 
 export async function readAccessLog(
@@ -58,6 +67,6 @@ export async function readAccessLog(
     return { ok: false, status: 403, error: "Not authorised to read this record" }
   }
 
-  const opened = await deps.getAccessLog(req.entityKey)
-  return { ok: true, opened }
+  const { opened, reliable } = await deps.getAccessLog(req.entityKey)
+  return { ok: true, opened, reliable }
 }

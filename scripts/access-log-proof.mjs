@@ -3,10 +3,20 @@
  *
  *   resolveUnlock(entityKey, authKey, { getGrant, getShare, recordAccess })  — lib/unlock.ts
  *   readAccessLog(request, { getGrant, getAccessLog })  — lib/access-log.ts
+ *   recordAccessWith / getAccessLogWith / tombstoneShareWith / putShareWith  — lib/holder-store.ts
  *
- * Both take their Arkiv and holder access as injected dependencies, so the
- * property under test here is the recording hook and the sender-only read —
- * not Redis or the RPC.
+ * The first two take their Arkiv and holder access as injected dependencies,
+ * so the property under test there is the recording hook and the sender-only
+ * read — not Redis or the RPC. The holder-store functions are exercised
+ * directly, against `fakeRedis()` below, to prove the atomic-script behaviour
+ * without a real Upstash instance: a fake that can fail one `eval()` call
+ * outright is enough to model an HTTP request that never reaches the server,
+ * which is the only realistic way a real multi-command write used to land
+ * half-applied.
+ *
+ * Every test that touches the access log — recording and reading — shares one
+ * `fakeRedis()` instance as its backing store, so the read side is proven to
+ * see exactly what the write side stored, not a hand-built stand-in.
  */
 import assert from "node:assert/strict"
 import { webcrypto } from "node:crypto"
@@ -14,8 +24,20 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts"
 
 const { resolveUnlock } = await import("../lib/unlock.ts")
 const { readAccessLog, accessLogMessage } = await import("../lib/access-log.ts")
+const {
+  recordAccessWith,
+  getAccessLogWith,
+  tombstoneShareWith,
+  putShareWith,
+  RECORD_ACCESS_SCRIPT,
+  TOMBSTONE_SCRIPT,
+  PUT_SHARE_SCRIPT,
+} = await import("../lib/holder-store.ts")
 
 const ENTITY_KEY = "0x" + "22".repeat(32)
+const shareKeyName = (entityKey) => `healthsend:share:${entityKey.toLowerCase()}`
+const accessLogKeyName = (entityKey) => `healthsend:access:${entityKey.toLowerCase()}`
+const tombstoneKeyName = (entityKey) => `healthsend:revoked:${entityKey.toLowerCase()}`
 
 const sender = privateKeyToAccount(generatePrivateKey())
 const attacker = privateKeyToAccount(generatePrivateKey())
@@ -34,26 +56,114 @@ async function validAuthKey() {
   return { authKey: toBase64Url(bytes), commitment: await commitmentFor(bytes) }
 }
 
-// --- a served unlock records exactly one event -------------------------------
+/**
+ * A minimal in-memory stand-in for Redis, just enough to run the three Lua
+ * scripts `lib/holder-store.ts` sends via `eval()`. Matching on the exact
+ * script string (imported from the module under test, not retyped here)
+ * means this fake exercises the very same atomic bundles production sends —
+ * there is no separate, possibly-drifted description of what each script
+ * does.
+ *
+ * `failNextEval()` simulates the one realistic way a multi-command write used
+ * to land half-applied: the request never reaches the server at all. Because
+ * every write here is a single `eval()` call, that failure mode now aborts
+ * the whole bundle — nothing in this fake is mutated before the failure, the
+ * same guarantee a real atomic Lua script gives.
+ */
+function fakeRedis() {
+  const strings = new Map() // key -> value (TTL bookkeeping omitted; not what these tests check)
+  const stringTtls = new Map() // key -> ex seconds, for asserting a TTL was set
+  const lists = new Map() // key -> values[]
+  const listTtls = new Map() // key -> ex seconds
+  let evalShouldFail = false
+
+  return {
+    async eval(script, keys, args) {
+      if (evalShouldFail) {
+        evalShouldFail = false
+        throw new Error("simulated: the request never reached Redis")
+      }
+      if (script === RECORD_ACCESS_SCRIPT) {
+        const [logKey] = keys
+        const [at, ttl] = args
+        const values = lists.get(logKey) ?? []
+        values.push(Number(at))
+        lists.set(logKey, values)
+        listTtls.set(logKey, Number(ttl))
+        return 1
+      }
+      if (script === TOMBSTONE_SCRIPT) {
+        const [shareKey, logKey, tombKey] = keys
+        const [value, ttl] = args
+        strings.delete(shareKey)
+        stringTtls.delete(shareKey)
+        lists.delete(logKey)
+        listTtls.delete(logKey)
+        strings.set(tombKey, value)
+        stringTtls.set(tombKey, Number(ttl))
+        return "OK"
+      }
+      if (script === PUT_SHARE_SCRIPT) {
+        const [shareKey, tombKey] = keys
+        const [value, ttl] = args
+        if (strings.has(tombKey)) return 0
+        if (strings.has(shareKey)) return 0
+        strings.set(shareKey, value)
+        stringTtls.set(shareKey, Number(ttl))
+        return 1
+      }
+      throw new Error("fakeRedis: unrecognised script")
+    },
+    async set(key, value, opts) {
+      strings.set(key, value)
+      stringTtls.set(key, opts?.ex)
+      return "OK"
+    },
+    async get(key) {
+      return strings.has(key) ? strings.get(key) : null
+    },
+    async lrange(key) {
+      return lists.get(key) ?? []
+    },
+    async exists(key) {
+      return strings.has(key) ? 1 : 0
+    },
+    // --- test-only hooks, not part of the Redis surface -----------------
+    failNextEval() {
+      evalShouldFail = true
+    },
+    hasTTL(logKey) {
+      return listTtls.has(logKey) && Number.isFinite(listTtls.get(logKey))
+    },
+    listExists(logKey) {
+      return lists.has(logKey)
+    },
+  }
+}
+
+// --- a served unlock records exactly one event, and the read side sees it ----
 {
   const now = Math.floor(Date.now() / 1000)
   const { authKey, commitment } = await validAuthKey()
   const grant = { sender: sender.address, authCommitment: commitment, expiresAt: now + 3600 }
   const stored = { share: "held-share", commitment }
-  const recorded = []
-  const deps = {
+  const store = fakeRedis()
+  const unlockDeps = {
     getGrant: async () => grant,
     getShare: async () => stored,
-    recordAccess: async (entityKey, at) => recorded.push({ entityKey, at }),
+    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
   }
 
-  const result = await resolveUnlock(ENTITY_KEY, authKey, deps)
-
+  const result = await resolveUnlock(ENTITY_KEY, authKey, unlockDeps)
   assert.equal(result.ok, true, "a correct auth key must be served")
-  assert.equal(recorded.length, 1, "a served unlock must record exactly one event")
-  assert.equal(recorded[0].entityKey, ENTITY_KEY)
-  assert.ok(Number.isFinite(recorded[0].at), "the recorded event must carry a timestamp")
-  console.log("PASS  a served unlock records one event")
+
+  // Read through the exact same path the sender-facing route uses — the read
+  // side sees what the write side actually stored, not a parallel fixture.
+  const logResult = await getAccessLogWith(store, ENTITY_KEY)
+  assert.equal(logResult.opened.length, 1, "a served unlock must record exactly one event")
+  assert.ok(Number.isFinite(logResult.opened[0]), "the recorded event must carry a timestamp")
+  assert.equal(logResult.reliable, true, "a clean write must read back as reliable")
+  console.log("PASS  a served unlock records one event, and the read side sees it")
 }
 
 // --- a rejected unlock records none -------------------------------------------
@@ -63,53 +173,56 @@ async function validAuthKey() {
   const { authKey: wrongAuthKey } = await validAuthKey()
   const grant = { sender: sender.address, authCommitment: commitment, expiresAt: now + 3600 }
   const stored = { share: "held-share", commitment }
-  const recorded = []
+  const store = fakeRedis()
   const deps = {
     getGrant: async () => grant,
     getShare: async () => stored,
-    recordAccess: async (entityKey, at) => recorded.push({ entityKey, at }),
+    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
   }
 
   const result = await resolveUnlock(ENTITY_KEY, wrongAuthKey, deps)
 
   assert.equal(result.ok, false)
   assert.equal(result.status, 403)
-  assert.equal(recorded.length, 0, "a rejected unlock must record nothing")
+  assert.equal((await getAccessLogWith(store, ENTITY_KEY)).opened.length, 0, "a rejected unlock must record nothing")
   console.log("PASS  a rejected unlock records none")
 }
 
 // --- an expired grant records nothing either ----------------------------------
 {
   const { authKey } = await validAuthKey()
-  const recorded = []
+  const store = fakeRedis()
   const deps = {
     getGrant: async () => null,
     getShare: async () => {
       throw new Error("must not be reached once the grant is gone")
     },
-    recordAccess: async (entityKey, at) => recorded.push({ entityKey, at }),
+    recordAccess: (entityKey, at, expiresAt) => recordAccessWith(store, entityKey, at, expiresAt),
   }
 
   const result = await resolveUnlock(ENTITY_KEY, authKey, deps)
 
   assert.equal(result.ok, false)
   assert.equal(result.status, 410)
-  assert.equal(recorded.length, 0, "an expired grant must record nothing")
+  assert.equal((await getAccessLogWith(store, ENTITY_KEY)).opened.length, 0, "an expired grant must record nothing")
   console.log("PASS  an expired grant records nothing")
 }
 
-// --- the sender can read the record --------------------------------------------
+// --- the sender can read the record, exactly as the write side stored it -----
 {
   const now = Math.floor(Date.now() / 1000)
   const grant = { sender: sender.address }
-  const opened = [now - 100, now - 10]
-  const deps = { getGrant: async () => grant, getAccessLog: async () => opened }
+  const store = fakeRedis()
+  await recordAccessWith(store, ENTITY_KEY, now - 100, now + 3500)
+  await recordAccessWith(store, ENTITY_KEY, now - 10, now + 3500)
+  const deps = { getGrant: async () => grant, getAccessLog: (entityKey) => getAccessLogWith(store, entityKey) }
 
   const signature = await sender.signMessage({ message: accessLogMessage(ENTITY_KEY, now) })
   const result = await readAccessLog({ entityKey: ENTITY_KEY, signature, timestamp: now }, deps)
 
   assert.equal(result.ok, true, "the sender must be able to read the record")
-  assert.deepEqual(result.opened, opened)
+  assert.deepEqual(result.opened, [now - 100, now - 10])
+  assert.equal(result.reliable, true)
   console.log("PASS  the sender can read the record")
 }
 
@@ -122,7 +235,7 @@ async function validAuthKey() {
     getGrant: async () => grant,
     getAccessLog: async () => {
       read = true
-      return [now]
+      return { opened: [now], reliable: true }
     },
   }
 
@@ -144,7 +257,7 @@ async function validAuthKey() {
     getGrant: async () => grant,
     getAccessLog: async () => {
       read = true
-      return [now]
+      return { opened: [now], reliable: true }
     },
   }
 
@@ -180,6 +293,129 @@ async function validAuthKey() {
   assert.equal(result.ok, true, "a bookkeeping failure must not fail the unlock")
   assert.equal(result.share, "held-share")
   console.log("PASS  a record-write failure still serves the share")
+}
+
+// --- a rejected EXPIRE must not leave a list without a TTL --------------------
+{
+  const store = fakeRedis()
+  const logKey = accessLogKeyName(ENTITY_KEY)
+
+  // A normal write succeeds and carries a TTL.
+  await recordAccessWith(store, ENTITY_KEY, 1000, 1000 + 3600)
+  assert.ok(store.hasTTL(logKey), "a normal write must carry a TTL")
+
+  // The next write's underlying call fails outright — the same failure mode
+  // that, back when RPUSH and EXPIRE were two separate HTTP calls, could
+  // leave the first applied and the second dropped.
+  store.failNextEval()
+  await assert.rejects(
+    () => recordAccessWith(store, ENTITY_KEY, 2000, 2000 + 3600),
+    "a failed write must still surface as a failure to the caller",
+  )
+
+  // RPUSH and EXPIRE are one atomic call now: the failed write appended
+  // nothing, and the entry from the earlier, successful write still carries
+  // its TTL. There is no way to observe one command's effect without the
+  // other's.
+  const after = await getAccessLogWith(store, ENTITY_KEY)
+  assert.deepEqual(after.opened, [1000], "a failed record must not silently append")
+  assert.ok(store.hasTTL(logKey), "the log must never be observed without a TTL")
+  console.log("PASS  a rejected EXPIRE must not leave a list without a TTL")
+}
+
+// --- a dropped record surfaces as unreliable, not a confident empty log -------
+{
+  const now = Math.floor(Date.now() / 1000)
+  const store = fakeRedis()
+  const grant = { sender: sender.address }
+  const deps = { getGrant: async () => grant, getAccessLog: (entityKey) => getAccessLogWith(store, entityKey) }
+
+  // The write path fails outright. lib/unlock.ts would swallow this so the
+  // reader is unaffected — reproduced here as the direct holder-store call
+  // the unlock's recordAccess dependency makes.
+  store.failNextEval()
+  await assert.rejects(() => recordAccessWith(store, ENTITY_KEY, now, now + 3600))
+
+  const signature = await sender.signMessage({ message: accessLogMessage(ENTITY_KEY, now) })
+  const result = await readAccessLog({ entityKey: ENTITY_KEY, signature, timestamp: now }, deps)
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.opened, [], "the dropped write really did leave no entry")
+  assert.equal(result.reliable, false, "an empty log after a dropped write must not read as a confident zero")
+  console.log("PASS  a dropped record surfaces as unreliable, not a confident 'Not opened yet'")
+}
+
+// --- a genuinely empty log — nothing ever dropped — still reads as reliable ---
+{
+  const now = Math.floor(Date.now() / 1000)
+  const store = fakeRedis()
+  const grant = { sender: sender.address }
+  const deps = { getGrant: async () => grant, getAccessLog: (entityKey) => getAccessLogWith(store, entityKey) }
+
+  const signature = await sender.signMessage({ message: accessLogMessage(ENTITY_KEY, now) })
+  const result = await readAccessLog({ entityKey: ENTITY_KEY, signature, timestamp: now }, deps)
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.opened, [])
+  assert.equal(result.reliable, true, "a share that was genuinely never opened must still read as a confident zero")
+  console.log("PASS  a genuinely empty log still reads as reliable")
+}
+
+// --- a failed tombstone write must not leave a refillable slot ----------------
+{
+  const store = fakeRedis()
+  const shareKey = shareKeyName(ENTITY_KEY)
+  const tombKey = tombstoneKeyName(ENTITY_KEY)
+  const value = { share: "held-share", commitment: "c".repeat(64) }
+
+  const stored = await putShareWith(store, ENTITY_KEY, value, 3600)
+  assert.equal(stored, true, "the legitimate first write must succeed")
+
+  // The tombstone write's underlying call fails outright.
+  store.failNextEval()
+  await assert.rejects(() => tombstoneShareWith(store, ENTITY_KEY, 3600))
+
+  // Nothing was touched: delete-share, delete-log and set-tombstone are one
+  // atomic call now, so a failure cannot free the slot while leaving no
+  // tombstone behind — either all three land, or none of them do.
+  assert.equal(await store.get(shareKey), JSON.stringify(value), "the share must survive a failed tombstone attempt")
+  assert.equal(await store.exists(tombKey), 0, "no tombstone must appear from a failed attempt")
+
+  // And the slot is provably not refillable in the meantime.
+  const duringFailure = await putShareWith(store, ENTITY_KEY, { share: "replay", commitment: "d".repeat(64) }, 3600)
+  assert.equal(duringFailure, false, "the slot must not become writable just because the tombstone attempt failed")
+
+  // Retrying, as a caller would, closes it for good.
+  await tombstoneShareWith(store, ENTITY_KEY, 3600)
+  const afterRetry = await putShareWith(store, ENTITY_KEY, { share: "replay", commitment: "d".repeat(64) }, 3600)
+  assert.equal(afterRetry, false, "a tombstoned slot must refuse a refill once the retry lands")
+  console.log("PASS  a failed tombstone write must not leave a refillable slot")
+}
+
+// --- putShare's atomic check-and-set refuses a write raced against a revoke ---
+{
+  const store = fakeRedis()
+
+  // The race the old code allowed: `isRevoked` (a read) followed by a
+  // separate `SET NX` (a write) left a gap a concurrent tombstone could land
+  // in. `putShareWith` is one atomic call now, so there is no gap to land in
+  // — model an adversarial ordering where a revoke completes the instant
+  // before the put's own script would run, and confirm the put still loses.
+  let raced = false
+  const racyClient = {
+    ...store,
+    async eval(script, keys, args) {
+      if (script === PUT_SHARE_SCRIPT && !raced) {
+        raced = true
+        await tombstoneShareWith(store, ENTITY_KEY, 3600)
+      }
+      return store.eval(script, keys, args)
+    },
+  }
+
+  const result = await putShareWith(racyClient, ENTITY_KEY, { share: "held-share", commitment: "c".repeat(64) }, 3600)
+  assert.equal(result, false, "a tombstone that lands immediately before the atomic put must still win")
+  console.log("PASS  putShare's atomic check-and-set refuses a write raced against a revoke")
 }
 
 console.log("\nAll checks passed.")

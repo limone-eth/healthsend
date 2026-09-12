@@ -34,5 +34,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status })
   }
 
-  return NextResponse.json({ opened: result.opened })
+  return NextResponse.json({ opened: result.opened, reliable: result.reliable })
 }
