@@ -8,12 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react"
-import {
-  CONNECT_CONTAINER_ID,
-  disconnect,
-  onConnectionChange,
-  type ConnectionInfo,
-} from "@/lib/swarm"
+import { CONNECT_CONTAINER_ID, onConnectionChange, type ConnectionInfo } from "@/lib/swarm"
 import { getIdentity, forgetIdentity } from "@/lib/identity"
 import { createSend, listMySends, type CreateSendResult } from "@/lib/sends"
 import type { FileKind, Grant } from "@/lib/arkiv"
@@ -113,43 +108,47 @@ function ConnectionPanel({
   booting: boolean
   error: string | null
 }) {
-  const [busy, setBusy] = useState(false)
-
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true)
-    try {
-      await action()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!info.identity) {
-    return (
-      <Card className="mb-6">
-        <h2 className="text-sm font-medium">Sign in</h2>
-        <p className="mt-1 mb-4 text-sm text-muted">
-          Swarm ID is the whole account: a passkey, no wallet and no seed phrase. There is no user
-          database here to sign in to.
-        </p>
-        {/* The button is rendered by the Swarm ID iframe itself — see
-            CONNECT_CONTAINER_ID for why that is not a cosmetic choice. */}
-        <div id={CONNECT_CONTAINER_ID} className="h-11 w-full max-w-[260px] overflow-hidden" />
-      </Card>
-    )
-  }
+  const signedIn = Boolean(info.identity)
 
   return (
     <Card className="mb-6">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-medium">{info.identity.name}</h2>
-          <p className="mt-0.5 text-xs text-muted">Swarm ID · {info.identity.address}</p>
+          {signedIn ? (
+            <>
+              <h2 className="text-sm font-medium">{info.identity!.name}</h2>
+              <p className="mt-0.5 text-xs text-muted">Swarm ID · {info.identity!.address}</p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-sm font-medium">Sign in</h2>
+              <p className="mt-1 text-sm text-muted">
+                Swarm ID is the whole account: a passkey, no wallet and no seed phrase. There is no
+                user database here to sign in to.
+              </p>
+            </>
+          )}
+
+          {signedIn && booting && <p className="mt-2 text-xs text-muted">Deriving your keys…</p>}
+
+          {signedIn && error && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+              Could not derive your grant key: {error}
+            </p>
+          )}
+
+          {signedIn && !info.canUpload && (
+            <p className="mt-2 text-xs text-muted">
+              No postage batch on this identity yet, so uploads are unavailable. Get one at the
+              Swarm desk, or point NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY at a stamping gateway.
+            </p>
+          )}
+
           {/* Keys are derived silently from the passkey. They are shown only on
               request: a user who never opens this never learns a key exists,
               which is the point — the ownership is real whether or not they
               look at it. */}
-          {!booting && address && (
+          {signedIn && !booting && address && (
             <details className="mt-2">
               <summary className="cursor-pointer text-xs text-muted">Advanced</summary>
               <p className="mt-1.5 text-xs">
@@ -162,22 +161,25 @@ function ConnectionPanel({
               </p>
             </details>
           )}
-          {booting && <p className="mt-2 text-xs text-muted">Deriving your keys…</p>}
-          {error && (
-            <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-              Could not derive your grant key: {error}
-            </p>
-          )}
-          {!info.canUpload && (
-            <p className="mt-2 text-xs text-muted">
-              No postage batch on this identity yet, so uploads are unavailable. Get one at the
-              Swarm desk, or point NEXT_PUBLIC_SWARM_SUBSIDISED_GATEWAY at a stamping gateway.
-            </p>
-          )}
         </div>
-        <Button variant="ghost" onClick={() => run(disconnect)} disabled={busy}>
-          Sign out
-        </Button>
+
+        {/*
+          The Swarm ID iframe lives in this container and paints its own button —
+          "Continue with Swarm ID" when signed out, "Sign out" when signed in.
+
+          It must stay mounted across that transition. Rendering it only in the
+          signed-out branch tore the iframe out of the DOM the moment a user
+          signed in, and every later call failed with "Iframe not initialized" —
+          the app sat there signed in with no send form and no way back.
+        */}
+        <div
+          id={CONNECT_CONTAINER_ID}
+          className={
+            signedIn
+              ? "h-9 w-[110px] shrink-0 overflow-hidden"
+              : "h-11 w-[260px] shrink-0 overflow-hidden"
+          }
+        />
       </div>
     </Card>
   )
