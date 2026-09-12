@@ -4,7 +4,8 @@
  * The only Persuade surface in the product. Built from `healthsend.pen`
  * frames `xKspH` (desktop) and `t659K4` (mobile) — read node-by-node via the
  * pencil MCP tool, not from a screenshot. Every string below is copied
- * verbatim from a `content` field.
+ * verbatim from a `content` field, with one named exception: see `Claim`'s
+ * own doc comment.
  *
  * The two frames are not the same copy at two widths: `t659K4` shortens
  * several descriptions and drops two strings outright (the hero's second
@@ -16,6 +17,7 @@
 
 import type { ReactNode } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   FirstAidKit,
   Sparkle,
@@ -111,7 +113,15 @@ function Nav() {
   )
 }
 
+/**
+ * `Action` renders a plain `<button>` with no navigation of its own — see
+ * `components/ui.tsx`. The Nav bar's own "Create your archive" `Link` is
+ * `hidden` below `md`, so before this fix the hero and final `Action`s were
+ * the page's only entry point at phone width, and neither one navigated
+ * anywhere: R2-011. `router.push` gives both a real destination.
+ */
 function Hero() {
+  const router = useRouter()
   return (
     <div className="flex w-full flex-col items-center px-6 pb-11 pt-11 md:px-16 md:pb-20 md:pt-[92px]">
       <div className="flex w-full max-w-[900px] flex-col items-center gap-[18px] md:gap-[22px]">
@@ -127,7 +137,7 @@ function Hero() {
           as you are working together. Then it ends on its own, without you remembering.
         </p>
         <div className="flex w-full flex-col gap-3 pt-2.5 md:w-auto md:flex-row md:items-center">
-          <Action variant="primary" fullWidth className="md:w-auto">
+          <Action variant="primary" fullWidth className="md:w-auto" onClick={() => router.push("/")}>
             Create your archive
           </Action>
           <div className="hidden md:block">
@@ -240,6 +250,16 @@ function HowItWorks() {
   )
 }
 
+/**
+ * The body copy below departs from frame nodes `n3zZt5` (desktop) / `svn2t`
+ * (mobile), which say deletion happens exactly "when the date passes." It
+ * does not: `lib/holder-store.ts`'s `TTL_GRACE_SECONDS` adds an hour to the
+ * holder's TTL so it never undercuts the window Arkiv promised, so the held
+ * share can outlive the stated date by up to an hour. H-47 states that bound
+ * here rather than repeating the frame's more exact-sounding claim. The
+ * canvas is untouched — this story's canvas-write scope is the pronoun sweep
+ * only — so the frame and the build now read differently on purpose.
+ */
 function Claim() {
   return (
     <div className="flex w-full flex-col items-center px-6 pb-11 md:px-16 md:pb-20">
@@ -262,8 +282,9 @@ function Claim() {
             data.
           </h2>
           <p className="text-[15px] leading-[1.55] text-[#E4E5E7] md:w-[820px] md:text-[17px]">
-            Here, when the date passes, the half of the key we hold is deleted. Not a promise to
-            stop showing your data — there is simply nothing left to put back together.
+            Here, when the date passes, the half of the key we hold is deleted within the hour
+            that follows — a stated bound, not an instant. Not a promise to stop showing your
+            data — once that hour passes, there is nothing left to put back together.
           </p>
           <div className="flex w-full gap-2.5 rounded-[14px] border border-hairline-on-dark bg-panel-on-dark p-3.5 md:gap-[11px] md:rounded-inset md:p-[18px]">
             <ShieldCheck size={16} weight="light" className="mt-0.5 shrink-0 text-silver" />
@@ -302,6 +323,7 @@ function Assistant() {
 }
 
 function Final() {
+  const router = useRouter()
   return (
     <div className="flex w-full flex-col items-center px-6 pb-10 md:px-16 md:pb-24">
       <div className="flex w-full max-w-[1120px] flex-col gap-4 md:gap-[26px]">
@@ -312,7 +334,7 @@ function Final() {
           Signing in takes one tap and creates nothing we can read.
         </p>
         <div className="flex w-full justify-center pt-1.5 md:pt-[6px]">
-          <Action variant="primary" fullWidth className="md:w-auto">
+          <Action variant="primary" fullWidth className="md:w-auto" onClick={() => router.push("/")}>
             Create your archive
           </Action>
         </div>

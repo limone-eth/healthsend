@@ -259,7 +259,16 @@ Every combination of the three components, scored the same way:
 
 - **We hold zero copies of anything.** With S3 we would be the custodian of an
   encrypted health-document corpus — breachable, subpoenable, acquirable.
-  Compromising HealthSend entirely does not reach the documents.
+  Compromising our storage reaches nothing, because there is no copy of it
+  there to take. That is narrower than "compromising HealthSend reaches
+  nothing," and the narrower claim is the one we make. Our code reads the file
+  in the browser before it encrypts it, and later serves the recipient the
+  code that decrypts it (`lib/sends.ts`). A compromised deployment — one
+  serving a tampered build of that JavaScript — can read plaintext as it
+  passes through, even though it never touches a document we stored.
+  Browser-side encryption bounds what an attacker who steals *stored data*
+  reaches. It does not bound what an attacker who controls the *build*
+  reaches.
 - **The archive outlives us.** Shut the project down and the documents are still
   retrievable by hash, still the sender's. On S3 they die when the bill stops.
   That is "users own their data" as a fact rather than a slogan.
@@ -458,7 +467,11 @@ lib/holder-store.ts
                   held shares under TTL, plus the access log
 lib/identity.ts   identity keys derived from Swarm ID; no user database
 lib/sends.ts      create a send / open a send, end to end
-app/page.tsx      sender: sign in, upload, share, watch it expire
+app/(sender)/     sender: sign in and your archive, at `/`
+app/(sender)/new/ compose a send: pick files, set a window, get a link
+app/(sender)/shares/
+                  your shares: countdown, end one early, its access log
+app/add/          add files to the archive
 app/s/[key]/      recipient: no account, renders in place, no download button
 app/api/holder/   four holder routes: share, unlock, revoke, access log
 app/api/fund/     gas top-ups for user-derived keys — hackathon scaffolding
@@ -545,8 +558,10 @@ The holder is the deliberate read-path dependency that makes v2 expiry work:
 
 The TTL lasts one hour beyond the requested window, so it cannot end a valid
 send before Arkiv does. The Arkiv check blocks retrieval after the grant lapses;
-the later TTL removes the share from the holder. The revoke and access-log
-backends exist, but their sender controls are **not built**.
+the later TTL removes the share from the holder. `/shares` gives the sender a
+control for each backend: ending a share early calls `/api/holder/revoke`
+(`lib/sends.ts`'s `endSend`), and each share's access log calls
+`/api/holder/access-log` (`app/(sender)/shares/access-log-client.ts`).
 
 The funder route solves a different problem. Writing a grant to Arkiv is a chain
 transaction, so it costs gas. Each user's grant key is **derived from their own
@@ -603,11 +618,14 @@ without letting the app touch the seed. Written up in full, including why "just
 use Privy" does not work, in [`docs/identity-and-onboarding.md`](./docs/identity-and-onboarding.md).
 
 The brief this scaffold came from ([`healthsend-brief.md`](./healthsend-brief.md))
-covers the rest. Archive records and de-identification of labelled identifiers at
-import exist in code, but no application screen uses that archive yet. Detection
-beyond those labelled patterns is designed but **not built**. A separate PIN,
-claim-on-first-open locking to one device, and an MCP server for expiring AI tools
-are also designed but **not built**.
+covers the rest. Archive records exist in code, but no application screen uses that
+archive yet. De-identification at import already reaches past labelled identifiers:
+`lib/deident.ts` also catches an unlabeled date of birth by its shape and year, and
+the importing sender's own account name wherever it recurs in the text — both feed
+`/import-review`. Detection of an identifier with no label, no birth-date shape and
+no match to the sender's own name is still designed but **not built**. A separate
+PIN, claim-on-first-open locking to one device, and an MCP server for expiring AI
+tools are also designed but **not built**.
 
 ## Notes on Swarm and Arkiv
 

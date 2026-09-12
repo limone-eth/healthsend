@@ -37,15 +37,17 @@ import { useSenderIdentity } from "@/components/use-sender-identity"
  * themselves — real names and sizes, nothing read from `fixtures/` and
  * presented as if it were a record.
  *
- * The frame's "How she opens it" and "Ends on" pronoun copy assumes a named,
- * gendered recipient ("Elena", "her"). The recipient's gender is never known
- * here, so shipped copy below uses "they/their" instead — the one deliberate
- * departure from copying frame strings verbatim.
+ * The frame named a specific, gendered recipient ("Elena", "her") in several
+ * strings — "How she opens it", the reassurance line, "What her assistant can
+ * see". The recipient's gender is never known here, so shipped copy below
+ * uses "they/their" instead. H-47 corrected the same nodes in the canvas to
+ * "they/their", so this is no longer a departure from the frame — the build
+ * and the design now agree.
  *
  * The frame's right column ("Settings Panel", `B6zXII`) is DESIGN.md's own
  * name for what this story calls the summary panel (see DESIGN.md's Layout
  * section: "a sticky summary panel right"). Its "Lock it to their phone",
- * "Add a PIN" and "Let her assistant read it too" controls have no backing
+ * "Add a PIN" and "Let their assistant read it too" controls have no backing
  * code path — `lib/sends.ts`'s `createSend` takes only files, a recipient
  * label and a TTL — and building them would mean inventing behaviour `lib/`
  * does not have, which this story's non-goals forbid touching. "How they open
@@ -685,7 +687,7 @@ function AccessModeRow({
 //   - the sub-headline drops the code clause entirely;
 //   - "Who can open it" reads "Anyone with the link" (the one real mode from
 //     `AccessModeRow`, not "the first phone, with your code").
-// "What she sees about you" also departs from the frame's "No name, no date
+// "What they see about you" also departs from the frame's "No name, no date
 // of birth" — that line describes a parsed archive record with a date-of-
 // birth field this app does not have (H-13/H-36 are not built). What is true
 // today, and is what the recipient page actually shows, is that no sender
@@ -693,9 +695,12 @@ function AccessModeRow({
 // you" names no one) — so the value says that instead. See `## Choices`.
 //
 // The row *labels* are the one place the two frames disagree with each
-// other, not just with this app: desktop's `A4L3dx` reads "What she sees
-// about you", mobile's `eonlR` reads "She sees about you". Both are kept
-// verbatim, per platform.
+// other, not just with this app: desktop's `A4L3dx` read "What she sees
+// about you", mobile's `eonlR` read "She sees about you" — a gendered
+// recipient the frame assumes elsewhere too. H-47 re-worded both nodes to
+// "they/their" in the canvas, matching the de-gendered chip vocabulary, so
+// the labels below now copy the frames verbatim again rather than departing
+// from them.
 // ---------------------------------------------------------------------------
 
 type SentSummary = {
@@ -815,8 +820,8 @@ function LinkReady({
         />
         <SummaryRow
           icon={UserCircle}
-          label="She sees about you"
-          desktopLabel="What she sees about you"
+          label="They see about you"
+          desktopLabel="What they see about you"
           value="Nothing — not your name"
           desktopValue="Nothing — not your name, not your address"
           last
@@ -837,7 +842,7 @@ function LinkReady({
       </div>
 
       <p className="text-center text-[12.5px] leading-[1.45] text-muted md:text-[13px]">
-        Changed your mind? End it early from Your shares and she loses access straight away.
+        Changed your mind? End it early from Your shares and they lose access straight away.
       </p>
     </div>
   )

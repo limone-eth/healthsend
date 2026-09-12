@@ -15,6 +15,7 @@
     "verify:deident": "node --experimental-strip-types scripts/deident-proof.mjs",
     "verify:import-flags": "node --experimental-strip-types scripts/import-flag-proof.mjs",
     "verify:holder": "node --experimental-strip-types scripts/holder-preflight-proof.mjs",
+    "verify:copy": "node scripts/copy-claims-proof.mjs",
     "verify:expiry": "node scripts/expiry-demo.mjs",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm e2e",
