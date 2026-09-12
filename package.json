@@ -32,6 +32,8 @@
     "verify:taco-adapter-live": "node --experimental-strip-types scripts/taco-adapter-live-probe.mjs",
     "verify:single-upload-grants": "node --experimental-strip-types scripts/single-upload-grants-proof.mjs",
     "verify:taco-unlock": "node --experimental-strip-types scripts/taco-unlock-proof.mjs",
+    "verify:chipotle-adapter": "node --experimental-strip-types scripts/chipotle-adapter-proof.mjs",
+    "verify:chipotle-adapter-live": "node --experimental-strip-types scripts/chipotle-live-probe.mjs",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
     "test": "pnpm verify:crypto && pnpm verify:grant-paging && pnpm verify:confirm-end && pnpm verify:e2e-server-select && pnpm e2e",
