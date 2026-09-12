@@ -27,8 +27,18 @@ export const REVOKE_SIGNATURE_WINDOW_SECONDS = 5 * 60
 const ENTITY_KEY_RE = /^0x[0-9a-fA-F]{64}$/
 const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/
 
+/**
+ * The domain-prefixed, timestamp-bound message any sender-authorised action
+ * signs. `action` separates the namespaces — a signature captured for one
+ * action (say, the access-log read) must not verify for another (ending the
+ * share), even over the same entity key and timestamp.
+ */
+export function signedMessage(action: string, entityKey: string, timestamp: number): string {
+  return `healthsend:${action}:${entityKey.toLowerCase()}:${timestamp}`
+}
+
 export function revokeMessage(entityKey: string, timestamp: number): string {
-  return `healthsend:revoke:${entityKey.toLowerCase()}:${timestamp}`
+  return signedMessage("revoke", entityKey, timestamp)
 }
 
 export function isFreshRevokeTimestamp(
@@ -39,6 +49,9 @@ export function isFreshRevokeTimestamp(
 }
 
 export type RevokeRequest = { entityKey: string; signature: string; timestamp: number }
+
+/** Same shape, reused wherever else a sender proves control of a grant's key. */
+export type SignedEntityRequest = RevokeRequest
 
 /**
  * Shape and format only. This runs before any network access, so a missing
@@ -51,6 +64,32 @@ export function validateRevokeRequest(body: unknown): RevokeRequest | null {
   if (typeof signature !== "string" || !SIGNATURE_RE.test(signature)) return null
   if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return null
   return { entityKey: entityKey.toLowerCase(), signature, timestamp }
+}
+
+/** Same request shape as revoke — entityKey + signature + timestamp — reused by any other signed read. */
+export const validateSignedEntityRequest = validateRevokeRequest
+
+export type SignerResult = { ok: true; signer: string } | { ok: false; status: number; error: string }
+
+/**
+ * Recover the signer of a domain-prefixed, timestamp-bound message and check
+ * the timestamp is fresh. Does not check the signer against a grant's
+ * `sender` — callers own that comparison, since what counts as authorised
+ * differs by action (ending a share vs. reading its access log).
+ */
+export async function recoverSigner(action: string, req: SignedEntityRequest): Promise<SignerResult> {
+  if (!isFreshRevokeTimestamp(req.timestamp)) {
+    return { ok: false, status: 401, error: "Signature has expired" }
+  }
+  try {
+    const signer = await recoverMessageAddress({
+      message: signedMessage(action, req.entityKey, req.timestamp),
+      signature: req.signature as Hex,
+    })
+    return { ok: true, signer }
+  } catch {
+    return { ok: false, status: 400, error: "Invalid signature" }
+  }
 }
 
 export type RevokeDeps = {
@@ -89,17 +128,10 @@ export async function performRevoke(req: RevokeRequest, deps: RevokeDeps): Promi
     return { ok: true }
   }
 
-  let signer: string
-  try {
-    signer = await recoverMessageAddress({
-      message: revokeMessage(req.entityKey, req.timestamp),
-      signature: req.signature as Hex,
-    })
-  } catch {
-    return { ok: false, status: 400, error: "Invalid signature" }
-  }
+  const recovered = await recoverSigner("revoke", req)
+  if (!recovered.ok) return recovered
 
-  if (!grant.sender || signer.toLowerCase() !== grant.sender.toLowerCase()) {
+  if (!grant.sender || recovered.signer.toLowerCase() !== grant.sender.toLowerCase()) {
     return { ok: false, status: 403, error: "Not authorised to end this grant" }
   }
 
