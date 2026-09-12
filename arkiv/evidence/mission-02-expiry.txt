@@ -1,0 +1,26 @@
+$ pnpm verify:expiry 60
+# recorded 2026-09-12 10:54:11 UTC against Arkiv Tiramisu (chain 7738577)
+
+node scripts/expiry-demo.mjs 60
+account  0x3579286aFaEA0e68EC7F1B467652b1220f2D682C
+balance  0.039836735999673472 GLM
+
+creating a grant with a 60s lifetime…
+entity   0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905
+tx       https://tiramisu.explorer.arkiv.network/tx/0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6
+
+BEFORE   query returns 1 row(s)
+         0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905
+
+waiting 80s for the grant to lapse (no delete call is made)…
+         t+15s rows=1
+         t+25s rows=1
+         t+35s rows=1
+         t+46s rows=1
+         t+56s rows=1
+         t+66s rows=0
+
+AFTER    query returns 0 row(s)
+
+PASS  the grant expired on its own.
+getEntity(0x5f9b5f13ea…) -> not found

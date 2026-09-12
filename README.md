@@ -7,8 +7,21 @@ for storage and identity, **Arkiv** for grants that expire on their own.
 
 **Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · Built at ETHRome 2026.
 
-Sending needs a Swarm ID with a postage batch. *Receiving needs nothing at all* —
-open a share link in a private window and you are the recipient.
+### See it without installing anything
+
+**[Open a live send →](https://healthsend.vercel.app/s/0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3#ugjTYmA8gV5bdy6hLXNGxc3g3_bRQEy-0a2tA_3XPww)**
+
+Three synthetic health documents — a lab panel, a consult note, a sleep export —
+shared for seven days from 12 September 2026. No account, no wallet, no
+extension. Open it in a private window and you are the recipient.
+
+Two things to notice: the countdown is a real block height, not a UI timer, and
+there is no download button anywhere. When the window closes the same URL shows
+an expired state and nobody will have done anything.
+
+> It dies earlier if the postage batch behind it lapses first — which is the
+> layered decay described in [§9 of the brief](./healthsend-brief.md), visible in
+> the wild. Sending needs a Swarm ID with a batch; *receiving needs nothing*.
 
 ---
 
@@ -180,6 +193,20 @@ pnpm verify:expiry 60
 Writes one grant with a 60-second lifetime, runs the sender's compound query,
 waits, and runs the **identical** query again. No delete call appears anywhere in
 the script. Output is the before count, the after count, and a pass/fail.
+
+A recorded run against Tiramisu is committed at
+[`arkiv/evidence/mission-02-expiry.txt`](./arkiv/evidence/mission-02-expiry.txt),
+with the entity key and transaction hash so it can be checked on the explorer:
+
+```
+BEFORE   query returns 1 row(s)
+         t+56s rows=1
+         t+66s rows=0
+AFTER    query returns 0 row(s)
+
+PASS  the grant expired on its own.
+getEntity(0x5f9b5f13ea…) -> not found
+```
 
 ## Layout
 
