@@ -174,11 +174,25 @@ function PdfPreview({ file }: { file: PackedFile }) {
   return (
     <iframe
       ref={frame}
-      // `sandbox=""` would be stricter but disables the browser's built-in PDF
-      // viewer, which needs scripting of its own. The protection that matters is
-      // above: the type is pinned and the bytes are checked, so the frame can
-      // only ever receive something the browser treats as a PDF.
-      sandbox="allow-same-origin allow-scripts"
+      // No `sandbox` here, deliberately, and it is worth writing down why.
+      //
+      // Chrome refuses to run its built-in PDF viewer inside a sandboxed frame
+      // at all — we tested `sandbox=""` and `sandbox="allow-same-origin
+      // allow-scripts"` (which is barely a sandbox) and both render a broken
+      // document instead of the file. Sandboxing and the built-in viewer are
+      // mutually exclusive.
+      //
+      // So the defence is the two checks above rather than the frame: the Blob
+      // type is pinned to application/pdf and the bytes must start with
+      // `%PDF-`. Blob URLs are served with the type they were created with and
+      // are not content-sniffed, so the frame can only ever receive something
+      // the browser hands to its PDF viewer. The original hole — a sender
+      // declaring `text/html` and reaching a document context — is closed at
+      // the source.
+      //
+      // Real defence in depth here means not using the browser's viewer:
+      // render with pdf.js into a canvas, where no document context exists to
+      // capture. That is the right fix and it is not a weekend's work.
       referrerPolicy="no-referrer"
       title={file.header.name}
       className="h-[70vh] w-full rounded-lg border border-line"
