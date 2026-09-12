@@ -16,6 +16,7 @@
     "verify:log": "node --experimental-strip-types scripts/access-log-proof.mjs",
     "verify:archive": "node --experimental-strip-types scripts/archive-roundtrip.mjs",
     "verify:deident": "node --experimental-strip-types scripts/deident-proof.mjs",
+    "verify:send-path": "node --experimental-strip-types scripts/send-path-proof.mjs",
     "verify:import-flags": "node --experimental-strip-types scripts/import-flag-proof.mjs",
     "verify:holder": "node --experimental-strip-types scripts/holder-preflight-proof.mjs",
     "verify:copy": "node scripts/copy-claims-proof.mjs",
