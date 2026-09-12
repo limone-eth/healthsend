@@ -241,10 +241,20 @@ Deletion is also only as good as the provider's: a TTL removes the key, and we d
 not claim the bytes are provably gone from every disk. It is categorically better
 than a key published to a public chain forever, and that is the honest comparison.
 
-> **Status.** Row 5 is what is deployed and demonstrable today. Row 8 is the
-> design this analysis produced, and the README will say so plainly until the
-> holder is built — we would rather ship row 5 with an accurate description than
-> row 8 in a diagram.
+> **Status: row 8 is built and deployed.** New sends split the content key and
+> publish no key material at all. Check any grant's transaction yourself:
+>
+> ```bash
+> node scripts/payload-survives.mjs <txHash>
+> ```
+>
+> A v1 grant returns *"this grant published KEY MATERIAL"*. A v2 grant returns
+> *"no key material"* — the payload is still in calldata and always will be, but
+> it carries a Swarm reference and a SHA-256 commitment, and neither
+> reconstructs anything.
+>
+> v1 links still open and still cannot expire. They degrade honestly rather than
+> vanishing, and the script tells you which kind you are looking at.
 
 ## Running it
 

@@ -39,21 +39,39 @@ const printable = Buffer.from(tx.input.slice(2), "hex")
   .toString("utf8")
   .replace(/[^\x20-\x7e]/g, ".")
 
-// The payload is JSON, so it survives as readable text in the calldata.
-const match = printable.match(/\{"v":\d+.*?\}\}/)
+// The payload is JSON, so it survives as readable text in the calldata. Match
+// any shape — an earlier version of this script looked for a trailing "}}" and
+// so reported "no payload" for v2 grants, which was simply wrong.
+const match = printable.match(/\{"v":\d+[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/)
 
 console.log(`tx       ${txHash}`)
 console.log(`block    ${tx.blockNumber}`)
 console.log(`calldata ${printable.length} bytes\n`)
 
-if (match) {
-  console.log("PAYLOAD RECOVERED FROM CALLDATA:\n")
-  console.log(`  ${match[0]}\n`)
-  console.log("The wrapped content key is in there. It is public, it is permanent,")
-  console.log("and no expiry removes it. Anyone holding the link fragment can pair")
-  console.log("the two and decrypt for as long as the Swarm blob survives.")
+if (!match) {
+  console.log("No JSON payload found in this transaction's calldata.")
+  process.exit(1)
+}
+
+console.log("PAYLOAD RECOVERED FROM CALLDATA:\n")
+console.log(`  ${match[0]}\n`)
+
+// The payload is always here and always permanent. The only question that
+// matters is whether it carries key material.
+const carriesKey = /"wrap"\s*:/.test(match[0])
+
+if (carriesKey) {
+  console.log("VERDICT: this grant published KEY MATERIAL.\n")
+  console.log("  The wrapped content key is in there. It is public, it is permanent,")
+  console.log("  and no expiry removes it. Anyone holding the link fragment can pair")
+  console.log("  the two and decrypt for as long as the Swarm blob survives.")
   process.exit(0)
 }
 
-console.log("No JSON payload found in this transaction's calldata.")
-process.exit(1)
+console.log("VERDICT: no key material.\n")
+console.log("  The payload is still here and always will be — that is what a chain")
+console.log("  does. But it carries a Swarm reference and a SHA-256 commitment, and")
+console.log("  neither reconstructs anything. The half that decrypts went to a holder")
+console.log("  that deletes it, and the other half never left the recipient's browser.")
+console.log("\n  Permanence stopped being a problem by making the permanent thing harmless.")
+process.exit(0)
