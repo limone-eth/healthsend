@@ -52,7 +52,7 @@ export const DEMO_BLOOD_PANEL: BloodPanelRecord = {
     marker({ id: "creatinine", name: "Creatinine", value: 0.78, unit: "mg/dL", referenceRange: { min: 0.55, max: 1.02 } }),
     marker({ id: "egfr", name: "Estimated glomerular filtration rate", value: 104, unit: "mL/min/1.73m²", referenceRange: { min: 60 } }),
     marker({ id: "tsh", name: "Thyroid-stimulating hormone", value: 2.1, unit: "mIU/L", referenceRange: { min: 0.4, max: 4 } }),
-    marker({ id: "vitamin-d", name: "Vitamin D", value: 18, unit: "ng/mL", referenceRange: { min: 30, max: 100 } }),
+    marker({ id: "vitamin-d", name: "Vitamin D", value: 18, unit: "ng/mL", referenceRange: { min: 30, max: 100 }, labFlag: "LOW" }),
     marker({ id: "crp", name: "C-reactive protein", value: 0.7, unit: "mg/L", referenceRange: { max: 3 } }),
   ],
 }
@@ -106,10 +106,14 @@ function marker(params: {
   value: number
   unit: string
   referenceRange: ReferenceRange
+  /** The lab's own out-of-range call — carried through as data, never a reason to flag the demo panel. */
+  labFlag?: string
 }): BloodMarker {
+  const { labFlag, ...rest } = params
   return {
-    ...params,
+    ...rest,
     id: `marker:${params.id}`,
     flaggedAtImport: false,
+    ...(labFlag ? { labFlag } : {}),
   }
 }

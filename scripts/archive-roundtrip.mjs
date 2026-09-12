@@ -63,6 +63,24 @@ assert.deepEqual(
 )
 assert.ok(!("provenance" in sharedPanel), "archive provenance must not enter recipient bytes")
 
+// R3-019: the lab's own abnormal-result call must survive `scopeArchive` —
+// a clinician reading the recipient's scoped record needs it exactly as
+// much as one reading the sender's own archive does (H-38).
+const sharedVitaminD = sharedPanel.markers.find((marker) => marker.id === "marker:vitamin-d")
+assert.ok(sharedVitaminD, "vitamin D must be among the shared markers")
+assert.equal(
+  sharedVitaminD.labFlag,
+  "LOW",
+  "a lab flag on a shared marker must survive scoping into the recipient's record",
+)
+const sharedFerritin = sharedPanel.markers.find((marker) => marker.id === "marker:ferritin")
+assert.equal(
+  sharedFerritin.labFlag,
+  undefined,
+  "a marker the lab did not flag must carry no lab flag through scoping",
+)
+console.log("PASS  a lab flag on a shared marker survives scopeArchive into the recipient record")
+
 const unselected = DEMO_BLOOD_PANEL.markers.filter(
   (marker) => !DEMO_SHARED_MARKER_IDS.includes(marker.id),
 )

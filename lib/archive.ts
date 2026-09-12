@@ -30,7 +30,14 @@ export type BloodMarker = {
   /** Stable only inside the sender's archive. */
   id: string
   name: string
+  /**
+   * `NaN` only when the row itself is `flaggedAtImport` — a value import
+   * found blank or could not read. Never a clean number standing in for
+   * "unknown"; see `lib/import.ts`.
+   */
   value: number
+  /** A lab-style qualifier the reading was reported with (`<0.3`, `>100`) — a confident, conventional reading, never a flag. */
+  qualifier?: "<" | ">"
   /** Empty when import found no unit in the file — see `flaggedAtImport`, never absent. */
   unit: string
   referenceRange: ReferenceRange
@@ -233,6 +240,7 @@ function selectRecords(archive: Archive, selections: ArchiveSelection[]): Shared
             id: marker.id,
             name: marker.name,
             value: marker.value,
+            ...(marker.qualifier === undefined ? {} : { qualifier: marker.qualifier }),
             unit: marker.unit,
             referenceRange: {
               ...(marker.referenceRange.min === undefined
@@ -340,19 +348,22 @@ function validateRecord(record: ArchiveRecord | SharedRecord, needsProvenance: b
       if (!isObject(marker)) throw new Error(`Invalid marker in ${record.id}`)
       assertOnlyKeys(
         marker,
-        ["id", "name", "value", "unit", "referenceRange", "labFlag", "flaggedAtImport", "flagReason"],
+        ["id", "name", "value", "qualifier", "unit", "referenceRange", "labFlag", "flaggedAtImport", "flagReason"],
         "blood marker",
       )
       assertText(marker.id, "marker id")
       assertText(marker.name, "marker name")
-      assertFiniteNumber(marker.value, "marker value")
       // Empty, not absent: import found no unit to read, and that state is
       // exactly what should reach the record — see `flaggedAtImport`.
       if (typeof marker.unit !== "string") throw new Error("Invalid marker unit")
       if (marker.labFlag !== undefined) assertText(marker.labFlag, "marker lab flag")
       if (typeof marker.flaggedAtImport !== "boolean") throw new Error("Invalid marker flag")
       if (marker.flagReason !== undefined) assertText(marker.flagReason, "marker flag reason")
-      validateReferenceRange(marker.referenceRange)
+      assertMarkerValue(marker.value, marker.flaggedAtImport, "marker value")
+      if (marker.qualifier !== undefined && marker.qualifier !== "<" && marker.qualifier !== ">") {
+        throw new Error("Invalid marker qualifier")
+      }
+      validateReferenceRange(marker.referenceRange, marker.flaggedAtImport)
       if (markerIds.has(marker.id)) throw new Error(`Duplicate marker id: ${marker.id}`)
       markerIds.add(marker.id)
     }
@@ -422,14 +433,21 @@ function validateSetAside(setAside: SetAsideIdentifiers): void {
  * Both bounds absent is valid: it is how import represents a value it could
  * not place in any reference range (see `lib/import.ts`), and that marker
  * must still reach the record so it can be reviewed rather than silently
- * dropped.
+ * dropped. A reversed range (`min > max`) is likewise valid only when the
+ * marker is `flaggedAtImport` — import surfaces an impossible range as
+ * parse uncertainty; it never silently repairs or drops one.
  */
-function validateReferenceRange(range: ReferenceRange): void {
+function validateReferenceRange(range: ReferenceRange, flaggedAtImport: unknown): void {
   if (!isObject(range)) throw new Error("Invalid reference range")
   assertOnlyKeys(range, ["min", "max"], "reference range")
   if (range.min !== undefined) assertFiniteNumber(range.min, "reference minimum")
   if (range.max !== undefined) assertFiniteNumber(range.max, "reference maximum")
-  if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+  if (
+    range.min !== undefined &&
+    range.max !== undefined &&
+    range.min > range.max &&
+    flaggedAtImport !== true
+  ) {
     throw new Error("Reference range is reversed")
   }
 }
@@ -450,6 +468,17 @@ function assertText(value: unknown, label: string): asserts value is string {
 
 function assertFiniteNumber(value: unknown, label: string): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid ${label}`)
+}
+
+/**
+ * A marker value may be `NaN` — but only paired with `flaggedAtImport: true`.
+ * That combination is import saying "missing" or "unreadable" out loud; an
+ * unflagged non-finite value would be the silent-zero bug reasserting
+ * itself in a different shape, so it stays rejected outright.
+ */
+function assertMarkerValue(value: unknown, flaggedAtImport: unknown, label: string): asserts value is number {
+  if (typeof value !== "number") throw new Error(`Invalid ${label}`)
+  if (!Number.isFinite(value) && flaggedAtImport !== true) throw new Error(`Invalid ${label}`)
 }
 
 function assertOnlyKeys(value: object, allowed: string[], label: string): void {

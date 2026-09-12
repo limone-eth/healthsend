@@ -35,8 +35,11 @@ const BLOOD_PANEL_HEADER = "marker,value,unit,ref_low,ref_high,flag"
  * The raw candidate marker lines, in file order, filtered by exactly the
  * same rule `parseBloodPanelMarkers` applies (skip anything before the
  * header, skip blank lines, skip anything with fewer than five cells, skip
- * an empty name or a non-finite value) — so this list lines up 1:1, by
- * position, with `imported.record.markers`.
+ * an empty name) — so this list lines up 1:1, by position, with
+ * `imported.record.markers`. A blank, qualified or otherwise unreadable
+ * value is *not* skipped here any more than it is in the parser: H-57 made
+ * every one of those rows a marker in its own right, so dropping its source
+ * line here would desync every row after it.
  *
  * R2-018: the previous approach (`findSourceLine`) matched each marker back
  * to a raw line by *name* — the first line whose text started with
@@ -59,8 +62,8 @@ export function markerSourceLines(text: string): string[] {
     if (!line.trim()) continue
     const cells = line.split(",").map((cell) => cell.trim())
     if (cells.length < 5) continue
-    const [name, valueText] = cells
-    if (!name || !Number.isFinite(Number(valueText))) continue
+    const [name] = cells
+    if (!name) continue
     result.push(line.trim())
   }
   return result
@@ -89,6 +92,7 @@ export function buildReview(fixture: (typeof FIXTURES)[number]): ReviewData {
         id: marker.id,
         name: marker.name,
         value: marker.value,
+        qualifier: marker.qualifier,
         unit: marker.unit,
         snippet: sourceLine ?? `${marker.name}, ${marker.value} ${marker.unit}`,
         labFlag: marker.labFlag,
