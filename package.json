@@ -13,6 +13,7 @@
     "verify:taco-package": "node --experimental-strip-types scripts/taco-package-proof.mjs",
     "verify:revoke": "node --experimental-strip-types scripts/revoke-proof.mjs",
     "verify:grant-paging": "node --experimental-strip-types scripts/grant-paging-proof.mjs",
+    "verify:countdown": "node --experimental-strip-types scripts/countdown-copy-proof.mjs",
     "verify:confirm-end": "node --experimental-strip-types scripts/confirm-end-proof.mjs",
     "verify:log": "node --experimental-strip-types scripts/access-log-proof.mjs",
     "verify:archive": "node --experimental-strip-types scripts/archive-roundtrip.mjs",

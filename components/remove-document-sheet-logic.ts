@@ -14,6 +14,7 @@
 import { removeDocumentFromMyArchive } from "@/lib/archive-store"
 import { endSend } from "@/lib/sends"
 import { markEndedByYou } from "@/app/(sender)/shares/local-history"
+import { endMoment, remainingFigure } from "./countdown-copy"
 
 export type LiveShareView = {
   entityKey: string
@@ -35,17 +36,13 @@ export function shareLabel(documentIds: string[]): string {
   return documentIds.length === 1 ? "Share of this PDF" : `Share of ${documentIds.length} documents`
 }
 
-const endsWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" })
-const endsFullDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" })
-const CLOSING_SECONDS = 7 * 86400
-
-/** "Ends 4 December · 74 days" while there is more than a week left, "Ends Sunday · 6 days" inside it. */
+/**
+ * "Ends 4 December 2026 · 73 days", "Ends Thursday at 18:00 · 4 days", "Ends today at 00:26 · 2 minutes" —
+ * as fine as the share is long, with the same wording as the recipient's Countdown
+ * (components/countdown-copy.ts).
+ */
 export function endsLabel(expiresAt: number, now: number): string {
-  const remainingSeconds = Math.max(0, expiresAt - now)
-  const days = Math.ceil(remainingSeconds / 86400)
-  const date = new Date(expiresAt * 1000)
-  const when = remainingSeconds <= CLOSING_SECONDS ? endsWeekday.format(date) : endsFullDate.format(date)
-  return `Ends ${when} · ${days} day${days === 1 ? "" : "s"}`
+  return `Ends ${endMoment(expiresAt, now)} · ${remainingFigure(Math.max(1, expiresAt - now))}`
 }
 
 /** "It is in two shares that are still open" — the chalk card's head line. */

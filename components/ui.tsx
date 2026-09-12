@@ -14,6 +14,7 @@ import {
   UserCircle,
   XCircle,
 } from "@phosphor-icons/react"
+import { countdownDateLabel, countdownRemainingLabel, countdownStateFor, type CountdownState } from "./countdown-copy"
 
 /**
  * The primitive kit — nine components, one token map. Every value below traces
@@ -177,38 +178,9 @@ export function Chip({ state, label }: { state: ChipState; label?: string }) {
 // pure function of its props and re-render-on-an-interval the caller's call.
 // ---------------------------------------------------------------------------
 
-export type CountdownState = "active" | "closing" | "expired"
-
-const COUNTDOWN_CLOSING_SECONDS = 7 * 86400
-const COUNTDOWN_HOURS_BOUNDARY_SECONDS = 48 * 3600
-
-const countdownFullDate = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-})
-const countdownWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" })
-
-function countdownStateFor(remainingSeconds: number): CountdownState {
-  if (remainingSeconds <= 0) return "expired"
-  if (remainingSeconds <= COUNTDOWN_CLOSING_SECONDS) return "closing"
-  return "active"
-}
-
-function countdownRemainingLabel(remainingSeconds: number): string {
-  if (remainingSeconds <= COUNTDOWN_HOURS_BOUNDARY_SECONDS) {
-    const hours = Math.max(1, Math.ceil(remainingSeconds / 3600))
-    return `${hours} hour${hours === 1 ? "" : "s"} left`
-  }
-  const days = Math.floor(remainingSeconds / 86400)
-  return `${days} day${days === 1 ? "" : "s"} left`
-}
-
-function countdownDateLabel(state: CountdownState, expiresAt: Date): string {
-  if (state === "closing") return `Expires ${countdownWeekday.format(expiresAt)}`
-  const full = countdownFullDate.format(expiresAt)
-  return state === "expired" ? `Expired ${full}` : `Expires ${full}`
-}
+// The words themselves — state, time left, date line — live in
+// components/countdown-copy.ts, a pure module with its own proof.
+export type { CountdownState } from "./countdown-copy"
 
 const COUNTDOWN_SPEC: Record<
   CountdownState,
@@ -253,7 +225,6 @@ export function Countdown({
   const state = countdownStateFor(remainingSeconds)
   const spec = COUNTDOWN_SPEC[state]
   const Icon = spec.icon
-  const date = new Date(expiresAt * 1000)
   return (
     <div
       className={`flex h-14 w-full items-center justify-between gap-3 rounded-control border border-hairline bg-surface px-4 ${className}`}
@@ -265,7 +236,7 @@ export function Countdown({
         <div className="flex flex-col gap-0.5">
           <span className={`text-[10px] font-semibold tracking-[1.3px] ${spec.wordColor}`}>{spec.word}</span>
           <span className="text-[14px] font-semibold tracking-[-0.1px] text-ink">
-            {countdownDateLabel(state, date)}
+            {countdownDateLabel(state, expiresAt, now)}
           </span>
         </div>
       </div>
@@ -291,7 +262,6 @@ export function CountdownChip({
 }) {
   const remainingSeconds = expiresAt - now
   const state = countdownStateFor(remainingSeconds)
-  const date = new Date(expiresAt * 1000)
   return (
     <div
       data-testid="countdown-chip"
@@ -299,7 +269,7 @@ export function CountdownChip({
     >
       <CalendarBlank size={13} weight="light" className="text-navy" />
       <span className="whitespace-nowrap text-[12.5px] font-semibold text-ink">
-        {state === "expired" ? "Access ended" : countdownDateLabel(state, date)}
+        {state === "expired" ? "Access ended" : countdownDateLabel(state, expiresAt, now)}
       </span>
     </div>
   )

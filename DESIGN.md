@@ -499,8 +499,14 @@ Rules:
   access, the product's central claim becomes decoration.
 - **Never a progress bar, ring or depleting meter.** A draining gauge reads as a
   resource someone could top up. This is a date, and dates are read, not filled.
-- Days down to 48 hours, then hours. Never minutes or seconds — except the demo
-  clock, which is labelled a demo control and lives outside the component.
+- Days down to 48 hours, then hours, then minutes under an hour and seconds under a
+  minute. Shares can be minutes long — the default preset is ten minutes — so a coarser
+  figure would be false: a two-minute share must never read "1 hour left". Figures round
+  **down**; the countdown may understate the time left, never overstate it. (Changed
+  2026-09-13 at the operator's request; this used to forbid minutes and seconds.)
+- The date line carries the clock time whenever the day alone is too coarse:
+  "Expires today at 00:26", "tomorrow at 09:15", "Thursday at 18:00" inside six days,
+  a full date beyond. Wording lives in `components/countdown-copy.ts`.
 - **Never red.** The state word changes with the colour, every time.
 - Ended is a state of the **whole surface**, not a badge on a live one. When a share
   lapses, the recipient page *becomes* the ended page; the data never renders behind

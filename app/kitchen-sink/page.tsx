@@ -116,6 +116,15 @@ export default function KitchenSink() {
           The 48-hour boundary on both sides — 49 hours left still reads in days, 47 switches to
           hours.
         </p>
+        <div className="flex flex-wrap gap-4">
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 90 * 60} now={NOW} />
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 120} now={NOW} />
+          <Countdown className="max-w-[380px]" expiresAt={NOW + 30} now={NOW} />
+        </div>
+        <p className="text-label text-muted">
+          Short shares read as finely as they are long — hours, then minutes, then seconds, always
+          rounded down — and the date line carries the clock time.
+        </p>
       </Section>
 
       <Section title="Field" id="vG3Zj">
