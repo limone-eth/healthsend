@@ -154,22 +154,55 @@ function Preview({ file }: { file: PackedFile }) {
  */
 function PdfPreview({ file }: { file: PackedFile }) {
   const frame = useRef<HTMLIFrameElement>(null)
+  const isPdf = looksLikePdf(file.body)
 
   useEffect(() => {
+    if (!isPdf) return
     const url = URL.createObjectURL(new Blob([file.body as BlobPart], { type: "application/pdf" }))
     if (frame.current) frame.current.src = `${url}#toolbar=0&navpanes=0&scrollbar=0`
     return () => URL.revokeObjectURL(url)
-  }, [file])
+  }, [file, isPdf])
+
+  if (!isPdf) {
+    return (
+      <p className="text-sm text-muted">
+        This file is named like a PDF but its contents are not one, so it will not be displayed.
+      </p>
+    )
+  }
 
   return (
     <iframe
       ref={frame}
-      sandbox=""
+      // `sandbox=""` would be stricter but disables the browser's built-in PDF
+      // viewer, which needs scripting of its own. The protection that matters is
+      // above: the type is pinned and the bytes are checked, so the frame can
+      // only ever receive something the browser treats as a PDF.
+      sandbox="allow-same-origin allow-scripts"
       referrerPolicy="no-referrer"
       title={file.header.name}
       className="h-[70vh] w-full rounded-lg border border-line"
     />
   )
+}
+
+/**
+ * Does this actually start with a PDF header?
+ *
+ * The sender controls the whole file — they encrypted it — so neither the
+ * filename nor the declared MIME type is evidence of anything. Without this
+ * check, a file named `report.pdf` carrying HTML would reach a Blob, and a blob
+ * URL inherits this page's origin, where the link secret lives in the fragment.
+ * Two independent things now have to hold before anything renders: the type we
+ * pin, and the bytes themselves.
+ */
+function looksLikePdf(body: Uint8Array): boolean {
+  const magic = "%PDF-"
+  if (body.length < magic.length) return false
+  for (let i = 0; i < magic.length; i++) {
+    if (body[i] !== magic.charCodeAt(i)) return false
+  }
+  return true
 }
 
 function CsvTable({ text }: { text: string }) {
