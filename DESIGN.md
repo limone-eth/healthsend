@@ -1218,6 +1218,38 @@ Two further rules:
 
 ---
 
+## Upload once, bundle per share
+
+**Settled 2026-09-12 by the operator.** A person uploads a document **once**. It lands in their
+archive, de-identified on the way in. Every share afterwards is a **bundle assembled out of that
+archive** at the moment the link is created and authorised — never another upload.
+
+This is the whole shape of the product, and it is worth writing down because the code currently
+does the opposite. `createSend` maps browser `File` objects straight into the envelope: each send
+re-uploads, nothing is de-identified, and the recipient receives the original bytes including
+markers the sender did not select (review 2, R2-001). That is not a missing feature at the edge —
+it is the model inverted.
+
+What follows from it:
+
+- **Import is the only write path.** Identifiers are set aside once, at import, and never travel.
+  A de-identification step on the *way out* would be a filter, which is a weaker promise and a
+  different one — see H-16, which chose the ordering deliberately.
+- **A share is a scope, not a file list.** `scopeArchive` produces what the recipient gets. The
+  send path selects records; it does not read the disk again.
+- **"What's in it" describes a selection.** The Link ready summary row names what was scoped, and
+  the recipient screen renders records, not documents. Both currently describe files because
+  files are all there are.
+- **Authorisation happens at bundle time.** The grant, the holder's half-key and — once H-22
+  lands — the assistant's scoped slice are all minted against that one selection, at that one
+  moment. There is no later step that can widen it.
+- **Re-sharing the same panel to a second person costs nothing new.** Same archive record, second
+  scope, second grant, second expiry. Today it would mean finding and uploading the file again.
+
+Stories that carry this: **H-44** (the archive is never written or read), **H-36**
+(de-identification never runs), **H-14 / H-23** (scope selection), **H-22** (the assistant is
+served a scope).
+
 ## Decisions from the brief
 
 Three questions the design keeps running into. The brief settles two; the third is a
