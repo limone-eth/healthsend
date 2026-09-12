@@ -14,18 +14,30 @@
  * proves `performRevoke` and `resolveUnlock`.
  */
 
-import { recoverSigner, signedMessage, validateSignedEntityRequest, type SignedEntityRequest } from "./revoke.ts"
+import {
+  recoverMessageSigner,
+  signedMessage,
+  validateSignedEntityRequest,
+  type SignedEntityRequest,
+} from "./revoke.ts"
 
-/** The message the sender signs to store a share for one entity key. */
-export function shareMessage(entityKey: string, timestamp: number): string {
-  return signedMessage("share", entityKey, timestamp)
-}
-
-export type ShareRequest = SignedEntityRequest & {
+export type SharePayload = {
   share: string
   commitment: string
   ttlSeconds: number
 }
+
+/** The message the sender signs to store one exact share payload. */
+export function shareMessage(
+  entityKey: string,
+  timestamp: number,
+  { share, commitment, ttlSeconds }: SharePayload,
+): string {
+  const payload = JSON.stringify([share, commitment, ttlSeconds])
+  return `${signedMessage("share", entityKey, timestamp)}:${payload}`
+}
+
+export type ShareRequest = SignedEntityRequest & SharePayload
 
 const COMMITMENT_RE = /^[0-9a-f]{64}$/
 
@@ -56,7 +68,10 @@ export type ShareDeps = {
 export type ShareResult = { ok: true } | { ok: false; status: number; error: string }
 
 export async function performShare(req: ShareRequest, deps: ShareDeps): Promise<ShareResult> {
-  const recovered = await recoverSigner("share", req)
+  const recovered = await recoverMessageSigner(
+    shareMessage(req.entityKey, req.timestamp, req),
+    req,
+  )
   if (!recovered.ok) return recovered
 
   let grant: { sender: string } | null

@@ -71,6 +71,25 @@ export const validateSignedEntityRequest = validateRevokeRequest
 
 export type SignerResult = { ok: true; signer: string } | { ok: false; status: number; error: string }
 
+/** Recover the signer of one exact fresh request message. */
+export async function recoverMessageSigner(
+  message: string,
+  req: SignedEntityRequest,
+): Promise<SignerResult> {
+  if (!isFreshRevokeTimestamp(req.timestamp)) {
+    return { ok: false, status: 401, error: "Signature has expired" }
+  }
+  try {
+    const signer = await recoverMessageAddress({
+      message,
+      signature: req.signature as Hex,
+    })
+    return { ok: true, signer }
+  } catch {
+    return { ok: false, status: 400, error: "Invalid signature" }
+  }
+}
+
 /**
  * Recover the signer of a domain-prefixed, timestamp-bound message and check
  * the timestamp is fresh. Does not check the signer against a grant's
@@ -78,18 +97,7 @@ export type SignerResult = { ok: true; signer: string } | { ok: false; status: n
  * differs by action (ending a share vs. reading its access log).
  */
 export async function recoverSigner(action: string, req: SignedEntityRequest): Promise<SignerResult> {
-  if (!isFreshRevokeTimestamp(req.timestamp)) {
-    return { ok: false, status: 401, error: "Signature has expired" }
-  }
-  try {
-    const signer = await recoverMessageAddress({
-      message: signedMessage(action, req.entityKey, req.timestamp),
-      signature: req.signature as Hex,
-    })
-    return { ok: true, signer }
-  } catch {
-    return { ok: false, status: 400, error: "Invalid signature" }
-  }
+  return recoverMessageSigner(signedMessage(action, req.entityKey, req.timestamp), req)
 }
 
 export type RevokeDeps = {
