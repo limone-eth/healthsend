@@ -264,8 +264,9 @@ function Expired() {
     <Card>
       <h1 className="text-lg font-semibold">This link has expired</h1>
       <p className="mt-2 text-sm text-muted">
-        The grant that carried the decryption key reached the end of its life and no longer appears
-        in Arkiv&rsquo;s index, so this page cannot put the key back together.
+        The grant reached the end of its life and no longer appears in Arkiv&rsquo;s index. The
+        holder checks for it before serving its half of the key, so there is no longer a second
+        half to put this one together with.
       </p>
       <p className="mt-3 text-sm text-muted">
         Nobody revoked this. No job ran. The access simply ran out.
