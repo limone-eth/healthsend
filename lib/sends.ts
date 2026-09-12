@@ -35,6 +35,7 @@ import {
   getCurrentBlock,
   getGrant,
   listGrants,
+  MalformedGrantError,
   type FileKind,
   type Grant,
 } from "./arkiv"
@@ -208,9 +209,17 @@ export async function openSend(
   try {
     grant = await getGrant(entityKey)
   } catch (error) {
-    // A transport failure is an error, not an expiry. Saying "expired" here
-    // would tell the reader their access ended when in fact we cannot tell.
-    return { status: "error", message: (error as Error).message }
+    if (error instanceof MalformedGrantError) {
+      // The grant is live and we read it — the data itself is broken, which is a
+      // concrete, nameable failure rather than an unknown one.
+      return { status: "error", message: error.message }
+    }
+    // Anything else here — a wrong RPC URL, a proxy's error page, a timeout, a
+    // query the node itself rejected — never confirmed the grant is gone. Saying
+    // "expired" would tell the reader their access ended when in fact we cannot
+    // tell, and the error screen's own copy ("the grant was found") would be a
+    // claim we never verified either. Unavailable is the honest answer.
+    return { status: "unavailable", message: (error as Error).message }
   }
   if (!grant) return { status: "expired" }
 
@@ -242,11 +251,21 @@ export async function openSend(
       // Prove we hold the link, and ask the holder for the other half. Without
       // it there is no key to reconstruct — this is the expiry.
       const authKey = await deriveAuthKey(linkSecret)
-      const response = await fetch("/api/holder/unlock", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entityKey, authKey: toBase64Url(authKey) }),
-      })
+      let response: Response
+      try {
+        response = await fetch("/api/holder/unlock", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ entityKey, authKey: toBase64Url(authKey) }),
+        })
+      } catch (error) {
+        // The request never reached the holder, so there is no status and no body
+        // to classify — the ordinary shape of an unreachable service, not of a
+        // wrong link. Falling through to the generic catch below would report
+        // this as a decryption failure, which is exactly the false claim this
+        // story exists to remove.
+        return { status: "unavailable", message: (error as Error).message }
+      }
 
       if (response.status === 410) {
         // The holder tells the two apart (`lib/unlock.ts`); this is the one place

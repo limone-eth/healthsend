@@ -37,6 +37,13 @@ export type FoundGrant = {
   currentBlock: number
 }
 export type MissingGrant = { kind: "missing"; currentBlock: number }
+/** A live entity whose payload will not parse — not the same fact as "missing". */
+export type MalformedGrant = { kind: "malformed"; entityKeyHex: string; currentBlock: number }
+/**
+ * A wrong RPC URL, a proxy, or a down endpoint answering with a plain HTTP status — not a
+ * JSON-RPC error, and not the shape the SDK uses for "no live entity" either.
+ */
+export type TransportFailure = { kind: "transport-fail" }
 
 /**
  * Stub the Arkiv JSON-RPC transport `getGrant`/`getCurrentBlock` call directly.
@@ -46,8 +53,16 @@ export type MissingGrant = { kind: "missing"; currentBlock: number }
  * other method is a bug in the fixture, not a real request, so it fails loudly
  * instead of reaching the network.
  */
-export async function mockArkiv(context: BrowserContext, scenario: FoundGrant | MissingGrant) {
+export async function mockArkiv(
+  context: BrowserContext,
+  scenario: FoundGrant | MissingGrant | MalformedGrant | TransportFailure,
+) {
   await context.route(ARKIV_RPC_PATTERN, async (route) => {
+    if (scenario.kind === "transport-fail") {
+      await route.fulfill({ status: 404, contentType: "text/plain", body: "Not Found" })
+      return
+    }
+
     const { id, method } = readJsonRpc(route)
 
     if (method === "eth_blockNumber") {
@@ -62,26 +77,32 @@ export async function mockArkiv(context: BrowserContext, scenario: FoundGrant | 
         })
         return
       }
-      const payload = JSON.stringify({
-        v: 2,
-        ref: scenario.reference,
-        authCommitment: scenario.authCommitment,
-      })
-      const payloadHex = "0x" + Buffer.from(payload, "utf8").toString("hex")
+
+      // A live entity, but its payload is not JSON at all — distinct from "missing"
+      // (kind: "missing" above), which never puts an entity in `data` to begin with.
+      const payloadHex =
+        scenario.kind === "malformed"
+          ? "0x" + Buffer.from("not valid json", "utf8").toString("hex")
+          : "0x" +
+            Buffer.from(
+              JSON.stringify({ v: 2, ref: scenario.reference, authCommitment: scenario.authCommitment }),
+              "utf8",
+            ).toString("hex")
+      const expiresBlock = scenario.kind === "malformed" ? scenario.currentBlock + 500 : scenario.expiresBlock
       const entity = {
         key: scenario.entityKeyHex,
         owner: "0x" + "11".repeat(20),
         creator: "0x" + "11".repeat(20),
         createdAt: "0x1",
         updatedAt: "0x1",
-        expiresAt: "0x" + scenario.expiresBlock.toString(16),
+        expiresAt: "0x" + expiresBlock.toString(16),
         creationFlags: 0,
         contentType: "application/json",
         payload: payloadHex,
         attributes: [
           { name: "filetype", type: "str", value: "mixed" },
           { name: "created_at", type: "u64", value: Math.floor(Date.now() / 1000) - 60 },
-          { name: "expires_block", type: "u64", value: scenario.expiresBlock },
+          { name: "expires_block", type: "u64", value: expiresBlock },
           { name: "recipient", type: "str", value: "blind-recipient" },
           { name: "label", type: "str", value: "blind-label" },
           { name: "file_count", type: "u64", value: 2 },
@@ -111,6 +132,17 @@ export async function mockHolderUnlock(
     const body = route.request().postDataJSON() as { entityKey: string; authKey: string }
     const { status, body: json } = respond(body)
     await route.fulfill({ status, json })
+  })
+}
+
+/**
+ * The holder is unreachable — `fetch` itself rejects, before any status or body
+ * exists to classify. `route.abort()` is what reproduces that in Playwright,
+ * distinct from `mockHolderUnlock` answering with a 5xx, which still completes.
+ */
+export async function mockHolderUnreachable(context: BrowserContext) {
+  await context.route("**/api/holder/unlock", async (route) => {
+    await route.abort("failed")
   })
 }
 

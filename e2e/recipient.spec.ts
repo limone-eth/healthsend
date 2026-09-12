@@ -1,6 +1,13 @@
 import { test, expect, type BrowserContext } from "@playwright/test"
 import { buildShareFixture } from "./helpers/fixture"
-import { blockUnstubbedNetwork, mockArkiv, mockHolderUnlock, mockSwarmGateway } from "./helpers/network"
+import {
+  blockUnstubbedNetwork,
+  mockArkiv,
+  mockHolderUnlock,
+  mockHolderUnreachable,
+  mockSwarmGateway,
+} from "./helpers/network"
+import { packEntityKey } from "@/lib/crypto"
 
 /**
  * Recipient-path tests.
@@ -182,6 +189,62 @@ test.describe("the five ways a share link resolves, offline", () => {
     await page.goto(`/s/${share.packedKey}#${"Z".repeat(22)}`)
 
     await expect(page.getByText("Could not open this send")).toBeVisible()
+    await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
+  })
+})
+
+test.describe("infrastructure failures are never dressed up as expiry", () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await blockUnstubbedNetwork(context, baseURL!)
+  })
+
+  test("a 404 from the Arkiv RPC reads as unavailable, not expiry", async ({ page, context }) => {
+    // A wrong RPC URL, a proxy, or a down endpoint — an HTTP 404 that is not a
+    // JSON-RPC response at all, and structurally nothing like the SDK's own
+    // "no live entity" signal. See lib/arkiv.ts, getGrant.
+    await mockArkiv(context, { kind: "transport-fail" })
+    await page.goto(`/s/0x${"12".repeat(32)}#${"C".repeat(43)}`)
+
+    await expect(page.getByText("Temporarily unavailable")).toBeVisible()
+    await expect(page.getByText("This link has expired")).toHaveCount(0)
+    await expect(page.getByText("Could not open this send")).toHaveCount(0)
+  })
+
+  test("a malformed live entity reads as an error, not expiry", async ({ page, context }) => {
+    // The entity is live — Arkiv answers with a row — but its payload is not
+    // JSON. Distinct from "missing", which never puts a row in the result at
+    // all. See lib/arkiv.ts, MalformedGrantError.
+    const entityKeyHex = "0x" + "9c".repeat(32)
+    await mockArkiv(context, { kind: "malformed", entityKeyHex, currentBlock: 1_000_000 })
+    await page.goto(`/s/${packEntityKey(entityKeyHex)}#${"D".repeat(43)}`)
+
+    await expect(page.getByText("Could not open this send")).toBeVisible()
+    await expect(page.getByText("This link has expired")).toHaveCount(0)
+    await expect(page.getByText("Temporarily unavailable")).toHaveCount(0)
+  })
+
+  test("a rejected holder fetch reads as unavailable, not a decryption error", async ({
+    page,
+    context,
+  }) => {
+    // `fetch("/api/holder/unlock")` rejects outright — no response, no status,
+    // nothing to classify. The ordinary shape of an unreachable holder. See
+    // lib/sends.ts, openSend.
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnreachable(context)
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+    await expect(page.getByText("Temporarily unavailable")).toBeVisible()
+    await expect(page.getByText("Could not open this send")).toHaveCount(0)
     await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
   })
 })
