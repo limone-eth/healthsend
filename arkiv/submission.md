@@ -16,7 +16,7 @@ Mission selected: **02 — Built to expire.** Also entered for Best Use of Arkiv
 | Entity | Created by | Creation transaction | State |
 |---|---|---|---|
 | `0xa894be7a22e8b17db0d3ce49a5126fb39199c49f58ff26be670197cb1893ebb3` | `0x44757555…80d3A` (demo sender) | [`0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7`](https://tiramisu.explorer.arkiv.network/tx/0x630fc9bec57a791cad3db7de9c2e9a1f3b7414291964af006600575ada4436d7) (block 351104) | **Live** until block 653502. It is the README's demo link: 3 files, `filetype=mixed`, blinded `recipient`/`label`. |
-| `0x18eaff9c0f2daf6feb87cf77a35a39a07a371bfdb9099ae662ae201791db8c04` | `0x44757555…80d3A` (demo sender) | [`0xe976df35de799eb3b8f12f964913653264647b53315c1db4799030cd98b201ba`](https://tiramisu.explorer.arkiv.network/tx/0xe976df35de799eb3b8f12f964913653264647b53315c1db4799030cd98b201ba) (block 372928) | **Live** until block 4001725 (6 December 2026). v3 grant, Lit Chipotle key release, no code. 1 synthetic PDF. |
+| `0xc700be5fade0b91323acd45634d13a9097cf4a291db9ef99dae94a5d5a905b91` | `0x44757555…80d3A` (demo sender) | [`0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d`](https://tiramisu.explorer.arkiv.network/tx/0x9159839c8f0911435f915c49683f7c1207da91ad025706da603d65dcc4ed710d) (block 373909) | **Live** until block 4002706 (6 December 2026). v3 grant, Lit Chipotle key release under the fixed action (H-72), no code. 1 synthetic PDF; opened successfully after the action swap. |
 | `0xdc828120d7507b95526df4235dcc2dacf860df036a352743230927c3b786d42a` | `0x44757555…80d3A` (demo sender) | [`0xf2ac28b6a081a6ecebeb5e485b9a8ac8dc1072325816e31a0493d57f0c6dbd47`](https://tiramisu.explorer.arkiv.network/tx/0xf2ac28b6a081a6ecebeb5e485b9a8ac8dc1072325816e31a0493d57f0c6dbd47) (block 373027) | **Live** until block 4001826 (6 December 2026). v2 grant, key-share holder, four-digit code. 1 synthetic PDF. |
 | `0x5f9b5f13eaed3e43f3c8903c865248e05546cb9e2dea72e60d6e86ca12b1e905` | `0x3579…682C` (funder / test signer) | [`0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6`](https://tiramisu.explorer.arkiv.network/tx/0xb7f157f7d615379a5fc06cb499fc49aa49814edb776c7eae6dfa3544f34411a6) | **Expired on its own**, 60-second lifetime. Recorded run: [`arkiv/evidence/mission-02-expiry.txt`](./evidence/mission-02-expiry.txt). |
 
@@ -24,7 +24,7 @@ Mission selected: **02 — Built to expire.** Also entered for Best Use of Arkiv
 until 6 December 2026:
 
 - Lit Chipotle path, no code:
-  <https://healthsend.vercel.app/s/GOr_nA8tr2_rh893o1o5oHo3G_25CZrmYq4gF5HbjAQ#B9i8rlzqfgmvPb8Cv7WpiA>
+  <https://healthsend.vercel.app/s/xwC-X63guRMjrNRWNNE6kJfPSikdue-Z2ulKXVqQW5E#P2STNZ6_HsL3KdTVY--MJw>
 - Holder path, with a four-digit code (**9994**):
   <https://healthsend.vercel.app/s/3IKBINdQe5VSbfQjXcwtrPhg3wNqNSdDIwknw7eG1Co#LVwE3BbrHT8o3L-OYTiZCg>
 
@@ -87,9 +87,11 @@ Video timestamps: *added once the demo recording exists.*
 
 - **Expiry ends access, not existence.** Entity payloads stay in transaction calldata, and ciphertext
   stays on Swarm. That is why no key material ever goes into a grant.
-- **Lit Chipotle shares.** Our own review found the Lit action can be fed a self-made live grant, so
-  someone who kept a Chipotle link can still recover its key after it ends. The fix, H-72, is in
-  progress. Holder shares are not affected.
+- **Lit Chipotle shares are only as safe as the registered action.** Our own review (review-8) found the
+  first action could be fed a self-made live grant. The fix (H-72) seals the grant binding inside the Lit
+  ciphertext. It was registered on 2026-09-13 and the old action was removed from the group, so shares
+  made under the old action no longer open. The earlier Chipotle demo link was replaced for that reason.
+  Holder shares were never affected. The browser usage key's scopes must stay execute-only for group 1.
 - **`/api/fund` is an open testnet faucet** for user-derived keys, with a reserve but no rate limit.
 - **Countdowns assume Tiramisu's nominal 2-second block time.** Enforcement uses the block height
   itself, not the displayed time.

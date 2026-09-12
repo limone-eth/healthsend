@@ -209,7 +209,7 @@ What that buys, precisely:
 |---|---|
 | Documents are encrypted on your device; no server of ours receives plaintext | **Yes** |
 | After the deadline, someone opening the link gets nothing | **Yes** |
-| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes** for holder shares. **Yes** for Lit Chipotle shares once the H-72 action is registered: the Lit ciphertext carries the grant it was made for, and the action checks that grant, not one the caller names. Before H-72, anyone who kept a Chipotle link could recover its key after it ended, using a self-made live grant (`pnpm verify:chipotle-binding`). |
+| A link that leaks later (an old bookmark, a forwarded message) is useless | **Yes**, once piece 2 is refused. For Lit Chipotle shares this holds since the fixed action (H-72, which seals the grant into the Lit ciphertext) was registered on 2026-09-13; shares made under the earlier action no longer open. |
 | Expiry erases the document | **No.** Encrypted files on Swarm and grant calldata are permanent. Expiry ends *access*, not *existence*. |
 | Expiry takes back what someone already saw | **No.** A screenshot taken during the window stays a screenshot. |
 
