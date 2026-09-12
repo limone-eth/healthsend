@@ -80,4 +80,21 @@ for (const current of [
   assert.ok(newSharePage.includes(current), `app/(sender)/new/page.tsx must read "${current}"`)
 }
 
+// H-64 — a PDF is no longer set aside like a CSV/JSON record (H-62's
+// operator decision). `components/demo-notice.tsx` renders inside `/new`'s
+// signed-in `ScopeSection` with no offline stub in this repo, so its source
+// text is checked directly, the same way the Link ready screen above is.
+const demoNotice = read("components/demo-notice.tsx").replace(/\s+/g, " ")
+assert.ok(
+  !demoNotice.includes(
+    "Your name, date of birth, address and any patient ID are set aside before anything is encrypted, and a recognized blood panel is",
+  ),
+  "demo-notice.tsx must not claim every file has its identifiers set aside — a PDF does not",
+)
+assert.ok(
+  demoNotice.includes("A PDF is different: it goes out exactly as issued, including any name or date of birth printed on it."),
+  "demo-notice.tsx must say a PDF goes out as issued",
+)
+
 console.log("PASS  README and the Link ready screen no longer carry the six stale claims.")
+console.log("PASS  demo-notice.tsx no longer claims a PDF's identifiers are set aside")

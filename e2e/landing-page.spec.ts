@@ -28,6 +28,20 @@ test("states the deletion bound rather than an exact-moment claim", async ({ pag
   expect(body).toContain("deleted within the hour that follows")
 })
 
+// H-62/H-64: sending a PDF as-is (not stripping the name and date of birth
+// printed on it) reverses the blanket claim step 1 used to make.
+const OLD_BLANKET_CLAIM =
+  "Your name and date of birth are set aside as they come in, so they are never part of anything you send."
+
+test("step 1 no longer claims every document sets its identifiers aside", async ({ page }) => {
+  await page.goto("/landing")
+  const body = await page.locator("body").innerText()
+
+  expect(body).not.toContain(OLD_BLANKET_CLAIM)
+  expect(body).toContain("a PDF report")
+  expect(body).toContain("a PDF goes out exactly as issued, including anything printed on it.")
+})
+
 test("the entry action at phone width creates an archive", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 900 })
   await page.goto("/landing")

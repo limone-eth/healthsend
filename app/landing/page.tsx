@@ -204,12 +204,15 @@ const STEPS = [
   {
     n: 1,
     title: "Bring it together",
-    // True since H-36: `createSend` runs every upload through `importDocument`
-    // before anything is encrypted, so this is no longer a claim ahead of the
-    // code — see lib/sends.ts, `importForSend`.
+    // True since H-36: `createSend` runs every CSV or JSON upload through
+    // `importDocument` before anything is encrypted, so that half of this is
+    // no longer a claim ahead of the code — see lib/sends.ts, `importForSend`.
+    // H-62/H-64 add the other half: a PDF is deliberately not run through
+    // that step, so the claim below no longer holds for every document —
+    // see docs/stories/H-62.md, "The consequence that must be said".
     desktopBody:
-      "Drop in an export from your watch and a lab result. Your name and date of birth are set aside as they come in, so they are never part of anything you send.",
-    mobileBody: "Drop in an export and a lab result. Your name is set aside as it comes in.",
+      "Drop in an export from your watch, a lab result or a PDF report. Your name and date of birth are set aside as a CSV or JSON comes in — a PDF goes out exactly as issued, including anything printed on it.",
+    mobileBody: "Drop in an export, a lab result or a PDF. A CSV or JSON sets your name aside first; a PDF goes out as issued.",
   },
   {
     n: 2,
