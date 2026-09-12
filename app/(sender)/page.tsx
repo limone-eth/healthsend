@@ -66,10 +66,19 @@ type ArchiveLoadState =
 const ARCHIVE_LOAD_TIMEOUT_MS = 15_000
 
 type FocusData = {
-  count: number
+  /** Distinct recipients, not grants — two live shares to the same recipient are one person. */
+  peopleCount: number
+  sharesCount: number
   soonestExpiresAt: number
   opens: number
   now: number
+}
+
+/** `grant.recipient` is the sender's own HMAC of the recipient label (`blindAttribute`,
+ * lib/crypto.ts): deterministic per label, so two grants to the same recipient carry the
+ * same blinded value without this ever decrypting who they are. */
+function countUniqueRecipients(grants: { recipient: string }[]): number {
+  return new Set(grants.map((g) => g.recipient)).size
 }
 
 /** Mirrors `app/(sender)/shares/access-log-client.ts`'s signed request, kept
@@ -146,7 +155,8 @@ function ArchiveScreen() {
       const perShareOpens = await Promise.all(grants.map((g) => countOpens(g.entityKey)))
       if (cancelled) return
       setFocus({
-        count: grants.length,
+        peopleCount: countUniqueRecipients(grants),
+        sharesCount: grants.length,
         soonestExpiresAt: soonest.expiresAt,
         opens: perShareOpens.reduce((a, b) => a + b, 0),
         now: Math.floor(Date.now() / 1000),
@@ -166,7 +176,7 @@ function ArchiveScreen() {
     <div className="flex w-full flex-col gap-7 md:gap-[30px]">
       <ArchiveHeader />
 
-      {focus && focus.count > 0 && <FocusSurface focus={focus} />}
+      {focus && focus.sharesCount > 0 && <FocusSurface focus={focus} />}
 
       {archive.status === "loading" ? (
         <div role="status" className="rounded-inset bg-grouped p-[18px] text-[15px] text-secondary">
@@ -183,7 +193,20 @@ function ArchiveScreen() {
             <div className="h-px w-full bg-hairline" />
           </div>
 
-          <div className="grid grid-cols-1 gap-[9px] md:grid-cols-2 md:gap-5 xl:grid-cols-4">
+          {/* Mobile — five compact 62px list rows (frame `zsDfc`), not the desktop card
+              grid shrunk to one column: `n7oJQ`'s rows sit in a 9px-gapped flex column,
+              each a fixed 62px shell (30px glyph, two-line stack, a right-aligned pill),
+              which is a different component from `BucketCard` below, not a breakpoint
+              variant of it. */}
+          <div className="flex flex-col gap-[9px] md:hidden">
+            <BucketRow icon={FirstAidKit} name="Blood panels" meta={bloodPanelsMeta(bloodPanels)} />
+            <BucketRow icon={Heartbeat} name="Wearables" meta={wearablesMeta(wearables)} />
+            <BucketRow icon={Pill} name="Medications" meta={null} />
+            <BucketRow icon={BookOpen} name="Notes" meta={null} />
+            <IdentityRow />
+          </div>
+
+          <div className="hidden md:grid md:grid-cols-2 md:gap-5 xl:grid-cols-4">
             <BucketCard
               icon={FirstAidKit}
               name="Blood panels"
@@ -198,9 +221,6 @@ function ArchiveScreen() {
             />
             <BucketCard icon={Pill} name="Medications" meta={null} addLabel="Add a medication" />
             <BucketCard icon={BookOpen} name="Notes" meta={null} addLabel="Write a note" />
-            <div className="md:hidden">
-              <IdentityRow />
-            </div>
           </div>
 
           <div className="hidden md:block">
@@ -268,7 +288,8 @@ function AddToArchiveButton({ className = "" }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 function FocusSurface({ focus }: { focus: FocusData }) {
-  const peopleLabel = focus.count === 1 ? "One person" : `${focus.count} people`
+  const peopleLabel = focus.peopleCount === 1 ? "One person" : `${focus.peopleCount} people`
+  const seesVerb = focus.peopleCount === 1 ? "sees" : "see"
   const closing = isWithinAWeek(focus.soonestExpiresAt, focus.now)
   const soonestDate = new Date(focus.soonestExpiresAt * 1000)
   const soonestStat = closing ? weekdayFormatter.format(soonestDate) : dayMonthFormatter.format(soonestDate)
@@ -294,7 +315,7 @@ function FocusSurface({ focus }: { focus: FocusData }) {
           Each one ends on its own date, without you doing anything. The soonest is {soonestPhrase}.
         </p>
         <div className="flex gap-7 rounded-control border border-hairline-on-dark bg-panel-on-dark p-3.5">
-          <FocusStat value={String(focus.count)} label="Shares open" />
+          <FocusStat value={String(focus.sharesCount)} label="Shares open" />
           <FocusStat value={soonestStat} label="Soonest to end" />
           <FocusStat value={String(focus.opens)} label="Times opened" />
         </div>
@@ -306,10 +327,10 @@ function FocusSurface({ focus }: { focus: FocusData }) {
       >
         <span className="text-[11px] font-semibold uppercase tracking-[1.3px] text-haze-strong">Right now</span>
         <p className="text-[19px] font-bold leading-[1.25] tracking-[-0.4px] text-white">
-          {peopleLabel} see part of it
+          {peopleLabel} {seesVerb} part of it
         </p>
         <div className="flex gap-5 rounded-[12px] border border-hairline-on-dark bg-panel-on-dark p-[11px]">
-          <FocusStat value={String(focus.count)} label="Shares open" stretch small />
+          <FocusStat value={String(focus.sharesCount)} label="Shares open" stretch small />
           <FocusStat value={soonestStat} label="Soonest" stretch small />
           <FocusStat value={String(focus.opens)} label="Times opened" stretch small />
         </div>
@@ -340,11 +361,48 @@ function FocusStat({
 }
 
 // ---------------------------------------------------------------------------
-// Bucket card — pen id `ZSMni` and siblings under `aRtbz`/`G0BWJ` (desktop),
-// `r0sjvj` and siblings under `n7oJQ` (mobile). The share-count pill
-// ("In 2 shares") has no data source in this build: nothing tracks which
-// archive records ended up inside which share, so every card renders "Not
-// shared" rather than inventing a count — see `## Choices`.
+// Bucket row — pen id `r0sjvj` and siblings under `n7oJQ` (mobile only). A
+// fixed 62px shell measured off the frame: a 14px inset to a 30px glyph, an
+// 11px gap to the title/meta stack, a right-aligned pill. Read via the
+// pencil MCP tool against `healthsend.pen`, not a screenshot — the desktop
+// `BucketCard` below is a different component, not this one reflowed, and
+// carries its own share-count-pill note.
+// ---------------------------------------------------------------------------
+
+function BucketRow({
+  icon: Icon,
+  name,
+  meta,
+}: {
+  icon: PhosphorIcon
+  name: string
+  meta: string | null
+}) {
+  return (
+    <Link
+      href="/add"
+      className="flex h-[62px] w-full items-center gap-[11px] rounded-control border border-hairline bg-surface px-3.5"
+    >
+      <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-glyph bg-haze">
+        <Icon size={16} weight="light" className="text-navy" />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-px">
+        <span className="truncate text-[15px] font-semibold text-ink">{name}</span>
+        <span className="truncate text-[12.5px] text-muted">{meta ?? "Nothing here yet"}</span>
+      </div>
+      <span className="inline-flex h-6 shrink-0 items-center rounded-capsule border border-grouped bg-grouped px-[9px] text-[11px] font-medium text-muted">
+        Not shared
+      </span>
+    </Link>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Bucket card — pen id `ZSMni` and siblings under `aRtbz`/`G0BWJ` (desktop
+// only, `md` and up). The share-count pill ("In 2 shares") has no data
+// source in this build: nothing tracks which archive records ended up in
+// which share, so every card renders "Not shared" rather than inventing a
+// count — see `## Choices`.
 // ---------------------------------------------------------------------------
 
 function BucketCard({

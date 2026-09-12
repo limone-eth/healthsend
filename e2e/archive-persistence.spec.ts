@@ -131,7 +131,7 @@ test("a sender adds a panel and reads it after reload and in a fresh browser", a
   await page.getByRole("button", { name: "Add to archive" }).click()
 
   await expect(page).toHaveURL(`${baseURL}/`)
-  await expect(page.getByText("1 panel · latest 12 September")).toBeVisible()
+  await expect(page.getByText("1 panel · latest 12 September").and(page.locator(":visible"))).toBeVisible()
   expect(backend.feedReference).toMatch(/^[0-9a-f]{64}$/)
   const encrypted = backend.blobs.get(backend.feedReference!)
   expect(encrypted).toBeDefined()
@@ -139,14 +139,14 @@ test("a sender adds a panel and reads it after reload and in a fresh browser", a
 
   const readsBeforeReload = backend.gatewayReads
   await page.reload()
-  await expect(page.getByText("1 panel · latest 12 September")).toBeVisible()
+  await expect(page.getByText("1 panel · latest 12 September").and(page.locator(":visible"))).toBeVisible()
   expect(backend.gatewayReads).toBeGreaterThan(readsBeforeReload)
 
   const freshContext = await browser.newContext({ baseURL })
   await fulfillArchiveBackend(freshContext, backend)
   const freshPage = await freshContext.newPage()
   await freshPage.goto("/")
-  await expect(freshPage.getByText("1 panel · latest 12 September")).toBeVisible()
+  await expect(freshPage.getByText("1 panel · latest 12 September").and(freshPage.locator(":visible"))).toBeVisible()
   await freshContext.close()
 })
 
@@ -173,9 +173,9 @@ test("a sender adds wearable data and reads it after reload", async ({ page }) =
   })
   await page.getByRole("button", { name: "Add to archive" }).click()
 
-  await expect(page.getByText("1 kind · latest 12 September")).toBeVisible()
+  await expect(page.getByText("1 kind · latest 12 September").and(page.locator(":visible"))).toBeVisible()
   await page.reload()
-  await expect(page.getByText("1 kind · latest 12 September")).toBeVisible()
+  await expect(page.getByText("1 kind · latest 12 September").and(page.locator(":visible"))).toBeVisible()
 })
 
 test("a genuinely empty archive keeps the empty treatment", async ({ page }) => {
@@ -183,7 +183,12 @@ test("a genuinely empty archive keeps the empty treatment", async ({ page }) => 
   await fulfillArchiveBackend(page.context(), backend)
 
   await page.goto("/")
-  await expect(page.getByText("Nothing here yet")).toHaveCount(4)
+  // Four visible: the mobile `BucketRow` list and the desktop `BucketCard` grid
+  // (app/(sender)/page.tsx) both render "Nothing here yet" for each empty bucket, one of
+  // them always hidden via CSS rather than absent from the DOM (R3-020) — `getByText`
+  // does not filter on visibility the way `getByRole` does, so an unfiltered count would
+  // see all eight.
+  await expect(page.getByText("Nothing here yet").and(page.locator(":visible"))).toHaveCount(4)
   await expect(page.getByText(/could not load your archive/i)).toHaveCount(0)
 })
 
