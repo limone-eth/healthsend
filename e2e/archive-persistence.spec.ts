@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { expect, test, type BrowserContext, type Route } from "@playwright/test"
+import { mockGrantList } from "./helpers/sender-sign-in"
 
 const SWARM_ID_ORIGIN = "https://swarm-id.snaha.net"
 const SWARM_GATEWAY_PATTERN = /download\.gateway\.ethswarm\.org\/bytes\//
@@ -9,6 +10,15 @@ type ArchiveBackend = {
   blobs: Map<string, Buffer>
   feedReference?: string
   gatewayReads: number
+  /**
+   * H-70's lagging-feed test mode. When set, a GET on the feed keeps
+   * answering the reference from before the most recent write for this many
+   * reads before it catches up — the same lag docs/stories/H-70.md describes
+   * ("cleared with no error, and the list still said 1 BLOOD TEST").
+   */
+  lagReads?: number
+  visibleFeedReference?: string
+  remainingLaggedReads?: number
 }
 
 function proxyHtml(): string {
@@ -91,15 +101,35 @@ async function fulfillArchiveBackend(context: BrowserContext, backend: ArchiveBa
   })
   await context.route(`${SWARM_ID_ORIGIN}/__test/archive-feed`, async (route) => {
     if (route.request().method() === "POST") {
-      backend.feedReference = route.request().postData() ?? undefined
+      const reference = route.request().postData() ?? undefined
+      backend.feedReference = reference
+      if (backend.lagReads) {
+        // The write lands, but a GET keeps answering the old reference for
+        // `lagReads` more reads — `visibleFeedReference` only catches up once
+        // that lag is read through, below.
+        backend.remainingLaggedReads = backend.lagReads
+      } else {
+        backend.visibleFeedReference = reference
+      }
       await route.fulfill({ status: 204 })
       return
     }
-    if (!backend.feedReference) {
+    let answer = backend.visibleFeedReference
+    if (backend.lagReads) {
+      if ((backend.remainingLaggedReads ?? 0) > 0) {
+        backend.remainingLaggedReads = (backend.remainingLaggedReads ?? 0) - 1
+      } else {
+        backend.visibleFeedReference = backend.feedReference
+        answer = backend.visibleFeedReference
+      }
+    } else {
+      answer = backend.feedReference
+    }
+    if (!answer) {
       await route.fulfill({ status: 404, body: "No archive" })
       return
     }
-    await route.fulfill({ status: 200, contentType: "text/plain", body: backend.feedReference })
+    await route.fulfill({ status: 200, contentType: "text/plain", body: answer })
   })
   await context.route(SWARM_GATEWAY_PATTERN, async (route: Route) => {
     const reference = route.request().url().split("/").at(-1) ?? ""
@@ -298,4 +328,145 @@ test("a non-PDF renamed .pdf is rejected and nothing is uploaded", async ({ page
   await expect(page.getByText(/Could not add/)).toHaveCount(0)
   await expect(page).toHaveURL(/\/add$/)
   expect(backend.blobs.size).toBe(0)
+})
+
+/**
+ * Every row renders in both the mobile and desktop DOM at once, one hidden by CSS —
+ * `getByRole` would otherwise match both copies' identically-labelled buttons.
+ */
+function removeButton(page: import("@playwright/test").Page, name: string) {
+  return page.getByRole("button", { name: `Remove ${name} from your archive` }).filter({ visible: true })
+}
+
+/**
+ * Whatever this device remembered about its own last archive write, read
+ * straight out of `localStorage` under H-70's own key prefix. Used to prove
+ * the acceptance criterion directly rather than trust the store's own
+ * account of itself: only a Swarm reference and a revision number, never
+ * archive content or key material.
+ */
+async function readRememberedWrites(page: import("@playwright/test").Page): Promise<unknown[]> {
+  return page.evaluate(() => {
+    const values: unknown[] = []
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i)
+      if (!key?.startsWith("healthsend:archive-last-write:")) continue
+      values.push(JSON.parse(window.localStorage.getItem(key)!))
+    }
+    return values
+  })
+}
+
+// H-70: two adds and a removal fired back to back, against a feed that keeps
+// answering the reference from before each write for two more reads — the
+// lag docs/stories/H-70.md describes ("cleared with no error, and the list
+// still said 1 BLOOD TEST"). Every change must show at once, and none may be
+// silently overwritten by the next one starting from a stale read.
+async function runLaggingFeedFlow({
+  page,
+  context,
+  browser,
+  baseURL,
+}: {
+  page: import("@playwright/test").Page
+  context: BrowserContext
+  browser: import("@playwright/test").Browser
+  baseURL: string | undefined
+}) {
+  const backend: ArchiveBackend = { blobs: new Map(), gatewayReads: 0, lagReads: 2 }
+  await fulfillArchiveBackend(context, backend)
+  await mockGrantList(context, [])
+
+  await page.goto("/")
+  await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
+
+  const firstChooser = page.waitForEvent("filechooser")
+  await page.getByRole("button", { name: "Add blood tests" }).filter({ visible: true }).first().click()
+  await (await firstChooser).setFiles([
+    { name: "Blood test, March.pdf", mimeType: "application/pdf", buffer: fakePdf("march") },
+    { name: "Thyroid panel, June.pdf", mimeType: "application/pdf", buffer: fakePdf("june") },
+  ])
+  await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+
+  // What this write left in localStorage: only a reference and a rev, and
+  // neither the PDF bytes nor "Thyroid" nor "June" appear anywhere in it.
+  const rememberedAfterFirstAdd = await readRememberedWrites(page)
+  expect(rememberedAfterFirstAdd.length).toBeGreaterThan(0)
+  for (const remembered of rememberedAfterFirstAdd) {
+    expect(Object.keys(remembered as object).sort()).toEqual(["reference", "rev"])
+    const serialized = JSON.stringify(remembered)
+    expect(serialized).not.toMatch(/Thyroid|June|PDF-1\.4/)
+  }
+
+  // A third pick straight after, while the feed is still lagging behind the
+  // first write: the list must show all three without a reload.
+  const secondChooser = page.waitForEvent("filechooser")
+  await page.getByRole("button", { name: "Add blood tests" }).filter({ visible: true }).first().click()
+  await (await secondChooser).setFiles([
+    { name: "Lipid panel, July.pdf", mimeType: "application/pdf", buffer: fakePdf("july") },
+  ])
+  await expect(page.getByText("3 BLOOD TESTS · PDF")).toBeVisible()
+  await expect(page.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Lipid panel, July.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+
+  // Remove one, feed still lagging: the row goes at once.
+  await removeButton(page, "Thyroid panel, June.pdf").click()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.getByRole("button", { name: "Remove it" }).click()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+  await expect(page.getByText("Thyroid panel, June.pdf")).toHaveCount(0)
+  await expect(page.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(page.getByText("Lipid panel, July.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+
+  // A genuinely fresh context has no local memory of its own — unlike this
+  // page's reload, above, which the store's own remembered write already
+  // carries through the lag. So the feed's lag window is read through first,
+  // on this device, before that fresh context reads: exactly `lagReads`
+  // reads answer the stale, pre-removal reference, and this device's own
+  // remembered write keeps the screen correct through every one of them.
+  for (let read = 0; read < backend.lagReads!; read++) {
+    await page.reload()
+    await expect(page.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+    await expect(page.getByText("Thyroid panel, June.pdf")).toHaveCount(0)
+  }
+
+  // Reload in a fresh context: the final state — March and July, not June — is there.
+  const freshContext = await browser.newContext({ baseURL })
+  await fulfillArchiveBackend(freshContext, backend)
+  await mockGrantList(freshContext, [])
+  const freshPage = await freshContext.newPage()
+  await freshPage.goto("/")
+  await expect(freshPage.getByText("2 BLOOD TESTS · PDF")).toBeVisible()
+  await expect(freshPage.getByText("Blood test, March.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(freshPage.getByText("Lipid panel, July.pdf", { exact: true }).filter({ visible: true })).toBeVisible()
+  await expect(freshPage.getByText("Thyroid panel, June.pdf")).toHaveCount(0)
+  await freshContext.close()
+}
+
+test.describe("desktop, 1440px", () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test("adds and a removal show at once and survive a lagging feed, with the right state after reload", async ({
+    page,
+    context,
+    browser,
+    baseURL,
+  }) => {
+    await runLaggingFeedFlow({ page, context, browser, baseURL })
+  })
+})
+
+test.describe("mobile, 400px", () => {
+  test.use({ viewport: { width: 400, height: 800 } })
+
+  test("adds and a removal show at once and survive a lagging feed, with the right state after reload", async ({
+    page,
+    context,
+    browser,
+    baseURL,
+  }) => {
+    await runLaggingFeedFlow({ page, context, browser, baseURL })
+  })
 })

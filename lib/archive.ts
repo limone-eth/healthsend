@@ -120,6 +120,17 @@ export type Archive = {
   records: ArchiveRecord[]
   /** Absent on an archive sealed before this story. `openArchive` accepts that; see its validation. */
   shareIndex?: ShareIndexEntry[]
+  /**
+   * Bumped by every write (`addArchiveRecords`, `removeDocument`,
+   * `addShareIndexEntry`). A Swarm feed reference carries no order of its
+   * own and the feed can keep answering a stale one for a while after a
+   * write lands, so `rev` is what `lib/archive-store.ts` compares to decide
+   * which of two candidate archives is actually newer. Absent on an archive
+   * sealed before this story; `openArchive` opens that as `rev: 0`.
+   */
+  rev: number
+  /** Epoch ms of the last write. Informational only — `rev` is what orders archives, never this. */
+  updatedAt: number
 }
 
 export type BloodPanelSelection = {
@@ -154,7 +165,12 @@ export async function createArchive(
   records: ArchiveRecord[] = [],
 ): Promise<Uint8Array> {
   validateArchiveRecords(records)
-  return encryptArchive({ v: 1, kind: "healthsend-archive", records }, senderKey)
+  return encryptArchive({ v: 1, kind: "healthsend-archive", records, rev: 0, updatedAt: Date.now() }, senderKey)
+}
+
+/** Every write bumps `rev` and `updatedAt` — never anything else derives them. */
+function nextRevision(archive: Pick<Archive, "rev">): Pick<Archive, "rev" | "updatedAt"> {
+  return { rev: archive.rev + 1, updatedAt: Date.now() }
 }
 
 /** Open, extend and reseal an archive without changing the existing record addresses. */
@@ -166,7 +182,7 @@ export async function addArchiveRecords(
   const archive = await openArchive(encryptedArchive, senderKey)
   const combined = [...archive.records, ...records]
   validateArchiveRecords(combined)
-  return encryptArchive({ ...archive, records: combined }, senderKey)
+  return encryptArchive({ ...archive, records: combined, ...nextRevision(archive) }, senderKey)
 }
 
 export async function openArchive(
@@ -205,7 +221,17 @@ export async function openArchive(
   if (!Array.isArray(parsed.records)) throw new Error("Invalid archive records")
   validateArchiveRecords(parsed.records as ArchiveRecord[])
   if (parsed.shareIndex !== undefined) validateShareIndex(parsed.shareIndex as ShareIndexEntry[])
-  return parsed as Archive
+  return { ...(parsed as Archive), rev: normalizeRev(parsed.rev), updatedAt: normalizeUpdatedAt(parsed.updatedAt) }
+}
+
+/** An archive sealed before this story carries no `rev`; it opens as 0, same standing as a fresh archive. */
+function normalizeRev(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0
+}
+
+/** Informational only, so an archive from before this story opens with a timestamp rather than failing. */
+function normalizeUpdatedAt(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
 /**
@@ -227,7 +253,7 @@ export async function removeDocument(
   if (!record) throw new Error(`Unknown record: ${documentId}`)
   if (record.kind !== "document") throw new Error(`Not a document: ${documentId}`)
   const records = archive.records.filter((candidate) => candidate.id !== documentId)
-  return encryptArchive({ ...archive, records }, senderKey)
+  return encryptArchive({ ...archive, records, ...nextRevision(archive) }, senderKey)
 }
 
 /**
@@ -247,7 +273,7 @@ export async function addShareIndexEntry(
   }
   const shareIndex = [...(archive.shareIndex ?? []), entry]
   validateShareIndex(shareIndex)
-  return encryptArchive({ ...archive, shareIndex }, senderKey)
+  return encryptArchive({ ...archive, shareIndex, ...nextRevision(archive) }, senderKey)
 }
 
 /**
