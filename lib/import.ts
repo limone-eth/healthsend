@@ -92,14 +92,15 @@ function parseBloodPanelMarkers(text: string): BloodMarker[] | null {
     if (!line.trim()) continue
     const cells = line.split(",").map((cell) => cell.trim())
     if (cells.length < 5) continue
-    const [name, valueText, unit, refLowText, refHighText, flag] = cells
+    const [name, valueText, unit, refLowText, refHighText, labFlag] = cells
     const value = Number(valueText)
     if (!name || !Number.isFinite(value)) continue
 
     const referenceRange: ReferenceRange = {}
-    if (refLowText) referenceRange.min = Number(refLowText)
-    if (refHighText) referenceRange.max = Number(refHighText)
-    if (referenceRange.min === undefined && referenceRange.max === undefined) continue
+    const refLow = refLowText ? Number(refLowText) : undefined
+    const refHigh = refHighText ? Number(refHighText) : undefined
+    if (refLow !== undefined && Number.isFinite(refLow)) referenceRange.min = refLow
+    if (refHigh !== undefined && Number.isFinite(refHigh)) referenceRange.max = refHigh
 
     markers.push({
       id: `marker:${slugify(name)}`,
@@ -107,10 +108,36 @@ function parseBloodPanelMarkers(text: string): BloodMarker[] | null {
       value,
       unit,
       referenceRange,
-      flaggedAtImport: Boolean(flag && flag.trim().length > 0),
+      ...(labFlag ? { labFlag } : {}),
+      ...parseConfidence(unit, referenceRange),
     })
   }
   return markers.length > 0 ? markers : null
+}
+
+/**
+ * What decides `flaggedAtImport` — never the lab's own H/L/HIGH/LOW column.
+ * A row earns "Needs a look" only when import itself is unsure how it read
+ * the row, not when the reading is abnormal.
+ *
+ * This CSV shape carries no per-row date (a panel's `takenOn` is supplied by
+ * the caller, not read from the file — see `ImportParams`) and no unit
+ * conversion or marker-name canon exists yet, so "an ambiguous date", "a
+ * converted unit" and "an unrecognised marker name" cannot be detected here
+ * today. Only the two conditions this parser can actually observe are
+ * checked; see H-38's `## Choices` for the rest.
+ */
+function parseConfidence(
+  unit: string,
+  referenceRange: ReferenceRange,
+): { flaggedAtImport: boolean; flagReason?: string } {
+  const reasons: string[] = []
+  if (!unit) reasons.push("No unit in the file")
+  if (referenceRange.min === undefined && referenceRange.max === undefined) {
+    reasons.push("No reference range in the file")
+  }
+  if (reasons.length === 0) return { flaggedAtImport: false }
+  return { flaggedAtImport: true, flagReason: reasons.join(" · ") }
 }
 
 function slugify(name: string): string {

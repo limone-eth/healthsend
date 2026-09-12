@@ -6,7 +6,7 @@ information.
 
 | File | Kind | Exercises |
 |---|---|---|
-| `thyroid-panel.csv` | csv | The CSV table view. Out-of-range flags, the shape a clinician reads. |
+| `thyroid-panel.csv` | csv | The CSV table view. Three rows the lab itself called HIGH or LOW — carried as data, never as an import flag — plus two rows import cannot confidently place (a missing unit, a missing reference range), which are the only two that flag. |
 | `sleep-60-days.csv` | csv | A wider, longer CSV — 60 rows, 7 columns. Scrolling and header stickiness. |
 | `consult-notes.txt` | text | The monospace text view. |
 | `training-log.json` | text | JSON through the text path (classified as `text`, not a special case). |
