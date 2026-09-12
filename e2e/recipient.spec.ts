@@ -1,16 +1,25 @@
 import { test, expect, type BrowserContext } from "@playwright/test"
+import { buildShareFixture } from "./helpers/fixture"
+import { blockUnstubbedNetwork, mockArkiv, mockHolderUnlock, mockSwarmGateway } from "./helpers/network"
 
 /**
  * Recipient-path tests.
  *
- * The states that need no setup run always. The happy path needs a real share
- * link, which needs a signed-in Swarm ID and a postage batch — neither of which
- * exists headlessly — so it is driven by an env var:
+ * Two lanes:
  *
- *   SHARE_URL='http://localhost:3000/s/0x…#…' pnpm e2e
+ *   offline (default) — every recipient state, driven entirely by Playwright
+ *   route stubs. No Swarm ID, no funded Arkiv key, no Upstash, no network. This
+ *   is what `pnpm test` and a plain `pnpm e2e` run.
  *
- * Create the link in the app, paste it in, and this asserts what a guest would
- * actually see.
+ *   live (opt-in, tag @live) — the original test against a real share link,
+ *   which needs a signed-in Swarm ID and a postage batch, neither of which
+ *   exists headlessly:
+ *
+ *     SHARE_URL='http://localhost:3000/s/0x…#…' pnpm exec playwright test --grep @live
+ *
+ *   playwright.config.ts excludes @live from the default run (`grepInvert`), so
+ *   it only runs when explicitly asked for. It still no-ops without SHARE_URL,
+ *   via the `test.skip` below — belt and braces.
  */
 
 const SHARE_URL = process.env.SHARE_URL
@@ -22,7 +31,12 @@ async function assertNoStoredIdentity(context: BrowserContext) {
 }
 
 test.describe("a recipient with nothing", () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await blockUnstubbedNetwork(context, baseURL!)
+  })
+
   test("an unknown grant reads as expired, not as an error", async ({ page, context }) => {
+    await mockArkiv(context, { kind: "missing", currentBlock: 1_000_000 })
     await page.goto(`/s/0x${"ab".repeat(32)}#${"A".repeat(43)}`)
 
     await expect(page.getByText("This link has expired")).toBeVisible()
@@ -33,18 +47,120 @@ test.describe("a recipient with nothing", () => {
   })
 
   test("a link truncated at the # says so", async ({ page }) => {
+    // No fragment: `openSend` returns "no-key" before touching the network, so
+    // no Arkiv stub is registered here — the still-active block would catch a
+    // regression that made this path fetch anyway.
     await page.goto(`/s/0x${"ab".repeat(32)}`)
     await expect(page.getByText("Incomplete link")).toBeVisible()
   })
 
-  test("the recipient is never asked to sign in", async ({ page }) => {
+  test("the recipient is never asked to sign in", async ({ page, context }) => {
+    await mockArkiv(context, { kind: "missing", currentBlock: 1_000_000 })
     await page.goto(`/s/0x${"ab".repeat(32)}#${"A".repeat(43)}`)
     await expect(page.getByText(/continue with swarm id/i)).toHaveCount(0)
     await expect(page.getByRole("button", { name: /sign in/i })).toHaveCount(0)
   })
 })
 
-test.describe("a live send", () => {
+test.describe("the five ways a share link resolves, offline", () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await blockUnstubbedNetwork(context, baseURL!)
+  })
+
+  test("ok — a share opens and its documents render", async ({ page, context }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, () => ({
+      status: 200,
+      body: { share: share.heldShare, expiresAt: Math.floor(Date.now() / 1000) + 900 },
+    }))
+    await mockSwarmGateway(context, share.blob)
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+    // A bundle of two: the nav carries both filenames, and the active one's
+    // content is actually decrypted and rendered — not just "the page loaded".
+    await expect(page.getByRole("button", { name: "thyroid-panel.csv" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "consult-notes.txt" })).toBeVisible()
+    await expect(page.locator("table")).toBeVisible()
+    await expect(page.getByText("TSH")).toBeVisible()
+    await assertNoStoredIdentity(context)
+  })
+
+  test("expired — the grant is gone", async ({ page, context }) => {
+    await mockArkiv(context, { kind: "missing", currentBlock: 1_000_000 })
+    await page.goto(`/s/0x${"cd".repeat(32)}#${"B".repeat(43)}`)
+
+    await expect(page.getByText("This link has expired")).toBeVisible()
+    // Direction one of the distinction: expiry never offers a retry — there is
+    // nothing to retry.
+    await expect(page.getByText(/try again/i)).toHaveCount(0)
+    await expect(page.getByText("Temporarily unavailable")).toHaveCount(0)
+  })
+
+  test("unavailable — the holder is down, and the grant is not expired", async ({ page, context }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    await mockHolderUnlock(context, () => ({
+      status: 503,
+      body: { error: "Could not reach the holder", retryable: true },
+    }))
+
+    await page.goto(`/s/${share.packedKey}#${share.fragment}`)
+
+    await expect(page.getByText("Temporarily unavailable")).toBeVisible()
+    await expect(page.getByText(/try again/i)).toBeVisible()
+    // Direction two of the distinction: unavailable must never claim the link
+    // itself expired.
+    await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
+  })
+
+  test("no-key — a link missing its fragment says so", async ({ page }) => {
+    await page.goto(`/s/0x${"ef".repeat(32)}`)
+    await expect(page.getByText("Incomplete link")).toBeVisible()
+  })
+
+  test("error — a link secret that does not match the grant", async ({ page, context }) => {
+    const share = await buildShareFixture()
+    await mockArkiv(context, {
+      kind: "found",
+      entityKeyHex: share.entityKeyHex,
+      reference: share.reference,
+      authCommitment: share.commitment,
+      expiresBlock: share.expiresBlock,
+      currentBlock: share.currentBlock,
+    })
+    // The holder compares the presented auth key's hash against the grant's
+    // commitment; a wrong fragment derives a wrong auth key, and any wrong auth
+    // key gets the same answer, so the stub does not need to replay the HMAC.
+    await mockHolderUnlock(context, () => ({
+      status: 403,
+      body: { error: "Not authorised for this grant" },
+    }))
+
+    // A fragment that is well-formed but is not the one that seals this share.
+    await page.goto(`/s/${share.packedKey}#${"Z".repeat(22)}`)
+
+    await expect(page.getByText("Could not open this send")).toBeVisible()
+    await expect(page.getByText("This link has expired", { exact: true })).toHaveCount(0)
+  })
+})
+
+test.describe("a live send", { tag: "@live" }, () => {
   test.skip(!SHARE_URL, "set SHARE_URL to a freshly created share link")
 
   test("opens in a clean context and shows every document", async ({ page, context }) => {
