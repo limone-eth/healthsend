@@ -47,16 +47,16 @@ export async function loadLiveSharesForDocument(
   )
 
   /**
-   * H-64 (`createSendFromArchive`) is not on `main` yet, so no live share
-   * can hold a document today — every archive-document share will carry an
-   * index entry from the moment it can exist at all. Once H-64 lands, a
-   * share made between that landing and this one predates the index the
-   * same way an archive itself can; nothing in the current `Grant` shape
-   * marks a grant as "from this archive" without it, so detecting that case
-   * is deferred rather than guessed at here — see docs/stories/H-18.md,
-   * "## Choices".
+   * A live share with no index entry means the archive cannot say what it
+   * holds: it was made before the index existed, its index write failed, or
+   * it came from the file picker rather than the archive. Grants carry
+   * nothing that tells those apart, so any of them makes the sheet say it
+   * cannot check rather than imply the document is in no share. Over-flagging
+   * a file-picker share costs one extra sentence; under-flagging would be a
+   * false "nobody has this".
    */
-  const indexUnknown = false
+  const indexed = new Set((shareIndex ?? []).map((entry) => entry.entityKey))
+  const indexUnknown = [...liveEntityKeys].some((entityKey) => !indexed.has(entityKey))
 
   return { shares, indexUnknown }
 }

@@ -106,12 +106,20 @@ function loadPdfDocument(name) {
 const patientSummary = loadPdfDocument("patient-summary.pdf")
 const thyroidPanel = loadPdfDocument("thyroid-panel.pdf")
 
+const indexedShares = []
+
 async function shareAndDecrypt(document, rawBytes) {
   const uploadsBefore = uploadCount
   const result = await createSendFromArchive(
     { documents: [document], recipientLabel: "recipient", ttlSeconds: 3600 },
-    { getIdentity, uploadEncryptedBlob, createGrant },
+    { getIdentity, uploadEncryptedBlob, createGrant, addShareIndexEntry: async (entry) => indexedShares.push(entry) },
   )
+
+  // H-18: the share index records exactly which archived documents this share holds.
+  const indexed = indexedShares.at(-1)
+  assert.equal(indexed?.entityKey, result.entityKey, "createSendFromArchive must record the share in the archive's share index")
+  assert.deepEqual(indexed.documentIds, [document.id], "the share index must list exactly the documents in this share")
+  assert.equal(indexed.expiresAt, result.expiresAt, "the share index must carry the share's own expiry")
 
   assert.equal(uploadCount, uploadsBefore + 1, "sharing one archived document must upload exactly once")
   assert.ok(capturedShare, "createSendFromArchive must hand a key share to the holder")

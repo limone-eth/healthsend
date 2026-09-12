@@ -36,10 +36,11 @@ import {
   type ThresholdGrantPayload,
 } from "./arkiv"
 import { getIdentity, ensureFunded } from "./identity"
+import { addShareIndexEntryToMyArchive } from "./archive-store"
 import { revokeMessage } from "./revoke"
 import { shareMessage } from "./share"
 import { privateKeyToAccount } from "viem/accounts"
-import { type DocumentRecord, type SetAsideIdentifiers } from "./archive"
+import { type DocumentRecord, type SetAsideIdentifiers, type ShareIndexEntry } from "./archive"
 import { createEncryptedAsset, createEncryptedAssetFromArchive, type EncryptedAsset } from "./assets"
 import { protectGrantShare, releaseGrantShare } from "./grant-package"
 import { createTacoKeyReleaseProvider, TacoUnavailableError } from "./key-release/taco"
@@ -71,6 +72,8 @@ type CreateSendDependencies = {
   getIdentity: typeof getIdentity
   uploadEncryptedBlob: typeof uploadEncryptedBlob
   createGrant: typeof createGrant
+  /** H-18: records which archived documents went into a share. Only `createSendFromArchive` calls it. */
+  addShareIndexEntry: (entry: ShareIndexEntry) => Promise<unknown>
 }
 
 const defaultCreateSendDependencies: CreateSendDependencies = {
@@ -78,6 +81,7 @@ const defaultCreateSendDependencies: CreateSendDependencies = {
   getIdentity,
   uploadEncryptedBlob,
   createGrant,
+  addShareIndexEntry: (entry) => addShareIndexEntryToMyArchive(entry),
 }
 
 /**
@@ -317,6 +321,23 @@ export async function createSendFromArchive(
   const url = `${window.location.origin}/s/${packEntityKey(grant.entityKey)}#${toBase64Url(
     linkSecret,
   )}`
+  // H-18: the only record of which documents this share holds — its bundle is
+  // sealed under its own share key, so the sender cannot look inside it later.
+  // Best-effort: the link already works, and failing the send here would lose
+  // it. A missing entry makes the remove sheet say it cannot check, rather
+  // than claim the document is in no share (see live-shares-for-document.ts).
+  progress("Recording the share in your archive")
+  try {
+    await dependencies.addShareIndexEntry({
+      entityKey: grant.entityKey,
+      documentIds: params.documents.map((document) => document.id),
+      createdAt: Math.floor(Date.now() / 1000),
+      expiresAt: grant.expiresAt,
+    })
+  } catch (error) {
+    console.warn("The share was created but not recorded in your archive's share index", error)
+  }
+
   progress("Done")
 
   return { ...grant, swarmRef: asset.ref, url, code: params.code, setAside: [] }
