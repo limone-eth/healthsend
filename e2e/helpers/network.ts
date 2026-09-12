@@ -11,12 +11,17 @@
  * test.
  */
 import { expect, type BrowserContext, type Request, type Route } from "@playwright/test"
+import { hashActionCid } from "@/lib/key-release/chipotle"
+import { encodeGrantBinding, toHex } from "@/lib/crypto"
 
 /** Default Arkiv RPC endpoint — see .env.example, NEXT_PUBLIC_ARKIV_RPC. */
 export const ARKIV_RPC_PATTERN = /rpc\.tiramisu\.db-chain\.testnet\.arkiv\.network/
 
 /** Default Swarm gateway — see .env.example, NEXT_PUBLIC_SWARM_GATEWAY. */
 export const SWARM_GATEWAY_PATTERN = /download\.gateway\.ethswarm\.org\/bytes\//
+
+/** Lit's Chipotle base — see `lib/key-release/chipotle.ts`'s `CHIPOTLE_API_BASE`. */
+export const CHIPOTLE_API_PATTERN = /api\.chipotle\.litprotocol\.com/
 
 type JsonRpcBody = { id: number; method: string; params: unknown[] }
 
@@ -44,6 +49,21 @@ export type MalformedGrant = { kind: "malformed"; entityKeyHex: string; currentB
  * JSON-RPC error, and not the shape the SDK uses for "no live entity" either.
  */
 export type TransportFailure = { kind: "transport-fail" }
+/**
+ * H-69: a v3, threshold-release grant — `owner`/`expiresBlock` are the entity's own native fields
+ * (see `lib/arkiv.ts`'s `toGrant`, the `payload.v === 3` branch), not attributes anyone with a key
+ * could shape, so this fixture writes both the native fields and matching `sender`/`expires_block`
+ * attributes rather than only one or the other.
+ */
+export type FoundThresholdGrant = {
+  kind: "found-v3"
+  entityKeyHex: string
+  owner: string
+  reference: string
+  release: { provider: string; domain: string; ritualId: number; iv: string; ciphertext: string; grantId: string }
+  expiresBlock: number
+  currentBlock: number
+}
 
 /**
  * Stub the Arkiv JSON-RPC transport `getGrant`/`getCurrentBlock` call directly.
@@ -55,7 +75,7 @@ export type TransportFailure = { kind: "transport-fail" }
  */
 export async function mockArkiv(
   context: BrowserContext,
-  scenario: FoundGrant | MissingGrant | MalformedGrant | TransportFailure,
+  scenario: FoundGrant | FoundThresholdGrant | MissingGrant | MalformedGrant | TransportFailure,
 ) {
   await context.route(ARKIV_RPC_PATTERN, async (route) => {
     if (scenario.kind === "transport-fail") {
@@ -75,7 +95,7 @@ export async function mockArkiv(
       // value (`$key = key(0x…)`) — see @arkiv-network/sdk's `getEntity`. A
       // caller that asked for the wrong entity would otherwise still receive
       // this scenario's fixture data and the test would not notice.
-      if (scenario.kind === "found" || scenario.kind === "malformed") {
+      if (scenario.kind === "found" || scenario.kind === "found-v3" || scenario.kind === "malformed") {
         const [query] = readJsonRpc(route).params as [string, unknown]
         expect(
           query.toLowerCase(),
@@ -86,6 +106,38 @@ export async function mockArkiv(
       if (scenario.kind === "missing") {
         await route.fulfill({
           json: jsonRpcResult(id, { data: [], blockNumber: String(scenario.currentBlock), cursor: null }),
+        })
+        return
+      }
+
+      // A v3, threshold-release grant — `owner`/`expiresAt` are the entity's
+      // own native fields, never attributes anyone with a key could shape
+      // (see lib/arkiv.ts's `toGrant`), so this fixture writes both, kept in
+      // sync with each other the way a real write always is.
+      if (scenario.kind === "found-v3") {
+        const entity = {
+          key: scenario.entityKeyHex,
+          owner: scenario.owner,
+          creator: scenario.owner,
+          createdAt: "0x1",
+          updatedAt: "0x1",
+          expiresAt: "0x" + scenario.expiresBlock.toString(16),
+          creationFlags: 0,
+          contentType: "application/json",
+          payload:
+            "0x" + Buffer.from(JSON.stringify({ v: 3, ref: scenario.reference, release: scenario.release }), "utf8").toString("hex"),
+          attributes: [
+            { name: "filetype", type: "str", value: "pdf" },
+            { name: "sender", type: "addr", value: scenario.owner },
+            { name: "created_at", type: "u64", value: Math.floor(Date.now() / 1000) - 60 },
+            { name: "expires_block", type: "u64", value: scenario.expiresBlock },
+            { name: "recipient", type: "str", value: "blind-recipient" },
+            { name: "label", type: "str", value: "blind-label" },
+            { name: "file_count", type: "u64", value: 1 },
+          ],
+        }
+        await route.fulfill({
+          json: jsonRpcResult(id, { data: [entity], blockNumber: String(scenario.currentBlock), cursor: null }),
         })
         return
       }
@@ -207,6 +259,84 @@ export async function mockSwarmGateway(context: BrowserContext, reference: strin
       reference.toLowerCase(),
     )
     await route.fulfill({ status: 200, contentType: "application/octet-stream", body: Buffer.from(blob) })
+  })
+}
+
+function toBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64")
+}
+function fromBase64(value: string): Uint8Array {
+  return new Uint8Array(Buffer.from(value, "base64"))
+}
+
+/**
+ * H-69: a fake Lit Chipotle endpoint — `ping`/`list_actions`/
+ * `list_wallets_in_group`/`get_lit_action_ipfs_id`/`lit_action`, enough for
+ * `lib/key-release/chipotle.ts`'s real `createHttpChipotleClient` to run
+ * against, unmodified, from the actual browser page under test. `arkivLedger`
+ * plays the enclave's own liveness check (`chipotle-action.js`'s
+ * `grantIsLive`) — a grant absent from it is refused exactly like an expired
+ * or deleted one, mirroring `scripts/chipotle-adapter-proof.mjs`'s fake.
+ */
+export async function mockChipotle(
+  context: BrowserContext,
+  options: {
+    actionCid: string
+    pkpId: string
+    arkivLedger: Map<string, { owner: string; expiresBlock: string }>
+  },
+) {
+  async function computeCommitment(grantId: string, owner: string, expiresBlockStr: string, ref: string) {
+    const bytes = encodeGrantBinding({ grantId: grantId as `0x${string}`, owner: owner as `0x${string}`, expiresBlock: BigInt(expiresBlockStr), ref })
+    const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource)
+    return toHex(new Uint8Array(digest))
+  }
+
+  await context.route(CHIPOTLE_API_PATTERN, async (route) => {
+    const url = new URL(route.request().url())
+
+    if (url.pathname.endsWith("/version")) {
+      await route.fulfill({ status: 200, body: "ok" })
+      return
+    }
+    if (url.pathname.endsWith("/list_actions")) {
+      await route.fulfill({ json: [{ id: hashActionCid(options.actionCid) }] })
+      return
+    }
+    if (url.pathname.endsWith("/list_wallets_in_group")) {
+      await route.fulfill({ json: [{ id: "0", wallet_address: options.pkpId }] })
+      return
+    }
+    if (url.pathname.endsWith("/get_lit_action_ipfs_id")) {
+      await route.fulfill({ json: options.actionCid })
+      return
+    }
+    if (url.pathname.endsWith("/lit_action")) {
+      const body = route.request().postDataJSON() as { js_params: Record<string, string> }
+      const jsParams = body.js_params
+      const expected = await computeCommitment(jsParams.grantId, jsParams.owner, jsParams.expiresBlock, jsParams.ref)
+      if (expected !== jsParams.commitment) {
+        await route.fulfill({ json: { response: { authorized: false, error: "commitment mismatch" }, has_error: false, logs: "" } })
+        return
+      }
+      if (jsParams.mode === "release") {
+        const entry = options.arkivLedger.get(jsParams.grantId.toLowerCase())
+        const live =
+          entry !== undefined &&
+          entry.owner.toLowerCase() === jsParams.owner.toLowerCase() &&
+          entry.expiresBlock === jsParams.expiresBlock
+        if (!live) {
+          await route.fulfill({ json: { response: { authorized: false, error: "grant is not live" }, has_error: false, logs: "" } })
+          return
+        }
+      }
+      const inputString = jsParams.mode === "protect" ? jsParams.payload : jsParams.ciphertext
+      const outputString = toBase64(Uint8Array.from(fromBase64(inputString), (b) => b ^ 0x5a))
+      await route.fulfill({ json: { response: { authorized: true, result: outputString }, has_error: false, logs: "" } })
+      return
+    }
+
+    await route.fulfill({ status: 501, json: `not stubbed for this test: ${url.pathname}` })
   })
 }
 

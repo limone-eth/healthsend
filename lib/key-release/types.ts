@@ -1,11 +1,13 @@
 /**
  * The key-release boundary.
  *
- * A `KeyReleaseProvider` is the only thing above it that ever changes. TACo
- * has no supported network today, so nothing in this file may name it, or
- * anything else about it, beyond the string literal `"taco"` that a real
- * implementation will one day supply as its `descriptor.provider`. Swapping
- * the mechanism means writing a new provider, not touching a caller.
+ * A `KeyReleaseProvider` is the only thing above it that ever changes. H-69
+ * added Chipotle as a second, real implementation alongside the parked TACo
+ * one, so `ProtectedKeyShare.provider`/`.domain` now name both literally
+ * rather than casting a second provider's descriptor through `unknown` to
+ * fit a union of one (H-67's stopgap — see `docs/stories/H-67.md`, "Choices").
+ * Swapping the mechanism still means writing a new provider, not touching a
+ * caller; adding one means widening this union, not the caller either.
  *
  * `GrantBinding` is what a release is gated on: a specific grant, not a
  * general permission. `ProtectedKeyShare` is what a provider hands back —
@@ -20,8 +22,8 @@ export type GrantBinding = {
 }
 
 export type ProtectedKeyShare = {
-  provider: "taco"
-  domain: "lynx"
+  provider: "taco" | "chipotle"
+  domain: "lynx" | "chipotle"
   ritualId: number
   iv: string
   ciphertext: string

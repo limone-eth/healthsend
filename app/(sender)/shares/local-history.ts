@@ -35,6 +35,12 @@ export type KnownShare = {
   endedByYouAt: number | null
   /** Set the first time a previously-seen grant is missing from a successful live query. */
   naturallyGoneAt: number | null
+  /**
+   * H-69: a v3, threshold-release grant has no holder, so it has no access
+   * log at all — never "not opened", nothing. `false` for a v3 grant; `true`
+   * for every grant shape that still hands its key share to the holder.
+   */
+  hasAccessLog: boolean
 }
 
 function storageKey(address: string): string {
@@ -89,6 +95,7 @@ export function reconcileKnownShares(address: string, live: Grant[]): KnownShare
       endedByYou: existing?.endedByYou ?? false,
       endedByYouAt: existing?.endedByYouAt ?? null,
       naturallyGoneAt: null,
+      hasAccessLog: grant.payload.v !== 3,
     }
   }
 
@@ -118,6 +125,7 @@ export function markEndedByYou(address: string, entityKey: string): KnownShare[]
         endedByYou: true,
         endedByYouAt: now,
         naturallyGoneAt: now,
+        hasAccessLog: true,
       }
   save(address, known)
   return Object.values(known)

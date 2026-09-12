@@ -89,10 +89,15 @@ export type GrantBinding = {
   ref: string
 }
 
-/** A key share TACo has threshold-encrypted, still wrapped in the outer link-secret envelope. */
+/**
+ * A key share a `KeyReleaseProvider` has protected, still wrapped in the outer
+ * link-secret envelope. Mirrors `lib/key-release/types.ts`'s `ProtectedKeyShare`
+ * — see that file's own comment for why H-69 widened both to `"taco" |
+ * "chipotle"` rather than leaving Chipotle to cast through `unknown`.
+ */
 export type ProtectedKeyShare = {
-  provider: "taco"
-  domain: "lynx"
+  provider: "taco" | "chipotle"
+  domain: "lynx" | "chipotle"
   ritualId: number
   iv: string
   ciphertext: string
@@ -389,6 +394,25 @@ export async function createThresholdGrant(params: {
     owner: client.account.address,
     expiresBlock: Number(params.expiresBlock),
   }
+}
+
+/**
+ * End a v3 grant before its date by deleting the entity outright, as its
+ * owner.
+ *
+ * A v3 share has no holder half to delete — the whole point of the design is
+ * that nothing but Arkiv's own live state gates release (see
+ * `buildArkivGrantQuery`). Deleting the entity is therefore what "end this
+ * early" has to mean for a threshold-release grant: `chipotle-action.js`'s
+ * `grantIsLive` (and TACo's own condition) checks for exactly this entity, at
+ * exactly this owner and `$expiresAt`, so a deleted entity fails that check
+ * the same way a naturally-expired one already does. See
+ * docs/stories/H-69.md, "Ending a v3 share early".
+ */
+export async function deleteGrant(params: { privateKey: Hex; entityKey: string }): Promise<{ txHash: string }> {
+  const client = getWalletClient(params.privateKey)
+  const result = await client.deleteEntity({ entityKey: params.entityKey as Hex })
+  return { txHash: result.txHash }
 }
 
 /**

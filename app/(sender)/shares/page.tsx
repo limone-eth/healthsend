@@ -64,7 +64,9 @@ function SharesList({ address }: { address: string }) {
     const stillLive = new Set(live.map((g) => g.entityKey))
     await Promise.all(
       merged
-        .filter((entry) => stillLive.has(entry.entityKey))
+        // A v3 share has no holder, so it has no access log to ask for —
+        // see local-history.ts's `hasAccessLog`. Never call the route for one.
+        .filter((entry) => stillLive.has(entry.entityKey) && entry.hasAccessLog)
         .map(async (entry) => {
           setLogs((prev) => (prev[entry.entityKey] ? prev : { ...prev, [entry.entityKey]: "loading" }))
           const result = await fetchAccessLog(entry.entityKey)
@@ -191,14 +193,18 @@ function SharesList({ address }: { address: string }) {
 // device binding, so it is never produced — see `## Choices`.
 // ---------------------------------------------------------------------------
 
-function chipStateFor(entry: KnownShare, log: AccessLogFetch, now: number): ChipState {
+function chipStateFor(entry: KnownShare, log: AccessLogFetch | undefined, now: number): ChipState {
   if (entry.endedByYou) return "ended-by-you"
   if (entry.naturallyGoneAt !== null) return "ended"
-  if (log.status === "unavailable") return "unavailable"
-  if (log.opened.length === 0) return log.reliable ? "not-opened" : "unavailable"
   const remaining = entry.expiresAt - now
-  if (remaining > 0 && remaining <= 7 * 86400) return "ending-soon"
-  return "active"
+  const timeBased: ChipState = remaining > 0 && remaining <= 7 * 86400 ? "ending-soon" : "active"
+  // H-69: a v3 share has no holder, so it has no access log — nothing to
+  // report opened or not, and no reason to wait on one. Time remaining is
+  // the whole of its chip.
+  if (!entry.hasAccessLog) return timeBased
+  if (!log || log.status === "unavailable") return "unavailable"
+  if (log.opened.length === 0) return log.reliable ? "not-opened" : "unavailable"
+  return timeBased
 }
 
 function logSummary(entry: KnownShare, log: LogByKey[string]): string {
@@ -207,6 +213,9 @@ function logSummary(entry: KnownShare, log: LogByKey[string]): string {
       ? `You ended this on ${dayMonth.format(new Date(entry.endedByYouAt * 1000))}.`
       : "You ended this."
   }
+  // H-69: nothing to say about opens for a share with no access log at all —
+  // never "Not opened yet.", which would claim knowledge this share cannot have.
+  if (!entry.hasAccessLog) return ""
   if (!log || log === "loading") return "Checking when she looked…"
   if (log.status === "unavailable") return "We could not reach the access log just now."
   if (!log.reliable && log.opened.length === 0) {
@@ -238,7 +247,11 @@ function ShareCard({
   const meta = `${entry.fileCount} ${entry.fileCount === 1 ? "document" : "documents"} · Sent ${dayMonth.format(
     new Date(entry.createdAt * 1000),
   )}`
-  const canExpand = Boolean(log && log !== "loading" && log.status === "ok")
+  // A v3 share never gets a log fetch at all (see page.tsx's `refresh`), so
+  // its chip is ready immediately rather than waiting on one that will never
+  // arrive.
+  const chipReady = !entry.hasAccessLog || resolvedLog !== null
+  const canExpand = Boolean(entry.hasAccessLog && log && log !== "loading" && log.status === "ok")
 
   return (
     <div className="w-full overflow-hidden rounded-card border border-black/[0.05] bg-surface shadow-card">
@@ -250,8 +263,8 @@ function ShareCard({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[17px] font-semibold tracking-[-0.25px] text-ink">{title}</span>
-              {resolvedLog ? (
-                <Chip state={chipStateFor(entry, resolvedLog, now)} />
+              {chipReady ? (
+                <Chip state={chipStateFor(entry, resolvedLog ?? undefined, now)} />
               ) : (
                 // Genuinely don't know yet — no chip claims otherwise while we wait.
                 <span className="h-[34px] w-[110px] animate-pulse rounded-capsule bg-grouped" />
@@ -402,8 +415,8 @@ function ConfirmEndSheet({
       >
         <h2 className="text-[17px] font-semibold tracking-[-0.25px] text-ink">End access now?</h2>
         <p className="mt-2 text-[15px] leading-[1.47] text-secondary">
-          This deletes our half of the key. The link stops working right away, and there is no undo
-          — ending access stops anything further, but it cannot un-read what has already been seen.
+          This ends the grant right away, and there is no undo — ending access stops anything
+          further, but it cannot un-read what has already been seen.
         </p>
 
         {error && <p className="mt-3 text-[13px] text-error">{error}</p>}

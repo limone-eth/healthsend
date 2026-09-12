@@ -27,6 +27,7 @@ import {
   buildGrantBinding,
   createGrant,
   createThresholdGrant,
+  deleteGrant,
   getCurrentBlock,
   getGrant,
   listGrants,
@@ -43,7 +44,13 @@ import { privateKeyToAccount } from "viem/accounts"
 import { type DocumentRecord, type SetAsideIdentifiers, type ShareIndexEntry } from "./archive"
 import { createEncryptedAsset, createEncryptedAssetFromArchive, type EncryptedAsset } from "./assets"
 import { protectGrantShare, releaseGrantShare } from "./grant-package"
-import { createTacoKeyReleaseProvider, TacoUnavailableError } from "./key-release/taco"
+import {
+  selectProtectingProvider,
+  selectReleasingProvider,
+  readChipotleConfig,
+  ChipotleUnavailableError,
+  TacoUnavailableError,
+} from "./key-release/index"
 import type { GrantBinding } from "./key-release/types"
 
 const IV_BYTES = 12
@@ -74,6 +81,10 @@ type CreateSendDependencies = {
   createGrant: typeof createGrant
   /** H-18: records which archived documents went into a share. Only `createSendFromArchive` calls it. */
   addShareIndexEntry: (entry: ShareIndexEntry) => Promise<unknown>
+  /** H-69: the Chipotle-enabled branch of `createSendFromArchive` only. */
+  getCurrentBlock: typeof getCurrentBlock
+  createThresholdGrant: typeof createThresholdGrant
+  selectProtectingProvider: typeof selectProtectingProvider
 }
 
 const defaultCreateSendDependencies: CreateSendDependencies = {
@@ -82,6 +93,9 @@ const defaultCreateSendDependencies: CreateSendDependencies = {
   uploadEncryptedBlob,
   createGrant,
   addShareIndexEntry: (entry) => addShareIndexEntryToMyArchive(entry),
+  getCurrentBlock,
+  createThresholdGrant,
+  selectProtectingProvider,
 }
 
 /**
@@ -230,6 +244,34 @@ export async function createSend(
 }
 
 /**
+ * H-18: the only record of which documents a share holds — its bundle is sealed
+ * under its own share key, so the sender cannot look inside it later. Both key
+ * release paths (holder and Chipotle) call this once the link exists.
+ * Best-effort: the link already works, and failing the send here would lose it.
+ * A missing entry makes the remove sheet say it cannot check, rather than claim
+ * the document is in no share (see live-shares-for-document.ts).
+ */
+async function recordShareInArchive(
+  dependencies: Pick<CreateSendDependencies, "addShareIndexEntry">,
+  entityKey: string,
+  documents: DocumentRecord[],
+  expiresAt: number,
+  progress: SendProgress,
+): Promise<void> {
+  progress("Recording the share in your archive")
+  try {
+    await dependencies.addShareIndexEntry({
+      entityKey,
+      documentIds: documents.map((document) => document.id),
+      createdAt: Math.floor(Date.now() / 1000),
+      expiresAt,
+    })
+  } catch (error) {
+    console.warn("The share was created but not recorded in your archive's share index", error)
+  }
+}
+
+/**
  * Send a send built from selections already in the sender's archive — H-64.
  *
  * Deliberately a separate function rather than a `files`/`documents` union
@@ -242,6 +284,15 @@ export async function createSend(
  * step from "split the key" onward is the same handoff `createSend` performs,
  * copied rather than shared for the same reason — see this story's
  * `## Choices`.
+ *
+ * H-69: when Chipotle is enabled *and* this share carries no code, it takes
+ * the live-key-release branch instead — a fresh v3, threshold-release grant
+ * with no holder hand-off at all, sharing its bind/protect/write-grant shape
+ * with `createThresholdSend` (`protectAndWriteThresholdGrant`) rather than a
+ * third copy of it. A coded share always stays on the path below regardless
+ * of the flag: the four-digit code (H-7) is enforced by the holder's own
+ * attempt counter, which Chipotle has no equivalent of. With Chipotle
+ * disabled, this function's holder path below is unchanged byte-for-byte.
  */
 export async function createSendFromArchive(
   params: {
@@ -258,6 +309,33 @@ export async function createSendFromArchive(
   if (params.documents.length === 0) throw new Error("Pick at least one document")
 
   const dependencies = { ...defaultCreateSendDependencies, ...dependencyOverrides }
+
+  if (readChipotleConfig().enabled && !params.code) {
+    const asset = await createEncryptedAssetFromArchive(params.documents, progress, {
+      uploadEncryptedBlob: dependencies.uploadEncryptedBlob,
+    })
+    const threshold = await protectAndWriteThresholdGrant(
+      asset,
+      { recipientLabel: params.recipientLabel, ttlSeconds: params.ttlSeconds, onProgress: progress },
+      {
+        getIdentity: dependencies.getIdentity,
+        ensureFunded,
+        getCurrentBlock: dependencies.getCurrentBlock,
+        createThresholdGrant: dependencies.createThresholdGrant,
+        selectProtectingProvider: dependencies.selectProtectingProvider,
+      },
+    )
+    await recordShareInArchive(dependencies, threshold.entityKey, params.documents, threshold.expiresAt, progress)
+    return {
+      entityKey: threshold.entityKey,
+      txHash: threshold.txHash,
+      expiresAt: threshold.expiresAt,
+      swarmRef: threshold.swarmRef,
+      url: threshold.url,
+      setAside: [],
+    }
+  }
+
   progress("Checking key-share holder")
   await preflightHolder(dependencies.fetch)
 
@@ -321,22 +399,7 @@ export async function createSendFromArchive(
   const url = `${window.location.origin}/s/${packEntityKey(grant.entityKey)}#${toBase64Url(
     linkSecret,
   )}`
-  // H-18: the only record of which documents this share holds — its bundle is
-  // sealed under its own share key, so the sender cannot look inside it later.
-  // Best-effort: the link already works, and failing the send here would lose
-  // it. A missing entry makes the remove sheet say it cannot check, rather
-  // than claim the document is in no share (see live-shares-for-document.ts).
-  progress("Recording the share in your archive")
-  try {
-    await dependencies.addShareIndexEntry({
-      entityKey: grant.entityKey,
-      documentIds: params.documents.map((document) => document.id),
-      createdAt: Math.floor(Date.now() / 1000),
-      expiresAt: grant.expiresAt,
-    })
-  } catch (error) {
-    console.warn("The share was created but not recorded in your archive's share index", error)
-  }
+  await recordShareInArchive(dependencies, grant.entityKey, params.documents, grant.expiresAt, progress)
 
   progress("Done")
 
@@ -371,14 +434,14 @@ type OpenSendDependencies = {
   getGrant: typeof getGrant
   getCurrentBlock: typeof getCurrentBlock
   fetchBlobFromGateway: typeof fetchBlobFromGateway
-  createTacoKeyReleaseProvider: typeof createTacoKeyReleaseProvider
+  selectReleasingProvider: typeof selectReleasingProvider
 }
 
 const defaultOpenSendDependencies: OpenSendDependencies = {
   getGrant,
   getCurrentBlock,
   fetchBlobFromGateway,
-  createTacoKeyReleaseProvider,
+  selectReleasingProvider,
 }
 
 /**
@@ -457,11 +520,15 @@ export async function openSend(
         payload.ref,
       )
     } else if (payload.v === 3) {
-      // v3: no holder at all. TACo checks Arkiv's own live state itself (see
-      // `buildArkivGrantQuery`) and releases the complementary share only
-      // while that state still matches exactly what this share was protected
-      // for — the head-boundary check above already covers the ordinary,
-      // expected expiry, so nothing here calls TACo once that has fired.
+      // v3: no holder at all. Whichever provider protected this share (its
+      // own `payload.release.provider` says which — chosen here by the
+      // factory, never by today's env, so a share protected under one
+      // provider always releases through that same one) checks Arkiv's own
+      // live state itself (see `buildArkivGrantQuery`) and releases the
+      // complementary share only while that state still matches exactly what
+      // this share was protected for — the head-boundary check above already
+      // covers the ordinary, expected expiry, so nothing here calls the
+      // provider once that has fired.
       const binding: GrantBinding = {
         grantId: payload.release.grantId,
         owner: grant.owner as `0x${string}`,
@@ -469,20 +536,16 @@ export async function openSend(
         ref: payload.ref,
       }
       try {
-        const heldShare = await releaseGrantShare(
-          payload.release,
-          linkSecret,
-          binding,
-          dependencies.createTacoKeyReleaseProvider(),
-        )
+        const provider = dependencies.selectReleasingProvider(payload.release)
+        const heldShare = await releaseGrantShare(payload.release, linkSecret, binding, provider)
         contentKey = await joinContentKey(heldShare, linkSecret)
       } catch (error) {
-        if (error instanceof TacoUnavailableError) {
-          // TACo's own adapter never claims a clean denial — see
-          // lib/key-release/taco.ts. The one authoritative "expired" for a
-          // v3 grant is the head-boundary check above; anything TACo itself
-          // reports is retryable unavailability, never a second way to say
-          // expired.
+        if (error instanceof TacoUnavailableError || error instanceof ChipotleUnavailableError) {
+          // Neither adapter ever claims a clean denial — see
+          // lib/key-release/taco.ts and lib/key-release/chipotle.ts. The one
+          // authoritative "expired" for a v3 grant is the head-boundary check
+          // above; anything a provider itself reports is retryable
+          // unavailability, never a second way to say expired.
           return { status: "unavailable", message: error.message }
         }
         throw error
@@ -570,7 +633,7 @@ type CreateThresholdSendDependencies = {
   ensureFunded: typeof ensureFunded
   getCurrentBlock: typeof getCurrentBlock
   createThresholdGrant: typeof createThresholdGrant
-  createTacoKeyReleaseProvider: typeof createTacoKeyReleaseProvider
+  selectProtectingProvider: typeof selectProtectingProvider
 }
 
 const defaultCreateThresholdSendDependencies: CreateThresholdSendDependencies = {
@@ -578,7 +641,7 @@ const defaultCreateThresholdSendDependencies: CreateThresholdSendDependencies = 
   ensureFunded,
   getCurrentBlock,
   createThresholdGrant,
-  createTacoKeyReleaseProvider,
+  selectProtectingProvider,
 }
 
 /**
@@ -602,22 +665,22 @@ export type CreateThresholdSendResult = {
 }
 
 /**
- * Issue one more grant against an asset that already exists on Swarm.
+ * Bind, protect and write one v3, threshold-release grant against an asset
+ * that already exists on Swarm — the shape `createThresholdSend` and
+ * `createSendFromArchive`'s Chipotle branch both need, kept in exactly one
+ * place rather than a third copy (see this story's `## Choices`).
  *
- * No upload happens here — `asset.ref` and `asset.contentKey` (from
- * `createEncryptedAsset`) are reused exactly as they were produced. Only the
- * per-recipient things are fresh: a random grant id, a new link secret, a new
- * TACo-protected key share, and one new Arkiv v3 entity. Two calls against the
- * same asset therefore cost one Swarm upload and two grants, each with its
- * own expiry and its own link.
+ * No upload happens here — `asset.ref` and `asset.contentKey` are reused
+ * exactly as they were produced. Only the per-recipient things are fresh: a
+ * random grant id, a new link secret, a newly protected key share, and one
+ * new Arkiv v3 entity.
  */
-export async function createThresholdSend(
+async function protectAndWriteThresholdGrant(
   asset: EncryptedAsset,
   params: { recipientLabel: string; ttlSeconds: number; onProgress?: SendProgress },
-  dependencyOverrides: Partial<CreateThresholdSendDependencies> = {},
+  dependencies: CreateThresholdSendDependencies,
 ): Promise<CreateThresholdSendResult> {
   const progress = params.onProgress ?? (() => {})
-  const dependencies = { ...defaultCreateThresholdSendDependencies, ...dependencyOverrides }
 
   const identity = await dependencies.getIdentity()
   await dependencies.ensureFunded(identity.address)
@@ -633,13 +696,13 @@ export async function createThresholdSend(
 
   const linkSecret = generateLinkSecret()
   // Split first, exactly like `createSend` — one half derives from the link
-  // secret and never travels; the other (`heldShare`) is what TACo protects
-  // below, gated on this grant's own binding rather than handed to a holder
-  // that could be asked to delete it.
+  // secret and never travels; the other (`heldShare`) is what the provider
+  // protects below, gated on this grant's own binding rather than handed to
+  // a holder that could be asked to delete it.
   const { heldShare } = await splitContentKey(asset.contentKey, linkSecret)
 
   progress("Protecting the key share")
-  const provider = dependencies.createTacoKeyReleaseProvider({ signerPrivateKey: identity.privateKey })
+  const provider = dependencies.selectProtectingProvider()
   const protectedShare = await protectGrantShare(heldShare, linkSecret, binding, provider)
 
   progress("Writing grant to Arkiv")
@@ -659,12 +722,13 @@ export async function createThresholdSend(
     fileCount: asset.fileCount,
   })
 
-  // The Arkiv entity is the only thing a TACo release condition ever checks
+  // The Arkiv entity is the only thing a release condition ever checks
   // against — see `buildArkivGrantQuery`. If what actually got written
-  // disagrees with the binding this share was protected for, TACo will
-  // refuse to release forever, not just late: refuse to hand out a link that
-  // can never open rather than silently trusting the transaction succeeded
-  // exactly as asked. See docs/stories/H-53.md, "Prevent mismatched bindings".
+  // disagrees with the binding this share was protected for, the provider
+  // will refuse to release forever, not just late: refuse to hand out a link
+  // that can never open rather than silently trusting the transaction
+  // succeeded exactly as asked. See docs/stories/H-53.md, "Prevent mismatched
+  // bindings".
   if (
     grant.owner.toLowerCase() !== binding.owner.toLowerCase() ||
     grant.expiresBlock !== Number(binding.expiresBlock)
@@ -687,28 +751,80 @@ export async function createThresholdSend(
   }
 }
 
+/**
+ * Issue one more grant against an asset that already exists on Swarm.
+ *
+ * Two calls against the same asset cost one Swarm upload and two grants,
+ * each with its own expiry and its own link. Protecting always goes through
+ * the key-release factory (`selectProtectingProvider`), which never chooses
+ * the parked TACo for a new share — see `lib/key-release/index.ts`.
+ */
+export async function createThresholdSend(
+  asset: EncryptedAsset,
+  params: { recipientLabel: string; ttlSeconds: number; onProgress?: SendProgress },
+  dependencyOverrides: Partial<CreateThresholdSendDependencies> = {},
+): Promise<CreateThresholdSendResult> {
+  const dependencies = { ...defaultCreateThresholdSendDependencies, ...dependencyOverrides }
+  return protectAndWriteThresholdGrant(asset, params, dependencies)
+}
+
 export type EndSendResult = { status: "ended" } | { status: "error"; message: string }
+
+type EndSendDependencies = {
+  getIdentity: typeof getIdentity
+  getGrant: typeof getGrant
+  deleteGrant: typeof deleteGrant
+  fetch: typeof fetch
+}
+
+const defaultEndSendDependencies: EndSendDependencies = { getIdentity, getGrant, deleteGrant, fetch }
 
 /**
  * End a share before its date.
  *
- * This deletes the holder's half of the content key, which is what makes the
- * link unjoinable — the Arkiv grant is left alone; this ends access, not
- * history. Proof of ownership is a signature from the sender's own derived
- * Arkiv key over the entity key, not a secret returned at create time: a
- * bearer secret would leak into logs and browser history, and anyone holding
- * it could end someone else's share.
+ * A v2/legacy grant deletes the holder's half of the content key, which is
+ * what makes the link unjoinable — the Arkiv grant is left alone; this ends
+ * access, not history. Proof of ownership is a signature from the sender's
+ * own derived Arkiv key over the entity key, not a secret returned at create
+ * time: a bearer secret would leak into logs and browser history, and anyone
+ * holding it could end someone else's share.
  *
- * No UI calls this yet — the confirm sheet is separate work — but the send
- * primitives all live here, so this does too.
+ * A v3, threshold-release grant has no holder half to delete — see
+ * `lib/key-release/index.ts` and docs/stories/H-69.md, "Ending a v3 share
+ * early". Deleting the entity itself, as its owner, is what "end this early"
+ * has to mean instead: `dependencies.getGrant` reads the grant fresh to tell
+ * the two shapes apart, and a v3 grant never reaches the holder call below.
  */
-export async function endSend(entityKey: string): Promise<EndSendResult> {
-  const identity = await getIdentity()
+export async function endSend(
+  entityKey: string,
+  dependencyOverrides: Partial<EndSendDependencies> = {},
+): Promise<EndSendResult> {
+  const dependencies = { ...defaultEndSendDependencies, ...dependencyOverrides }
+  const identity = await dependencies.getIdentity()
+
+  let grant: Grant | null = null
+  try {
+    grant = await dependencies.getGrant(entityKey)
+  } catch {
+    // A lookup that fails does not tell us this is a v3 grant either way —
+    // fall through to the holder path below, which has its own honest
+    // failure handling.
+  }
+
+  if (grant && grant.payload.v === 3) {
+    try {
+      await dependencies.deleteGrant({ privateKey: identity.privateKey, entityKey })
+      return { status: "ended" }
+    } catch (error) {
+      return { status: "error", message: (error as Error).message }
+    }
+  }
+
   const timestamp = Math.floor(Date.now() / 1000)
   const account = privateKeyToAccount(identity.privateKey)
   const signature = await account.signMessage({ message: revokeMessage(entityKey, timestamp) })
 
-  const response = await fetch("/api/holder/revoke", {
+  const response = await dependencies.fetch("/api/holder/revoke", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ entityKey, signature, timestamp }),

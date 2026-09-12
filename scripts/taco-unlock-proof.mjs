@@ -167,8 +167,8 @@ const bloodTestPdf = new File(
 const asset = await createEncryptedAsset({ files: [bloodTestPdf] }, { uploadEncryptedBlob })
 assert.equal(uploads, 1, "one asset, one upload")
 
-const sendDeps = { getIdentity, ensureFunded, getCurrentBlock, createThresholdGrant, createTacoKeyReleaseProvider: createFakeTacoProvider }
-const openDeps = { getGrant, getCurrentBlock, fetchBlobFromGateway, createTacoKeyReleaseProvider: createFakeTacoProvider }
+const sendDeps = { getIdentity, ensureFunded, getCurrentBlock, createThresholdGrant, selectProtectingProvider: createFakeTacoProvider }
+const openDeps = { getGrant, getCurrentBlock, fetchBlobFromGateway, selectReleasingProvider: createFakeTacoProvider }
 
 // Grant A: a short window — it will lapse partway through this script.
 // Grant B: a long window — it stays live throughout.
@@ -198,7 +198,7 @@ currentBlock += 11n
 //        must not even reach TACo — Arkiv's own head already answers it.
 const secondOpenA = await openSend(shortLink.key, shortLink.fragment, undefined, {
   ...openDeps,
-  createTacoKeyReleaseProvider: createUnreachableTacoProvider,
+  selectReleasingProvider: createUnreachableTacoProvider,
 })
 assert.equal(secondOpenA.status, "expired", "grant A's untouched link must read as expired once its deadline passes")
 console.log("PASS  grant A's original link cannot obtain new key material after its deadline, without ever calling TACo")
@@ -224,7 +224,7 @@ console.log("PASS  key material obtained before the deadline remains usable afte
 // --- 6. a live grant whose Arkiv record simply never existed never reaches TACo
 const missingResult = await openSend(shortLink.key.replace(/.$/, "0"), shortLink.fragment, undefined, {
   ...openDeps,
-  createTacoKeyReleaseProvider: createUnreachableTacoProvider,
+  selectReleasingProvider: createUnreachableTacoProvider,
 })
 assert.equal(missingResult.status, "expired")
 console.log("PASS  an unknown v3 entity key reads as expired without ever constructing a TACo provider")
@@ -245,7 +245,7 @@ const grantC = await createThresholdSend(asset, { recipientLabel: "Doctor C", tt
 const linkC = { key: new URL(grantC.url).pathname.split("/").pop(), fragment: fragmentOf(grantC.url) }
 const deniedResult = await openSend(linkC.key, linkC.fragment, undefined, {
   ...openDeps,
-  createTacoKeyReleaseProvider: denyingProvider,
+  selectReleasingProvider: denyingProvider,
 })
 assert.equal(deniedResult.status, "unavailable", "a TACo-side failure must never be reported as expiry")
 console.log("PASS  a TACo release failure maps to retryable unavailability, never expiry")
