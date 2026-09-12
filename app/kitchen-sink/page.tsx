@@ -18,6 +18,7 @@ import {
   UserCircle,
   XCircle,
 } from "@phosphor-icons/react"
+import { useState } from "react"
 import {
   Action,
   Card,
@@ -32,6 +33,8 @@ import {
   TabBar,
   type ChipState,
 } from "@/components/ui"
+import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
+import type { LiveShareView } from "@/components/remove-document-sheet-logic"
 
 const CHIP_STATES: ChipState[] = [
   "not-opened",
@@ -187,7 +190,88 @@ export default function KitchenSink() {
           ]}
         />
       </Section>
+
+      <Section title="Remove document sheet" id="i90sl">
+        <RemoveDocumentSheetDemo />
+      </Section>
     </main>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Remove document sheet — pen id `i90sl`. Three example states, each opened
+// by its own button: the sheet component itself takes no data of its own,
+// so this is also its only way to review a real render against the frame
+// short of wiring the archive list row (H-66) it will eventually sit behind.
+// ---------------------------------------------------------------------------
+
+const REMOVE_SHEET_NOW = Math.floor(new Date("2026-09-21T00:00:00.000Z").getTime() / 1000)
+
+function relativeDate(daysFromNow: number): number {
+  return REMOVE_SHEET_NOW + daysFromNow * 86400
+}
+
+const TWO_LIVE_SHARES: LiveShareView[] = [
+  {
+    entityKey: "0xdemo-share-a",
+    documentIds: ["record:document:2026-09-01", "record:document:2026-08-20"],
+    createdAt: relativeDate(-18),
+    expiresAt: relativeDate(74),
+    openedAt: null,
+  },
+  {
+    entityKey: "0xdemo-share-b",
+    documentIds: ["record:document:2026-09-01"],
+    createdAt: relativeDate(-1),
+    expiresAt: relativeDate(6),
+    openedAt: relativeDate(-6),
+  },
+]
+
+type RemoveSheetScenario = "two-shares" | "no-shares" | "unknown-index"
+
+const REMOVE_SHEET_SCENARIOS: { key: RemoveSheetScenario; label: string; shares: LiveShareView[]; indexUnknown: boolean }[] = [
+  { key: "two-shares", label: "Two live shares, one opened", shares: TWO_LIVE_SHARES, indexUnknown: false },
+  { key: "no-shares", label: "No live share includes it", shares: [], indexUnknown: false },
+  { key: "unknown-index", label: "Share index predates this build", shares: [], indexUnknown: true },
+]
+
+function RemoveDocumentSheetDemo() {
+  const [open, setOpen] = useState<RemoveSheetScenario | null>(null)
+  const [endOthers, setEndOthers] = useState(true)
+  const scenario = REMOVE_SHEET_SCENARIOS.find((candidate) => candidate.key === open)
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-3">
+        {REMOVE_SHEET_SCENARIOS.map((candidate) => (
+          <Action
+            key={candidate.key}
+            variant="secondary"
+            onClick={() => {
+              setEndOthers(true)
+              setOpen(candidate.key)
+            }}
+          >
+            {candidate.label}
+          </Action>
+        ))}
+      </div>
+      {scenario && (
+        <RemoveDocumentSheet
+          document={{ name: "Blood test, March 2026.pdf", size: 412 * 1024, addedLabel: "3 September" }}
+          shares={scenario.shares}
+          indexUnknown={scenario.indexUnknown}
+          endOthers={endOthers}
+          onToggleEndOthers={setEndOthers}
+          removing={false}
+          error={null}
+          now={REMOVE_SHEET_NOW}
+          onCancel={() => setOpen(null)}
+          onConfirm={() => setOpen(null)}
+        />
+      )}
+    </>
   )
 }

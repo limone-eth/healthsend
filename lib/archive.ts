@@ -98,10 +98,28 @@ export type DocumentRecord = {
 
 export type ArchiveRecord = BloodPanelRecord | WearableSeriesRecord | DocumentRecord
 
+/**
+ * H-18: one row per share ever created from this archive, appended by
+ * `addShareIndexEntry` after that share's grant and key hand-off both
+ * succeed (`createSendFromArchive`, `lib/sends.ts`). This is the only record
+ * of "which shares hold this document" — a share's own bundle is sealed
+ * under its own share key, so the sender cannot look inside one to find out.
+ * It lives under the archive key, never in an Arkiv attribute and never in
+ * anything a recipient can read.
+ */
+export type ShareIndexEntry = {
+  entityKey: string
+  documentIds: string[]
+  createdAt: number
+  expiresAt: number
+}
+
 export type Archive = {
   v: 1
   kind: "healthsend-archive"
   records: ArchiveRecord[]
+  /** Absent on an archive sealed before this story. `openArchive` accepts that; see its validation. */
+  shareIndex?: ShareIndexEntry[]
 }
 
 export type BloodPanelSelection = {
@@ -186,7 +204,86 @@ export async function openArchive(
   }
   if (!Array.isArray(parsed.records)) throw new Error("Invalid archive records")
   validateArchiveRecords(parsed.records as ArchiveRecord[])
+  if (parsed.shareIndex !== undefined) validateShareIndex(parsed.shareIndex as ShareIndexEntry[])
   return parsed as Archive
+}
+
+/**
+ * Open, drop one document record, and reseal. Only a `document` record can
+ * be removed this way — the sheet this backs is scoped to PDFs.
+ *
+ * The share index is left exactly as it was: it is a record of what was
+ * shared, not of what the archive currently holds, and a share already made
+ * keeps its copy of the document regardless of what happens here — see
+ * `docs/stories/H-18.md`, "Don't claim the bytes are erased."
+ */
+export async function removeDocument(
+  encryptedArchive: Uint8Array,
+  senderKey: Uint8Array,
+  documentId: string,
+): Promise<Uint8Array> {
+  const archive = await openArchive(encryptedArchive, senderKey)
+  const record = archive.records.find((candidate) => candidate.id === documentId)
+  if (!record) throw new Error(`Unknown record: ${documentId}`)
+  if (record.kind !== "document") throw new Error(`Not a document: ${documentId}`)
+  const records = archive.records.filter((candidate) => candidate.id !== documentId)
+  return encryptArchive({ ...archive, records }, senderKey)
+}
+
+/**
+ * Append one share's record to the sealed archive. Called once a share's
+ * grant and key hand-off have both succeeded — a share that failed partway
+ * never gets an entry, so the index never claims a share exists that a
+ * recipient cannot actually open.
+ */
+export async function addShareIndexEntry(
+  encryptedArchive: Uint8Array,
+  senderKey: Uint8Array,
+  entry: ShareIndexEntry,
+): Promise<Uint8Array> {
+  const archive = await openArchive(encryptedArchive, senderKey)
+  if ((archive.shareIndex ?? []).some((existing) => existing.entityKey === entry.entityKey)) {
+    throw new Error(`Share index already has an entry for ${entry.entityKey}`)
+  }
+  const shareIndex = [...(archive.shareIndex ?? []), entry]
+  validateShareIndex(shareIndex)
+  return encryptArchive({ ...archive, shareIndex }, senderKey)
+}
+
+/**
+ * Pure: which recorded shares still include this document, given the
+ * caller's own idea of which entity keys are live. `lib/archive.ts` has no
+ * network access and cannot decide liveness itself — a "live" entity key is
+ * one `listMySends` still returns and the sender has not ended themselves
+ * (see `app/(sender)/shares/local-history.ts`'s `endedByYou`), and only the
+ * caller holds both of those.
+ */
+export function sharesIncludingDocument(
+  shareIndex: ShareIndexEntry[] | undefined,
+  liveEntityKeys: ReadonlySet<string>,
+  documentId: string,
+): ShareIndexEntry[] {
+  return (shareIndex ?? []).filter(
+    (entry) => liveEntityKeys.has(entry.entityKey) && entry.documentIds.includes(documentId),
+  )
+}
+
+function validateShareIndex(entries: ShareIndexEntry[]): void {
+  if (!Array.isArray(entries)) throw new Error("Invalid share index")
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    if (!isObject(entry)) throw new Error("Invalid share index entry")
+    assertOnlyKeys(entry, ["entityKey", "documentIds", "createdAt", "expiresAt"], "share index entry")
+    assertText(entry.entityKey, "share index entity key")
+    if (seen.has(entry.entityKey)) throw new Error(`Duplicate share index entry: ${entry.entityKey}`)
+    seen.add(entry.entityKey)
+    if (!Array.isArray(entry.documentIds) || entry.documentIds.length === 0) {
+      throw new Error(`Share index entry has no document ids: ${entry.entityKey}`)
+    }
+    for (const documentId of entry.documentIds) assertText(documentId, "share index document id")
+    assertFiniteNumber(entry.createdAt, "share index created time")
+    assertFiniteNumber(entry.expiresAt, "share index expiry")
+  }
 }
 
 /**

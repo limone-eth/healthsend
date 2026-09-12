@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowDown, Eye, FileText } from "@phosphor-icons/react"
+import { ArrowDown, Eye, FileText, Trash } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { loadMyArchive } from "@/lib/archive-store"
-import type { ArchiveRecord, DocumentRecord } from "@/lib/archive"
+import type { ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
+import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
+import { performRemoveDocument, type LiveShareView } from "@/components/remove-document-sheet-logic"
+import { loadLiveSharesForDocument } from "./live-shares-for-document"
 
 /**
  * 2.1 "Your archive" — pen ids `M2g5J2` (desktop) / `W1yi5` (mobile), read via
@@ -48,7 +51,7 @@ function eyebrowLabel(count: number): string {
 
 type ArchiveLoadState =
   | { status: "loading" }
-  | { status: "ready"; records: ArchiveRecord[] }
+  | { status: "ready"; records: ArchiveRecord[]; shareIndex: ShareIndexEntry[] | undefined }
   | { status: "error"; message: string }
 
 const ARCHIVE_LOAD_TIMEOUT_MS = 15_000
@@ -56,14 +59,29 @@ const ARCHIVE_LOAD_TIMEOUT_MS = 15_000
 export default function ArchivePage() {
   const { info, identity } = useSenderIdentity()
   if (!(info.identity && identity.address)) return null
-  return <ArchiveScreen />
+  return <ArchiveScreen senderAddress={identity.address} />
 }
 
-function ArchiveScreen() {
-  const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
+/** State for the remove-document sheet (`i90sl`) — see docs/stories/H-18.md. */
+type RemoveSheetState =
+  | { status: "closed" }
+  | { status: "checking-shares"; document: DocumentRecord }
+  | {
+      status: "open"
+      document: DocumentRecord
+      shares: LiveShareView[]
+      indexUnknown: boolean
+      endOthers: boolean
+      removing: boolean
+      error: string | null
+    }
 
-  useEffect(() => {
-    let cancelled = false
+function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
+  const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
+  const [removeSheet, setRemoveSheet] = useState<RemoveSheetState>({ status: "closed" })
+  const [removeSheetNow, setRemoveSheetNow] = useState(() => Math.floor(Date.now() / 1000))
+
+  const refreshArchive = () => {
     let timeout: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(
@@ -72,27 +90,71 @@ function ArchiveScreen() {
       )
     })
 
-    void Promise.race([loadMyArchive(), deadline])
+    return Promise.race([loadMyArchive(), deadline])
       .then((loaded) => {
-        if (!cancelled) setArchive({ status: "ready", records: loaded.records })
+        setArchive({ status: "ready", records: loaded.records, shareIndex: loaded.shareIndex })
       })
       .catch((cause) => {
-        if (!cancelled) setArchive({ status: "error", message: (cause as Error).message })
+        setArchive({ status: "error", message: (cause as Error).message })
       })
       .finally(() => {
         if (timeout) clearTimeout(timeout)
       })
+  }
 
-    return () => {
-      cancelled = true
-      if (timeout) clearTimeout(timeout)
-    }
+  useEffect(() => {
+    void refreshArchive()
   }, [])
 
   const documents =
     archive.status === "ready"
       ? archive.records.filter((record): record is DocumentRecord => record.kind === "document")
       : []
+
+  async function openRemoveSheet(document: DocumentRecord) {
+    setRemoveSheetNow(Math.floor(Date.now() / 1000))
+    setRemoveSheet({ status: "checking-shares", document })
+    const shareIndex = archive.status === "ready" ? archive.shareIndex : undefined
+    try {
+      const { shares, indexUnknown } = await loadLiveSharesForDocument(document.id, shareIndex, senderAddress)
+      setRemoveSheet({
+        status: "open",
+        document,
+        shares,
+        indexUnknown,
+        endOthers: true,
+        removing: false,
+        error: null,
+      })
+    } catch (cause) {
+      setRemoveSheet({
+        status: "open",
+        document,
+        shares: [],
+        indexUnknown: true,
+        endOthers: false,
+        removing: false,
+        error: (cause as Error).message,
+      })
+    }
+  }
+
+  function closeRemoveSheet() {
+    setRemoveSheet({ status: "closed" })
+  }
+
+  async function confirmRemove() {
+    if (removeSheet.status !== "open") return
+    const { document, shares, endOthers } = removeSheet
+    setRemoveSheet({ ...removeSheet, removing: true, error: null })
+    const outcome = await performRemoveDocument(document.id, endOthers ? shares : [], senderAddress)
+    if (outcome.outcome === "refused") {
+      setRemoveSheet({ ...removeSheet, removing: false, error: outcome.message })
+      return
+    }
+    closeRemoveSheet()
+    void refreshArchive()
+  }
 
   return (
     <div className="flex w-full flex-col gap-7 md:gap-[30px]">
@@ -115,11 +177,43 @@ function ArchiveScreen() {
             <div className="h-px w-full bg-hairline" />
           </div>
 
-          <BloodTestListMobile documents={documents} />
-          <BloodTestListDesktop documents={documents} />
+          <BloodTestListMobile documents={documents} onRemove={openRemoveSheet} />
+          <BloodTestListDesktop documents={documents} onRemove={openRemoveSheet} />
 
           <SharedAsIssuedNote />
         </>
+      )}
+
+      {removeSheet.status === "checking-shares" && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 md:items-center md:p-5">
+          <div
+            role="status"
+            className="w-full rounded-sheet bg-surface p-6 text-center text-[15px] text-secondary shadow-card md:max-w-[560px] md:rounded-card"
+          >
+            Checking open shares…
+          </div>
+        </div>
+      )}
+
+      {removeSheet.status === "open" && (
+        <RemoveDocumentSheet
+          document={{
+            name: removeSheet.document.name,
+            size: removeSheet.document.size,
+            addedLabel: formatFullDate(removeSheet.document.provenance.importedAt.slice(0, 10)),
+          }}
+          shares={removeSheet.shares}
+          indexUnknown={removeSheet.indexUnknown}
+          endOthers={removeSheet.endOthers}
+          onToggleEndOthers={(value) =>
+            setRemoveSheet((current) => (current.status === "open" ? { ...current, endOthers: value } : current))
+          }
+          removing={removeSheet.removing}
+          error={removeSheet.error}
+          now={removeSheetNow}
+          onCancel={closeRemoveSheet}
+          onConfirm={confirmRemove}
+        />
       )}
     </div>
   )
@@ -203,11 +297,17 @@ function EmptyArchive() {
 // the header instead. Read via the pencil MCP tool against `healthsend.pen`.
 // ---------------------------------------------------------------------------
 
-function BloodTestListDesktop({ documents }: { documents: DocumentRecord[] }) {
+function BloodTestListDesktop({
+  documents,
+  onRemove,
+}: {
+  documents: DocumentRecord[]
+  onRemove: (document: DocumentRecord) => void
+}) {
   return (
     <div className="hidden w-full flex-col overflow-hidden rounded-card border border-black/[0.05] bg-surface md:flex">
       {documents.map((document) => (
-        <DocumentRow key={document.id} document={document} />
+        <DocumentRow key={document.id} document={document} onRemove={() => onRemove(document)} />
       ))}
       <Link href="/add" className="flex items-center gap-2 px-5 py-4">
         <ArrowDown size={15} weight="regular" className="text-navy" />
@@ -217,7 +317,7 @@ function BloodTestListDesktop({ documents }: { documents: DocumentRecord[] }) {
   )
 }
 
-function DocumentRow({ document }: { document: DocumentRecord }) {
+function DocumentRow({ document, onRemove }: { document: DocumentRecord; onRemove: () => void }) {
   const added = formatFullDate(document.provenance.importedAt.slice(0, 10))
   return (
     <div className="flex items-center gap-3.5 border-b border-hairline px-5 py-4">
@@ -230,21 +330,35 @@ function DocumentRow({ document }: { document: DocumentRecord }) {
           PDF · {formatBytes(document.size)} · added {added}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${document.name} from your archive`}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-glyph text-muted hover:bg-grouped hover:text-error"
+      >
+        <Trash size={17} weight="light" />
+      </button>
     </div>
   )
 }
 
-function BloodTestListMobile({ documents }: { documents: DocumentRecord[] }) {
+function BloodTestListMobile({
+  documents,
+  onRemove,
+}: {
+  documents: DocumentRecord[]
+  onRemove: (document: DocumentRecord) => void
+}) {
   return (
     <div className="flex flex-col gap-[9px] md:hidden">
       {documents.map((document) => (
-        <DocumentRowMobile key={document.id} document={document} />
+        <DocumentRowMobile key={document.id} document={document} onRemove={() => onRemove(document)} />
       ))}
     </div>
   )
 }
 
-function DocumentRowMobile({ document }: { document: DocumentRecord }) {
+function DocumentRowMobile({ document, onRemove }: { document: DocumentRecord; onRemove: () => void }) {
   const added = formatShortDate(document.provenance.importedAt.slice(0, 10))
   return (
     <div className="flex h-[62px] w-full items-center gap-[11px] rounded-control border border-black/[0.05] bg-surface px-3.5">
@@ -257,6 +371,14 @@ function DocumentRowMobile({ document }: { document: DocumentRecord }) {
           {formatBytes(document.size)} · added {added}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${document.name} from your archive`}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-glyph text-muted"
+      >
+        <Trash size={16} weight="light" />
+      </button>
     </div>
   )
 }
