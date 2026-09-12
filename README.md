@@ -60,6 +60,44 @@ nice-to-have index.
 What it does *not* do is destroy anything, and that difference matters enough to
 have [its own section](#what-expiry-does-and-does-not-do).
 
+## Who this is for, and how it reaches its first 100 users
+
+Two concrete situations, not a persona sheet:
+
+- **A bounded engagement.** Someone starting a twelve-week block with a nutritionist or
+  coach shares sleep, training and lab data for exactly the twelve weeks, and the window
+  matches the plan instead of a revocation nobody remembers to do.
+- **A one-off consult.** Someone getting a second opinion sends a lab panel to a
+  specialist they don't have an ongoing relationship with, for a short window, and there
+  is nothing left over afterward. A de-identified version of this send — so the specialist
+  sees the panel without the name on it — is designed but **not built**; today's send
+  shares the document as uploaded.
+
+**The distribution path.** The link needs no app and no account to open, so it travels
+over whatever channel the two people already use to talk — WhatsApp, email, a patient
+portal message. That is the entire install step, and it is exactly what the demo link at
+the top of this README exercises: open it, no sign-in offered, nothing left behind when it
+expires. There is no separate app to distribute.
+
+The first 100 users are expected to come from the recipient side, not from outbound
+marketing. Sending needs only a Swarm ID passkey — no wallet, no seed phrase (see
+[Running it](#running-it)) — so a nutritionist or specialist who receives one send from one
+client is one passkey sign-in away from becoming a sender to their own client list. A
+practitioner who typically holds 15-30 concurrent clients is worth more, as a channel,
+than any single acquisition tactic available to a weekend hackathon project. The plan is
+therefore to onboard a handful of independent coaches and specialists directly and let
+each practitioner's own roster be the multiplier — a mechanism that can be checked against
+the running app today, rather than a projection that has to be taken on faith.
+
+**What this is not, yet.** This is a hackathon build on a testnet. Sending still needs a
+Swarm storage drive and a funded Arkiv key, both handled today by hackathon-specific paths
+— gift codes at the Swarm desk, a faucet claim, and the `/api/fund` route described in
+[Why there is a server at all](#why-there-is-a-server-at-all) — none of which is a
+production onboarding flow. Turning "the first 100 users" from a hackathon plan into a
+claim about real people needs the funding story already flagged in
+[Where this is going](#where-this-is-going), and the de-identification step named above
+shipped rather than designed.
+
 ## How it works
 
 ```
