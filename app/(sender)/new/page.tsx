@@ -18,10 +18,10 @@ import {
   LockKey,
   PaperPlaneTilt,
   UploadSimple,
-  UserCircle,
   type Icon as PhosphorIcon,
 } from "@phosphor-icons/react"
 import { createSend, createSendFromArchive, type CreateSendResult } from "@/lib/sends"
+import { endMoment } from "@/components/countdown-copy"
 import { generateCode } from "@/lib/crypto"
 import { classifyBundle } from "@/lib/envelope"
 import type { FileKind } from "@/lib/arkiv"
@@ -309,6 +309,9 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
         fileKind: fromArchive ? "pdf" : classifyBundle(selectedFiles),
         ttlSeconds,
         code,
+        documents: fromArchive
+          ? selectedArchiveDocuments.map((document) => ({ name: document.name, size: document.size }))
+          : selectedFiles.map((file) => ({ name: file.name, size: file.size })),
       })
       setFiles([])
       setSelected(new Set())
@@ -341,6 +344,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
       <LinkReady
         result={result}
         summary={sentSummary}
+        now={Math.floor(previewNow / 1000)}
         onDone={() => router.push("/shares")}
         onMakeAnother={() => {
           setResult(null)
@@ -1034,13 +1038,12 @@ function ToggleRow({
 
 // ---------------------------------------------------------------------------
 // 2.5 Link ready — pen ids `LKFS1` (desktop) / `uQP20` (mobile), read via the
-// pencil MCP tool. The WeTransfer moment: the link, and four rows on what is
-// in it, who can open it, when it ends, and what the recipient learns about
-// the sender. Retires the interim panel this replaced (`ShareResult`, which
-// carried the stale claim that "the other half is the Arkiv grant" — the
-// grant has held no key material since the split-key rewrite; the holder
-// holds the other half under a TTL, and the grant only decides when the
-// holder stops serving it).
+// pencil MCP tool. The WeTransfer moment: the link, and rows on what is in
+// it, who can open it, and when it ends. Retires the interim panel this
+// replaced (`ShareResult`, which carried the stale claim that "the other
+// half is the Arkiv grant" — the grant has held no key material since the
+// split-key rewrite; the holder holds the other half under a TTL, and the
+// grant only decides when the holder stops serving it).
 //
 // Two frame values assume a feature this build does not have — a four-digit
 // device-lock code (H-7's non-goal here) — and are adapted rather than
@@ -1049,21 +1052,16 @@ function ToggleRow({
 //   - the sub-headline drops the code clause entirely;
 //   - "Who can open it" reads "Anyone with the link" (the one real mode from
 //     `AccessModeRow`, not "the first phone, with your code").
-// "What they see about you" also departs from the frame's "No name, no date
-// of birth" — that line describes a parsed archive record with a date-of-
-// birth field this app does not have (H-13/H-36 are not built). What is true
-// today, and is what the recipient page actually shows, is that no sender
-// attribution reaches the page at all (`app/s/[key]/page.tsx`'s "Shared with
-// you" names no one) — so the value says that instead. See `## Choices`.
 //
-// The row *labels* are the one place the two frames disagree with each
-// other, not just with this app: desktop's `A4L3dx` read "What she sees
-// about you", mobile's `eonlR` read "She sees about you" — a gendered
-// recipient the frame assumes elsewhere too. H-47 re-worded both nodes to
-// "they/their" in the canvas, matching the de-gendered chip vocabulary, so
-// the labels below now copy the frames verbatim again rather than departing
-// from them.
+// H-71 drops the frame's fourth row, "what they see about you" (desktop
+// `A4L3dx`, mobile `eonlR`) — the operator did not want it, and what it said
+// was already a departure from the frame (see the story), not a fact this
+// build could state precisely. "What's in it" becomes a disclosure instead
+// of a plain row: closed by default, it opens to the picked documents by
+// name — never sent past the sender's own screen.
 // ---------------------------------------------------------------------------
+
+type SentSummaryDocument = { name: string; size: number }
 
 type SentSummary = {
   /** Plaintext, as the sender typed it — never the blinded attribute a grant carries. */
@@ -1073,6 +1071,12 @@ type SentSummary = {
   ttlSeconds: number
   /** H-7: shown once, here, so the sender can relay it separately from the link. Never stored. */
   code?: string
+  /**
+   * Names and sizes only, for the "What's in it" disclosure — never part of
+   * `CreateSendResult`, the grant, or the URL. Stays on the sender's own
+   * screen and is discarded with the rest of `sentSummary` on the next send.
+   */
+  documents: SentSummaryDocument[]
 }
 
 const LINK_READY_FILE_KIND_LABEL: Record<FileKind, string> = {
@@ -1081,8 +1085,6 @@ const LINK_READY_FILE_KIND_LABEL: Record<FileKind, string> = {
   text: "Text",
   mixed: "Mixed",
 }
-
-const dateFormatShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" })
 
 function whatsInIt(summary: SentSummary): string {
   const noun = summary.fileCount === 1 ? "document" : "documents"
@@ -1110,32 +1112,38 @@ function greeting(recipientLabel: string): string {
     : "Send it however you normally talk to them."
 }
 
-/** Host + path only — never the fragment, which carries half the key. */
-function truncateLink(url: string): string {
-  let visible: string
+/**
+ * Host + path only — never the fragment, which carries half the key. The
+ * full value goes in the DOM; `LinkRow`'s `truncate` class clips it to
+ * whatever the row's own width allows at the viewport in front of it,
+ * rather than this function guessing a character count that leaves most of
+ * a wide row empty and cuts a narrow one off mid-word anyway.
+ */
+function displayLink(url: string): string {
   try {
     const parsed = new URL(url)
-    visible = `${parsed.host}${parsed.pathname}`
+    return `${parsed.host}${parsed.pathname}`
   } catch {
-    visible = url.split("#")[0]
+    return url.split("#")[0]
   }
-  return visible.length > 26 ? `${visible.slice(0, 26)}…` : `${visible}…`
 }
 
 function LinkReady({
   result,
   summary,
+  now,
   onDone,
   onMakeAnother,
 }: {
   result: CreateSendResult
   summary: SentSummary
+  now: number
   onDone: () => void
   onMakeAnother: () => void
 }) {
   const [copied, setCopied] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
-  const expiresDate = new Date(result.expiresAt * 1000)
+  const [inItExpanded, setInItExpanded] = useState(false)
 
   const copyLink = () => {
     navigator.clipboard.writeText(result.url)
@@ -1151,8 +1159,12 @@ function LinkReady({
   }
 
   const inItValue = whatsInIt(summary)
-  const linkDisplay = truncateLink(result.url)
+  const linkDisplay = displayLink(result.url)
   const durationValue = durationLabel(summary.ttlSeconds)
+  // "today at 00:26" / "tomorrow at 09:15" / "Thursday at 18:00" / "4 December
+  // 2026" — as precise as the share is long, the same wording the
+  // recipient's own Countdown uses (components/countdown-copy.ts).
+  const endsMoment = endMoment(result.expiresAt, now)
   // Real, not the frame's uncoded default (see the file-level comment): a
   // coded share genuinely needs both, and this row is the wrong place to
   // understate that.
@@ -1173,12 +1185,12 @@ function LinkReady({
       </h1>
 
       <p className="text-[15px] leading-[1.5] text-secondary md:hidden">
-        {greeting(summary.recipientLabel)} On {dateFormatShort.format(expiresDate)} it stops
-        working, whether or not you remember.
+        {greeting(summary.recipientLabel)} On {endsMoment} it stops working, whether or not you
+        remember.
       </p>
       <p className="hidden text-[17px] leading-[1.5] text-secondary md:block">
-        {greeting(summary.recipientLabel)} They need no account and no app, and on{" "}
-        {dateFormat.format(expiresDate)} it stops working, whether or not you remember.
+        {greeting(summary.recipientLabel)} They need no account and no app, and on {endsMoment} it
+        stops working, whether or not you remember.
       </p>
 
       <LinkRow display={linkDisplay} copied={copied} onCopy={copyLink} />
@@ -1186,7 +1198,12 @@ function LinkReady({
       {summary.code && <CodeRow code={summary.code} copied={codeCopied} onCopy={copyCode} />}
 
       <div className="w-full overflow-hidden rounded-inset border border-black/[0.05] bg-surface shadow-card md:rounded-card">
-        <SummaryRow icon={FirstAidKit} label="What's in it" value={inItValue} />
+        <WhatsInItRow
+          value={inItValue}
+          expanded={inItExpanded}
+          onToggle={() => setInItExpanded((v) => !v)}
+          documents={summary.documents}
+        />
         <SummaryRow
           icon={Fingerprint}
           label="Who can open it"
@@ -1196,15 +1213,7 @@ function LinkReady({
         <SummaryRow
           icon={CalendarBlank}
           label="When it ends"
-          value={`${dateFormatShort.format(expiresDate)} · ${durationValue}`}
-          desktopValue={`${dateFormat.format(expiresDate)} · ${durationValue}`}
-        />
-        <SummaryRow
-          icon={UserCircle}
-          label="They see about you"
-          desktopLabel="What they see about you"
-          value="Nothing — not your name"
-          desktopValue="Nothing — not your name, not your address"
+          value={`${endsMoment} · ${durationValue}`}
           last
         />
       </div>
@@ -1329,6 +1338,64 @@ function SummaryRow({
         </span>
       </div>
       {!last && <div className="h-px w-full bg-hairline" />}
+    </div>
+  )
+}
+
+/**
+ * "What's in it" as a disclosure rather than a plain row (H-71): closed by
+ * default, opening to every document the send actually carries, by name.
+ * The row style below mirrors the archive list's own document row
+ * (`app/(sender)/page.tsx`'s `DocumentRow`) rather than inventing a new one —
+ * same glyph box, same "name" / "PDF · size" pairing.
+ */
+function WhatsInItRow({
+  value,
+  expanded,
+  onToggle,
+  documents,
+}: {
+  value: string
+  expanded: boolean
+  onToggle: () => void
+  documents: SentSummaryDocument[]
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex h-[50px] w-full items-center gap-2.5 px-3.5 text-left md:h-[58px] md:gap-3 md:px-5"
+      >
+        <FirstAidKit size={16} weight="light" className="shrink-0 text-secondary md:hidden" />
+        <FirstAidKit size={18} weight="light" className="hidden shrink-0 text-secondary md:block" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] text-secondary md:text-[14px]">What&apos;s in it</span>
+        <span className="min-w-0 flex-1 truncate text-right text-[13px] font-semibold text-ink md:text-[14px]">
+          {value}
+        </span>
+        <CaretDown
+          size={14}
+          weight="light"
+          className={`shrink-0 text-muted transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <div className="flex flex-col gap-2.5 border-t border-hairline bg-canvas px-3.5 py-3 md:px-5">
+          {documents.map((document, index) => (
+            <div key={`${document.name}:${index}`} className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-glyph bg-haze">
+                <FileText size={15} weight="light" className="text-navy" />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-[13.5px] font-semibold text-ink">{document.name}</span>
+                <span className="truncate text-[12px] text-muted">PDF · {formatBytes(document.size)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="h-px w-full bg-hairline" />
     </div>
   )
 }
