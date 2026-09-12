@@ -28,6 +28,8 @@ import type { FileKind } from "@/lib/arkiv"
 import type { DocumentRecord } from "@/lib/archive"
 import { loadMyArchive } from "@/lib/archive-store"
 import { Action, Card, Field, ScreenHeader, inputClass } from "@/components/ui"
+import { SendProgressBar, SendingLabel } from "@/components/send-progress"
+import { NO_STEP, nextStepIndex } from "@/components/send-progress-steps"
 import { DemoNotice } from "@/components/demo-notice"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { isExpiryValid, resolveCustomSeconds, resolveTtlSeconds } from "./expiry"
@@ -181,6 +183,12 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
 
   const [mobileStep, setMobileStep] = useState<1 | 2>(1)
   const [stage, setStage] = useState<string | null>(null)
+  // The technical stage stays for logic; the sender sees plain steps (components/send-progress-steps.ts).
+  const [stepIndex, setStepIndex] = useState(NO_STEP)
+  const reportProgress = (next: string) => {
+    setStage(next)
+    setStepIndex((current) => nextStepIndex(current, next))
+  }
   const [result, setResult] = useState<CreateSendResult | null>(null)
   // Captured from the compose form at the moment of submit, before it resets —
   // `result` (a `Grant`-derived value from `lib/sends.ts`, off-limits to this
@@ -293,14 +301,14 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             recipientLabel: recipient || "unnamed",
             ttlSeconds,
             code,
-            onProgress: setStage,
+            onProgress: reportProgress,
           })
         : await createSend({
             files: selectedFiles,
             recipientLabel: recipient || "unnamed",
             ttlSeconds,
             code,
-            onProgress: setStage,
+            onProgress: reportProgress,
           })
       setResult(send)
       setSentSummary({
@@ -320,6 +328,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
       setError((caught as Error).message)
     } finally {
       setStage(null)
+      setStepIndex(NO_STEP)
     }
   }
 
@@ -425,9 +434,12 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
                   Continue
                 </Action>
               ) : (
-                <Action fullWidth disabled={!canCreate} onClick={submit}>
-                  {stage ?? "Create the link"}
-                </Action>
+                <div className="flex flex-col gap-2.5">
+                  <Action fullWidth disabled={!canCreate} onClick={submit}>
+                    {stage ? <SendingLabel stepIndex={stepIndex} /> : "Create the link"}
+                  </Action>
+                  {stage && <SendProgressBar stepIndex={stepIndex} />}
+                </div>
               )}
             </div>
           </div>
@@ -477,9 +489,12 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
             codeEnabled={codeEnabled}
             onCodeEnabled={setCodeEnabled}
           />
-          <Action fullWidth icon={PaperPlaneTilt} disabled={!canCreate} onClick={submit}>
-            {stage ?? "Create the link"}
-          </Action>
+          <div className="flex flex-col gap-2.5">
+            <Action fullWidth icon={stage ? undefined : PaperPlaneTilt} disabled={!canCreate} onClick={submit}>
+              {stage ? <SendingLabel stepIndex={stepIndex} /> : "Create the link"}
+            </Action>
+            {stage && <SendProgressBar stepIndex={stepIndex} />}
+          </div>
         </div>
       </div>
 
