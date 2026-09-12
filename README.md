@@ -5,7 +5,10 @@
 A first scaffold, focused on the two integrations that carry the idea: **Swarm**
 for storage and identity, **Arkiv** for grants that expire on their own.
 
-Built at ETHRome 2026.
+**Live: [healthsend.vercel.app](https://healthsend.vercel.app)** · Built at ETHRome 2026.
+
+Sending needs a Swarm ID with a postage batch. *Receiving needs nothing at all* —
+open a share link in a private window and you are the recipient.
 
 ---
 
@@ -190,11 +193,43 @@ lib/sends.ts      create a send / open a send, end to end
 app/page.tsx      sender: sign in, upload, share, watch it expire
 app/s/[key]/      recipient: no account, renders in place, no download button
 app/api/fund/     gas top-ups for user-derived keys — the only server code
+                  (see "Why there is a server at all")
 arkiv/schema.md   entity model, the attribute-privacy rule, trade-offs
 friction.md       what broke and what we suggest
 scripts/          doctor (preflight), verify:crypto, verify:expiry
 e2e/              Playwright recipient tests, run in a clean browser context
 ```
+
+## Why there is a server at all
+
+The app has exactly one server route, `/api/fund`, and it exists for a single
+reason worth stating plainly.
+
+Writing a grant to Arkiv is a chain transaction, so it costs gas. Each user's
+grant key is **derived from their own Swarm ID** (`deriveAppSecret`), which is
+what makes grants genuinely `ownedBy` the sender — and what makes the dashboard's
+ownership filter mean something rather than being decoration. But a freshly
+derived key holds no GLM, and the Arkiv faucet is an interactive wallet claim
+with no HTTP API, so nothing can top it up automatically.
+
+That leaves three options, and the trade is the interesting part:
+
+| Approach | Cost |
+|---|---|
+| User brings a funded key | Defeats the premise — we promised no wallet, no seed phrase. |
+| One shared app wallet signs every grant | Every grant is `ownedBy` **us**. "Users own their data" becomes false, and the ownership query is theatre. |
+| **Server funds the user's own key** | One server route, and gas is centralised. What we chose. |
+
+So `/api/fund` buys back user-owned keys at the price of a faucet we run. It
+moves gas and nothing else: it never sees a document, a content key, a link
+secret, or a filename. Our infrastructure still cannot read anything a user
+sends, which is the property the whole design exists to protect.
+
+It is hackathon scaffolding and is marked as such in the code. In production this
+becomes a fiat on-ramp to the user's own key and the route stops existing. Note
+also that deployed publicly it is an **open faucet** — anyone can POST an address
+and receive testnet gas. It keeps a reserve so it cannot be fully drained
+mid-demo, but it is not rate limited and we do not pretend otherwise.
 
 ## Provenance — what was built when
 

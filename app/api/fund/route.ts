@@ -17,10 +17,24 @@ import { createPublicClient, createWalletClient, http, isAddress, parseEther, ty
 import { tiramisu } from "@arkiv-network/sdk/chains"
 import { privateKeyToAccount } from "viem/accounts"
 
-/** Enough for a good number of grant writes, small enough to be harmless. */
-const TOP_UP = parseEther("0.05")
+/** Enough for several grant writes, small enough that draining us is slow. */
+const TOP_UP = parseEther("0.01")
 /** Below this, top up. Above it, the key is fine and we do nothing. */
-const FLOOR = parseEther("0.01")
+const FLOOR = parseEther("0.004")
+/**
+ * Stop dispensing while keeping something back.
+ *
+ * Deployed publicly this endpoint is an open faucet: anyone can POST an address
+ * and be given gas. The tokens are worthless testnet GLM, so the real risk is
+ * not theft but a drained funder halfway through a demo. A reserve bounds that
+ * — we stop giving before we have nothing left, and the failure is a clear
+ * message rather than a mystery revert on the next send.
+ *
+ * A production version funds the user's key from their own on-ramp instead, at
+ * which point this endpoint stops existing. It is hackathon scaffolding and is
+ * marked as such rather than dressed up as rate limiting it does not do.
+ */
+const RESERVE = parseEther("0.005")
 
 export async function POST(request: Request) {
   const funderKey = process.env.ARKIV_FUNDER_PRIVATE_KEY as Hex | undefined
@@ -47,6 +61,19 @@ export async function POST(request: Request) {
   const balance = await publicClient.getBalance({ address: address as Hex })
   if (balance >= FLOOR) {
     return NextResponse.json({ topUp: false, balance: balance.toString() })
+  }
+
+  const funderAddress = privateKeyToAccount(funderKey).address
+  const funderBalance = await publicClient.getBalance({ address: funderAddress })
+  if (funderBalance <= RESERVE + TOP_UP) {
+    return NextResponse.json(
+      {
+        error:
+          "The funding account is empty. Top it up at https://hub.arkiv.network/faucet " +
+          `for ${funderAddress}.`,
+      },
+      { status: 503 },
+    )
   }
 
   const funder = createWalletClient({
