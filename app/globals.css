@@ -214,38 +214,94 @@
 }
 
 /*
-  HealthSend is light-only by design (see DESIGN.md "North star": dark is a
-  property of the Ended surface's Focus Card, not a system theme). This block
-  only restores the exact overrides the pre-existing dark block already had,
-  so the two shipped screens keep rendering the way they did before this
-  story — `surface` included, since un-classed text inherits `foreground`
-  and goes unreadable on a white card the moment `foreground` flips light.
-  Every other HealthSend-named token (ink, haze, sage, chalk, ...) stays
-  single-valued: DESIGN.md defines no dark variant for them, and the new
-  primitive kit is not a themed surface.
+  H-27: every token above gets a dark value here, or a comment saying why it
+  deliberately has none. Two structural rules, because breaking them is what
+  produced the bug this story fixes:
+
+  1. Only the base DESIGN.md tokens are redefined below (`canvas`, `ink`,
+     `hairline`, ...). The four legacy aliases (`background`, `foreground`,
+     `line`, `accent`) are declared exactly once, in `:root` above, as
+     `var()` references onto those base tokens — a custom property resolves
+     its referenced variable at used-value time, not at declaration time, so
+     once `canvas`/`ink`/`hairline` carry a dark value the aliases inherit it
+     for free. Redeclaring them here too would be the same value living in
+     two places, which is exactly how `ink` and `surface` drifted out of
+     sync before this story.
+  2. A token that pairs with another as a fixed foreground/background —
+     `navy` text on a `haze` fill, `ink` text on a `surface` card — gets a
+     dark value only if its *partner* also gets one, and the two are chosen
+     together so the pairing stays legible inverted. `bg-ink` + `text-surface`
+     (the named collision at the old `components/ui.tsx:44`) resolves this
+     way: `ink` flips to near-white and `surface` flips to near-black, so the
+     primary button becomes a light fill with dark text — inverted, but never
+     near-black-on-near-black.
 */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-background: #12110f;
-    --color-foreground: #ece9e3;
-    --color-line: #2a2724;
-    --color-accent: #ece9e3;
+    /* Neutral ramp. `canvas`/`ink`/`hairline` match the pre-H-1 hardcoded
+       dark values exactly, so `app/page.tsx` and `app/s/[key]/page.tsx` —
+       which only ever consume the legacy aliases — render pixel-identical
+       to before. */
+    --color-canvas: #12110f;
+    --color-grouped: #0e0d0b;
+    --color-hairline: #2a2724;
+    --color-disabled: #181510;
     --color-surface: #1a1816;
-  }
-}
+    --color-ink: #ece9e3;
+    --color-secondary: #a39e94;
+    --color-muted: #8a8478;
 
-/*
-  `--color-surface` is now shared by the legacy alias above and by every new
-  primitive (Card, Field, List Row, ...), which paints fixed `ink`-on-`surface`
-  text with no dark variant of its own. Flipping `surface` dark for the two
-  shipped screens therefore makes that fixed-ink text unreadable wherever the
-  kit is put on display for review. `/kitchen-sink` is exactly that display
-  case, not a shipped screen, so it opts back out of the flip entirely.
-*/
-.kitchen-sink-scope {
-  --color-background: var(--color-canvas);
-  --color-foreground: var(--color-ink);
-  --color-surface: #FFFFFF;
+    /* `--color-silver` is deliberately NOT overridden. Its only current
+       consumers are `text-silver` in the Focus Card (`components/ui.tsx`)
+       and the identical gradient panel in `app/landing/page.tsx`'s Claim
+       section — both read it as a fixed light colour over the one gradient
+       that never themes (see the gradient/glass block below). DESIGN.md's
+       stated flippable role for it, unticked checkbox borders, has no built
+       consumer yet; when one exists, give `silver` a dark value alongside
+       it rather than breaking the gradient reads above. */
+
+    /* Cool — `navy` is read both as text directly on `surface` (the
+       Countdown's state word) and as text on `haze` (chips, informational
+       actions), so it has to stay legible against both once they invert. */
+    --color-navy: #9db4d9;
+    --color-haze: #202b3d;
+
+    /* `--color-haze-strong` is deliberately NOT overridden, for the same
+       reason as `silver`: `app/landing/page.tsx`'s Claim eyebrow and the
+       Focus Card's eyebrow both read it as fixed light text on the
+       permanent gradient. Its only other consumer, the informational
+       Action's `active:bg-haze-strong` press state, keeps its light-mode
+       fill in dark mode too — a cosmetic mismatch on a transient, pressed-
+       only state, not a static legibility failure, and the trade this
+       story accepts to keep the gradient text working everywhere it is
+       used outside this story's edit scope. */
+
+    /* Warm — `umber` is read on `chalk` (chip fills) and directly on
+       `surface` (the Countdown's "closing" word), same dual role as navy. */
+    --color-chalk: #2a2118;
+    --color-umber: #d8c9b8;
+    --color-sand: #4a3d30;
+
+    /* Confirmed and destructive. `error` sits directly on `surface`
+       (destructive Action, the "ended by you" chip), so it needs enough
+       lift over near-black to clear a comfortable contrast floor — the
+       light value alone does not. */
+    --color-sage: #2c3a2f;
+    --color-moss: #a8c2ac;
+    --color-error: #e2604b;
+
+    /* `--color-grad-focus-from`, `--color-grad-focus-to`,
+       `--color-panel-on-dark` and `--color-hairline-on-dark` are
+       deliberately NOT overridden. DESIGN.md's "No photography" section is
+       explicit that this gradient is the one surface that is *always*
+       dark, regardless of theme — it has no light form to invert from, so
+       there is nothing for a dark block to redefine. */
+
+    /* `glass-raised` sits over ordinary, themed content (the mobile tab
+       bar), unlike the gradient above, so it tracks the theme: the same
+       `surface` dark value, at the glass tier's usual opacity. */
+    --color-glass-raised: #1a1816cc;
+  }
 }
 
 body {
