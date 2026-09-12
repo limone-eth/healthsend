@@ -51,11 +51,12 @@ export function SignInScreen() {
           />
 
           <p className="text-[13px] leading-[1.45] text-secondary md:hidden">
-            On a new phone? The same face opens the same archive — nothing to copy across.
+            On a new phone? The same face reopens your live shares. What&apos;s already ended
+            stays on this device.
           </p>
           <p className="hidden text-[13.5px] leading-[1.45] text-secondary md:block">
-            Signing in on a new device? The same face or fingerprint opens the same archive —
-            nothing to copy across.
+            Signing in on a new device? The same face or fingerprint reopens your live shares —
+            nothing to copy across. What&apos;s already ended stays on this device.
           </p>
 
           <div className="h-px w-full bg-hairline" />
