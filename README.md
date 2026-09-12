@@ -297,6 +297,14 @@ that the weekend produced everything that runs.
 
 ## Where this is going
 
+**Onboarding.** First run still costs a trip through Swarm ID's own windows, and
+two of the three context switches we started with were our own bugs (now fixed).
+What remains is not fixable from a dApp — the proxy iframe delegates no WebAuthn
+permission, and no API exists to mint an account. The design we would build is a
+self-hosted identity layer on a same-site subdomain, which removes the boundary
+without letting the app touch the seed. Written up in full, including why "just
+use Privy" does not work, in [`docs/identity-and-onboarding.md`](./docs/identity-and-onboarding.md).
+
 The brief this scaffold came from ([`healthsend-brief.md`](./healthsend-brief.md))
 covers the rest: a personal encrypted archive split into buckets with
 de-identification at import, claim-on-first-open links that bind to a device, and
