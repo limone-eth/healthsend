@@ -63,14 +63,14 @@ export function endAllCheckboxLabel(count: number): string {
 /**
  * F6 (docs/stories/H-74.md): shown after `performRemoveDocument` returns
  * `removed-partial` — the PDF is out of the archive, but not every share that
- * held it could be ended. The operator's own wording for the one-share case,
- * generalised for more than one.
+ * held it could be ended. The panel's title already says "Removed from your
+ * archive", so the body starts at what is still open.
  */
 export function partialRemoveHeadline(failedCount: number): string {
   const noun = failedCount === 1 ? "share" : "shares"
   const verb = failedCount === 1 ? "is" : "are"
   const pronoun = failedCount === 1 ? "it" : "them"
-  return `Removed from your archive. ${failedCount} ${noun} could not be ended and ${verb} still open — end ${pronoun} from Your shares.`
+  return `${failedCount} ${noun} could not be ended and ${verb} still open. End ${pronoun} from Your shares.`
 }
 
 const openedDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" })

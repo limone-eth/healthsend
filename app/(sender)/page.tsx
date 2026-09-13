@@ -111,6 +111,8 @@ type AddState = { status: "idle" } | { status: "adding"; count: number } | { sta
 function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
   const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
   const [liveEntityKeys, setLiveEntityKeys] = useState<LiveEntityKeysState>({ status: "loading" })
+  // Bumped after a removal, so pills on other rows drop the shares it ended.
+  const [liveEntityKeysRevision, setLiveEntityKeysRevision] = useState(0)
   const [removeSheet, setRemoveSheet] = useState<RemoveSheetState>({ status: "closed" })
   const [removeSheetNow, setRemoveSheetNow] = useState(() => Math.floor(Date.now() / 1000))
   const pdfInput = useRef<HTMLInputElement>(null)
@@ -202,7 +204,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
     return () => {
       cancelled = true
     }
-  }, [senderAddress])
+  }, [senderAddress, liveEntityKeysRevision])
 
   const documents =
     archive.status === "ready"
@@ -263,6 +265,7 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
     // The PDF is out of the archive either way — reflect that in the list
     // immediately, whether or not every share it was in also ended.
     applyArchive(outcome.archive)
+    if (endOthers && shares.length > 0) setLiveEntityKeysRevision((revision) => revision + 1)
     if (outcome.outcome === "removed-partial") {
       // F6: a partial failure must not close as if everything ended. Swap to
       // a distinct panel naming which shares are still open, rather than

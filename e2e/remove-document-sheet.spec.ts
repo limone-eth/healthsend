@@ -275,7 +275,7 @@ test.describe("desktop, 1440px", () => {
     await expect(partialDialog).toBeVisible()
     await expect(
       partialDialog.getByText(
-        "Removed from your archive. 1 share could not be ended and is still open — end it from Your shares.",
+        "1 share could not be ended and is still open. End it from Your shares.",
       ),
     ).toBeVisible()
     await expect(partialDialog.getByText("Share of this PDF")).toBeVisible()
