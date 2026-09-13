@@ -432,7 +432,7 @@ function ComposeSend({ canUpload }: { canUpload: boolean }) {
               {mobileStep === 1 ? (
                 <Action
                   fullWidth
-                  disabled={selectedFiles.length === 0}
+                  disabled={selectedFiles.length === 0 && selectedArchiveDocuments.length === 0}
                   onClick={() => setMobileStep(2)}
                 >
                   Continue

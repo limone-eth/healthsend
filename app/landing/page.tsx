@@ -20,7 +20,6 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   FirstAidKit,
-  Sparkle,
   ShieldCheck,
   UserCircle,
 } from "@phosphor-icons/react"
@@ -128,12 +127,12 @@ function Hero() {
           {"Lend your health data.\nDon't give it away."}
         </h1>
         <p className="w-full text-[16px] leading-[1.5] text-secondary md:hidden">
-          Send a coach, a clinician or your assistant exactly what they need — for exactly as long
-          as you are working together. Then it ends on its own.
+          Send a coach or a clinician exactly what they need — for exactly as long as you are
+          working together. Then it ends on its own.
         </p>
         <p className="hidden w-[720px] max-w-full text-center text-[19px] leading-[1.5] text-secondary md:block">
-          Send a coach, a clinician or your assistant exactly what they need — for exactly as long
-          as you are working together. Then it ends on its own, without you remembering.
+          Send a coach or a clinician exactly what they need — for exactly as long as you are
+          working together. Then it ends on its own, without you remembering.
         </p>
         <div className="flex w-full flex-col gap-3 pt-2.5 md:w-auto md:flex-row md:items-center">
           <Action variant="primary" fullWidth className="md:w-auto" onClick={() => router.push("/")}>
@@ -165,13 +164,6 @@ const PROBLEM_CARDS = [
     desktopBody:
       "Keeps a PDF of your bloods in her inbox long after the twelve weeks are over. Not out of malice — nobody built her a way to give it back.",
     mobileBody: "Keeps a PDF of your bloods long after the twelve weeks are over.",
-  },
-  {
-    icon: Sparkle,
-    title: "An assistant you use daily",
-    desktopBody:
-      "Gets nothing, or gets your history pasted into a chat window where it stays for good. Most people choose nothing.",
-    mobileBody: "Gets nothing, or gets everything pasted into a chat that keeps it.",
   },
 ]
 
