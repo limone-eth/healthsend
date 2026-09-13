@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { test, expect, type BrowserContext, type Route } from "@playwright/test"
-import { mockGrantList } from "./helpers/sender-sign-in"
+import { mockGrantEntity, mockGrantList, MOCK_CURRENT_BLOCK } from "./helpers/sender-sign-in"
+import { addShareIndexEntry, createArchive, type DocumentRecord } from "@/lib/archive"
 
 /**
  * H-18 — "Remove this from your archive" (frame `i90sl`), the sheet
@@ -136,6 +137,42 @@ function removeButton(page: import("@playwright/test").Page, name: string) {
   return page.getByRole("button", { name: `Remove ${name} from your archive` }).filter({ visible: true })
 }
 
+/**
+ * Seeds the archive backend directly with one document and `count` live,
+ * indexed shares that all hold it — the same document-plus-share-index shape
+ * `createSendFromArchive` would build over `count` real sends, without
+ * driving each one through the browser. Used by F6 and F7 (docs/stories/H-74.md),
+ * which both need a document already sitting in one or more live shares.
+ */
+async function seedArchiveWithLiveShares(
+  backend: ArchiveBackend,
+  document: DocumentRecord,
+  count: number,
+): Promise<ReturnType<typeof mockGrantEntity>[]> {
+  const archiveKey = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode("healthsend/archive/v1")),
+  )
+  let encrypted = await createArchive(archiveKey, [document])
+  const entities: ReturnType<typeof mockGrantEntity>[] = []
+  const now = Math.floor(Date.now() / 1000)
+  for (let i = 0; i < count; i++) {
+    const entityKeyHex = ("0x" + (i + 1).toString(16).padStart(64, "0")) as string
+    encrypted = await addShareIndexEntry(encrypted, archiveKey, {
+      entityKey: entityKeyHex,
+      documentIds: [document.id],
+      createdAt: now,
+      expiresAt: now + 3600,
+    })
+    entities.push(
+      mockGrantEntity({ entityKeyHex, expiresBlock: MOCK_CURRENT_BLOCK + 500, recipientBlind: `recipient-${i}` }),
+    )
+  }
+  const reference = createHash("sha256").update(encrypted).digest("hex")
+  backend.blobs.set(reference, Buffer.from(encrypted))
+  backend.feedReference = reference
+  return entities
+}
+
 test.describe("desktop, 1440px", () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
@@ -195,6 +232,61 @@ test.describe("desktop, 1440px", () => {
     await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
     await expect(page.getByText("Blood test.pdf")).toHaveCount(0)
   })
+
+  /**
+   * F6 (review-6, docs/stories/H-74.md): `app/(sender)/page.tsx`'s `confirmRemove`
+   * (`app/(sender)/page.tsx:230` before the fix) handled only the `refused`
+   * outcome from `performRemoveDocument`, so a `removed-partial` result — the
+   * PDF removed, but a share's `endSend` call failing — closed the dialog as
+   * if the share had ended too, and said nothing. Forces that exact outcome
+   * with a real click by seeding one live, indexed share and making the
+   * holder's revoke endpoint refuse.
+   */
+  test("a share that fails to end is reported, not silently closed", async ({ page, context }) => {
+    const backend: ArchiveBackend = { blobs: new Map() }
+    await fulfillArchiveBackend(context, backend)
+
+    const document: DocumentRecord = {
+      id: "doc-partial",
+      kind: "document",
+      name: "Blood test.pdf",
+      size: fakePdf("partial").length,
+      provenance: { sourceId: "test-source", importedAt: new Date().toISOString() },
+      bytes: Buffer.from(fakePdf("partial")).toString("base64url"),
+    }
+    const entities = await seedArchiveWithLiveShares(backend, document, 1)
+    await mockGrantList(context, entities)
+    await context.route("**/api/holder/revoke", (route) =>
+      route.fulfill({ status: 500, json: { error: "revoke refused" } }),
+    )
+
+    await page.goto("/")
+    await removeButton(page, "Blood test.pdf").click()
+    const dialog = page.getByRole("dialog", { name: "Remove this from your archive" })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText("It is in one share that is still open")).toBeVisible()
+
+    await page.getByRole("button", { name: "Remove it" }).click()
+
+    // Never closed as if everything ended: a dialog is still on screen, but a
+    // distinct one naming the failure — not the sheet's own "Removing…" stuck
+    // forever, and not nothing.
+    const partialDialog = page.getByRole("dialog", { name: "Removed from your archive" })
+    await expect(partialDialog).toBeVisible()
+    await expect(
+      partialDialog.getByText(
+        "Removed from your archive. 1 share could not be ended and is still open — end it from Your shares.",
+      ),
+    ).toBeVisible()
+    await expect(partialDialog.getByText("Share of this PDF")).toBeVisible()
+    await expect(partialDialog.getByRole("link", { name: "Go to Your shares" })).toHaveAttribute("href", "/shares")
+
+    // The PDF itself is out of the archive either way — reflected immediately.
+    await expect(page.getByText("No blood test PDFs yet")).toBeVisible()
+
+    await partialDialog.getByRole("button", { name: "Done" }).click()
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+  })
 })
 
 test.describe("mobile, 400px", () => {
@@ -216,6 +308,66 @@ test.describe("mobile, 400px", () => {
     expect(Math.round(box.x)).toBe(0)
     // Bottom-anchored: the sheet's own bottom edge sits at the viewport's bottom edge.
     expect(Math.round(box.y + box.height)).toBe(800)
+
+    expect(await overflowPx(page)).toBeLessThanOrEqual(0)
+  })
+
+  /**
+   * F7 (review-6, docs/stories/H-74.md): the sheet had no height limit and no
+   * inner scroll, so a document in many live shares pushed the title, the PDF
+   * identity and the Remove/Keep actions off-screen with nothing to bring
+   * them back — review-6's own evidence: `top=-653 ... overflowY=visible
+   * scrollHeight=1453 clientHeight=1453 afterWheelTop=-653`. Seeds the
+   * archive directly with 12 share-index entries (rather than driving 12 real
+   * sends through the browser) and 12 matching live grants, then proves a
+   * real wheel action actually scrolls the share list while the title, PDF
+   * identity and both actions stay reachable.
+   */
+  test("a document in 12 live shares keeps its title, identity and actions reachable", async ({ page, context }) => {
+    const backend: ArchiveBackend = { blobs: new Map() }
+    await fulfillArchiveBackend(context, backend)
+
+    const document: DocumentRecord = {
+      id: "doc-12-shares",
+      kind: "document",
+      name: "Blood test.pdf",
+      size: fakePdf("many shares").length,
+      provenance: { sourceId: "test-source", importedAt: new Date().toISOString() },
+      bytes: Buffer.from(fakePdf("many shares")).toString("base64url"),
+    }
+
+    const entities = await seedArchiveWithLiveShares(backend, document, 12)
+    await mockGrantList(context, entities)
+    await page.goto("/")
+
+    await removeButton(page, "Blood test.pdf").click()
+    const dialog = page.getByRole("dialog", { name: "Remove this from your archive" })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText("It is in 12 shares that are still open")).toBeVisible()
+
+    const box = await dialog.boundingBox()
+    if (!box) throw new Error("expected the sheet to have a layout box")
+    // Capped at the viewport (with a little slack for the safe-area calc), not
+    // left to grow to the content's full 1,453px, as it did before the fix.
+    expect(box.height).toBeLessThanOrEqual(800)
+
+    const scrollArea = dialog.locator("div.overflow-y-auto")
+    const before = await scrollArea.evaluate((el) => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }))
+    expect(before.scrollHeight).toBeGreaterThan(before.clientHeight)
+    expect(before.scrollTop).toBe(0)
+
+    await scrollArea.hover()
+    await page.mouse.wheel(0, 600)
+    await expect(async () => {
+      const scrollTop = await scrollArea.evaluate((el) => el.scrollTop)
+      expect(scrollTop).toBeGreaterThan(0)
+    }).toPass()
+
+    // Reachable — title, PDF identity and both actions, even after scrolling.
+    await expect(page.getByRole("heading", { name: "Remove this from your archive" })).toBeInViewport()
+    await expect(dialog.getByText("Blood test.pdf", { exact: true })).toBeInViewport()
+    await expect(page.getByRole("button", { name: "Remove it" })).toBeInViewport()
+    await expect(page.getByRole("button", { name: "Keep it" })).toBeInViewport()
 
     expect(await overflowPx(page)).toBeLessThanOrEqual(0)
   })

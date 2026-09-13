@@ -67,3 +67,20 @@ for (const width of [400, 1440]) {
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth)
   })
 }
+
+// F9 (review-6, docs/stories/H-74.md): H-68 hid the Assistant destination and
+// removed its dedicated section, but the hero line (`app/landing/page.tsx:131`,
+// `:135`) and the third problem card (`:171`) still promised it. Fails on
+// current `main`, which renders "your assistant" and "An assistant you use
+// daily" at both widths named in the finding's own evidence line.
+for (const width of [400, 1440]) {
+  test(`makes no Assistant promise at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto("/landing")
+
+    const body = await page.locator("body").innerText()
+    expect(body).not.toContain("your assistant")
+    expect(body).not.toContain("An assistant you use daily")
+    expect(body.toLowerCase()).not.toContain("assistant")
+  })
+}

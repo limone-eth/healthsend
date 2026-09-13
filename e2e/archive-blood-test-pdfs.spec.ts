@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto"
 import { test, expect, type BrowserContext, type Route } from "@playwright/test"
+import { mockGrantEntity, mockGrantList, MOCK_CURRENT_BLOCK } from "./helpers/sender-sign-in"
+import { addShareIndexEntry, createArchive, type DocumentRecord } from "@/lib/archive"
 
 /**
  * H-66 — "Your archive" becomes the list of blood test PDFs, frames `M2g5J2` (desktop)
@@ -287,3 +289,73 @@ test.describe("mobile, 400px", () => {
     expect(await overflowPx(page)).toBeLessThanOrEqual(0)
   })
 })
+
+/**
+ * F8 (review-6, docs/stories/H-74.md): `app/(sender)/page.tsx:398` (`DocumentRow`/
+ * `DocumentRowMobile` before the fix) received only the document and a remove
+ * callback, so a document already in a live, indexed share never showed the
+ * "In N shares" pill review-6's evidence expected at both 1440 and 400 —
+ * `In 1 share pill count=0 at 1440 and 400`. Seeds the archive directly with
+ * one shared document and one unshared one, so the pill's selectivity is
+ * provable too: only the shared PDF gets it, never the other one.
+ */
+for (const width of [1440, 400]) {
+  test(`a document in one live, indexed share shows an "In 1 share" pill at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const backend: ArchiveBackend = { blobs: new Map() }
+    await fulfillArchiveBackend(page.context(), backend)
+
+    const shared: DocumentRecord = {
+      id: "doc-shared",
+      kind: "document",
+      name: "Full blood count.pdf",
+      size: fakePdf("shared").length,
+      provenance: { sourceId: "test-source", importedAt: new Date().toISOString() },
+      bytes: Buffer.from(fakePdf("shared")).toString("base64url"),
+    }
+    const unshared: DocumentRecord = {
+      id: "doc-unshared",
+      kind: "document",
+      name: "Lipid panel.pdf",
+      size: fakePdf("unshared").length,
+      provenance: { sourceId: "test-source", importedAt: new Date().toISOString() },
+      bytes: Buffer.from(fakePdf("unshared")).toString("base64url"),
+    }
+
+    const archiveKey = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode("healthsend/archive/v1")),
+    )
+    const entityKeyHex = ("0x" + "1".repeat(64)) as string
+    const now = Math.floor(Date.now() / 1000)
+    let encrypted = await createArchive(archiveKey, [shared, unshared])
+    encrypted = await addShareIndexEntry(encrypted, archiveKey, {
+      entityKey: entityKeyHex,
+      documentIds: [shared.id],
+      createdAt: now,
+      expiresAt: now + 3600,
+    })
+    const reference = createHash("sha256").update(encrypted).digest("hex")
+    backend.blobs.set(reference, Buffer.from(encrypted))
+    backend.feedReference = reference
+
+    await mockGrantList(page.context(), [
+      mockGrantEntity({ entityKeyHex, expiresBlock: MOCK_CURRENT_BLOCK + 500, recipientBlind: "recipient-0" }),
+    ])
+
+    await page.goto("/")
+    await expect(visibleText(page, "Full blood count.pdf")).toBeVisible()
+    await expect(visibleText(page, "Lipid panel.pdf")).toBeVisible()
+
+    await expect(page.getByText("In 1 share", { exact: true }).filter({ visible: true })).toBeVisible()
+    // Selectivity: the unshared PDF's row gets no pill at all. Both the mobile and desktop
+    // copies of the row render at once (one hidden by CSS) — `visible: true` narrows to the
+    // one the current viewport actually shows.
+    await expect(page.getByText(/^In \d+ share/).filter({ visible: true })).toHaveCount(1)
+
+    // The remove sheet resolves the same PDF to the same one live share —
+    // the pill and the sheet read the same underlying data.
+    await page.getByRole("button", { name: "Remove Full blood count.pdf from your archive" }).filter({ visible: true }).click()
+    await expect(page.getByRole("dialog", { name: "Remove this from your archive" })).toBeVisible()
+    await expect(page.getByText("It is in one share that is still open")).toBeVisible()
+  })
+}

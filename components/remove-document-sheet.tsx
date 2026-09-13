@@ -73,24 +73,27 @@ export function RemoveDocumentSheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby="remove-document-title"
-        className="w-full rounded-sheet bg-surface shadow-card md:max-w-[560px] md:rounded-card"
+        className="flex max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full flex-col overflow-hidden rounded-sheet bg-surface shadow-card md:max-h-[85dvh] md:max-w-[560px] md:rounded-card"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex h-[26px] w-full items-center justify-center md:hidden">
+        <div className="flex h-[26px] w-full shrink-0 items-center justify-center md:hidden">
           <div className="h-1 w-[38px] rounded-full bg-silver" />
         </div>
 
         {/* i90sl keeps its 26px grabber row at every width; the grabber itself is phone-only,
-            so desktop takes that row back as padding rather than crowding the title against the edge. */}
-        <div className="flex w-full flex-col gap-[18px] px-[26px] pb-[26px] pt-1.5 md:pt-8">
+            so desktop takes that row back as padding rather than crowding the title against the edge.
+            The title and PDF identity stay pinned above the scroll region, and the actions stay
+            pinned below it — only the shares card (unbounded by a live share count) scrolls, per
+            F7 (docs/stories/H-74.md): a tall list must not push the actions off-screen. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-[18px] px-[26px] pb-[26px] pt-1.5 md:pt-8">
           <h2
             id="remove-document-title"
-            className="text-[26px] font-bold leading-[1.2] tracking-[-0.6px] text-ink"
+            className="shrink-0 text-[26px] font-bold leading-[1.2] tracking-[-0.6px] text-ink"
           >
             Remove this from your archive
           </h2>
 
-          <div className="flex h-16 w-full items-center gap-3 rounded-inset bg-grouped px-4">
+          <div className="flex h-16 w-full shrink-0 items-center gap-3 rounded-inset bg-grouped px-4">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-glyph bg-silver">
               <FilePdf size={17} weight="light" className="text-secondary" />
             </div>
@@ -102,78 +105,80 @@ export function RemoveDocumentSheet({
             </div>
           </div>
 
-          {showSharesCard && (
-            <div className="flex w-full flex-col gap-3 rounded-inset bg-chalk p-[18px]">
-              <div className="flex items-center gap-[9px]">
-                <PaperPlaneTilt size={17} weight="light" className="text-umber" />
-                <span className="text-[15px] font-semibold tracking-[-0.1px] text-umber">
-                  {shares.length > 0 ? sharesHeadline(shares.length) : UNKNOWN_SHARES_HEADLINE}
-                </span>
-              </div>
-              {/* Known shares and untracked ones are independent: a sender can have
-                  both, so the tracked list and checkbox never hide behind the note. */}
-              {shares.length > 0 && (
-                <p className="text-[13px] leading-[1.5] text-umber">
-                  Removing it here keeps it out of any new share. Each share below sealed its own copy when you
-                  made it, so that copy stays openable until the share ends — unless you end them now. Ending a
-                  share ends everything in it, not only this PDF.
-                </p>
-              )}
-              {indexUnknown && <p className="text-[13px] leading-[1.5] text-umber">{UNKNOWN_SHARES_NOTE}</p>}
-
-              {shares.length > 0 &&
-                shares.map((share) => (
-                  <div
-                    key={share.entityKey}
-                    className="flex min-h-12 w-full items-center gap-2.5 rounded-control bg-surface px-[13px] py-2.5"
-                  >
-                    <LinkSimple size={15} weight="light" className="shrink-0 text-secondary" />
-                    {/* Side by side at the 560px width `i90sl` draws; stacked below that —
-                        a real phone's usable width is well under 560 even full-bleed, and
-                        the single-line layout truncated "Share of 2 documents" mid-word
-                        once the ends-date shared the line with it. See `## Choices`. */}
-                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-2.5 gap-y-0.5">
-                      <span className="truncate text-[14px] font-medium text-ink">
-                        {shareLabel(share.documentIds)}
-                      </span>
-                      <span className="shrink-0 text-[12.5px] text-muted">
-                        {endsLabel(share.expiresAt, now)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-
-              {shares.length > 0 && (
-                <label className="flex items-center gap-[11px] pt-1">
-                  <input
-                    type="checkbox"
-                    checked={endOthers}
-                    onChange={(event) => onToggleEndOthers(event.target.checked)}
-                    disabled={removing}
-                    className="h-[22px] w-[22px] shrink-0 rounded-[7px] accent-ink"
-                  />
-                  <span className="text-[14px] font-medium leading-[1.4] text-ink">
-                    {endAllCheckboxLabel(shares.length)}
+          <div className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto">
+            {showSharesCard && (
+              <div className="flex w-full flex-col gap-3 rounded-inset bg-chalk p-[18px]">
+                <div className="flex items-center gap-[9px]">
+                  <PaperPlaneTilt size={17} weight="light" className="text-umber" />
+                  <span className="text-[15px] font-semibold tracking-[-0.1px] text-umber">
+                    {shares.length > 0 ? sharesHeadline(shares.length) : UNKNOWN_SHARES_HEADLINE}
                   </span>
-                </label>
-              )}
-            </div>
-          )}
+                </div>
+                {/* Known shares and untracked ones are independent: a sender can have
+                    both, so the tracked list and checkbox never hide behind the note. */}
+                {shares.length > 0 && (
+                  <p className="text-[13px] leading-[1.5] text-umber">
+                    Removing it here keeps it out of any new share. Each share below sealed its own copy when you
+                    made it, so that copy stays openable until the share ends — unless you end them now. Ending a
+                    share ends everything in it, not only this PDF.
+                  </p>
+                )}
+                {indexUnknown && <p className="text-[13px] leading-[1.5] text-umber">{UNKNOWN_SHARES_NOTE}</p>}
 
-          {note && (
-            <div className="flex w-full items-start gap-[11px] rounded-inset bg-grouped p-4">
-              <ShieldCheck size={17} weight="light" className="mt-0.5 shrink-0 text-secondary" />
-              <p className="text-[13px] leading-[1.5] text-secondary">{note}</p>
-            </div>
-          )}
+                {shares.length > 0 &&
+                  shares.map((share) => (
+                    <div
+                      key={share.entityKey}
+                      className="flex min-h-12 w-full items-center gap-2.5 rounded-control bg-surface px-[13px] py-2.5"
+                    >
+                      <LinkSimple size={15} weight="light" className="shrink-0 text-secondary" />
+                      {/* Side by side at the 560px width `i90sl` draws; stacked below that —
+                          a real phone's usable width is well under 560 even full-bleed, and
+                          the single-line layout truncated "Share of 2 documents" mid-word
+                          once the ends-date shared the line with it. See `## Choices`. */}
+                      <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-2.5 gap-y-0.5">
+                        <span className="truncate text-[14px] font-medium text-ink">
+                          {shareLabel(share.documentIds)}
+                        </span>
+                        <span className="shrink-0 text-[12.5px] text-muted">
+                          {endsLabel(share.expiresAt, now)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
 
-          {error && (
-            <p role="alert" className="text-[13px] text-error">
-              {error}
-            </p>
-          )}
+                {shares.length > 0 && (
+                  <label className="flex items-center gap-[11px] pt-1">
+                    <input
+                      type="checkbox"
+                      checked={endOthers}
+                      onChange={(event) => onToggleEndOthers(event.target.checked)}
+                      disabled={removing}
+                      className="h-[22px] w-[22px] shrink-0 rounded-[7px] accent-ink"
+                    />
+                    <span className="text-[14px] font-medium leading-[1.4] text-ink">
+                      {endAllCheckboxLabel(shares.length)}
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
 
-          <div className="flex w-full gap-2.5">
+            {note && (
+              <div className="flex w-full items-start gap-[11px] rounded-inset bg-grouped p-4">
+                <ShieldCheck size={17} weight="light" className="mt-0.5 shrink-0 text-secondary" />
+                <p className="text-[13px] leading-[1.5] text-secondary">{note}</p>
+              </div>
+            )}
+
+            {error && (
+              <p role="alert" className="text-[13px] text-error">
+                {error}
+              </p>
+            )}
+          </div>
+
+          <div className="flex w-full shrink-0 gap-2.5">
             <button
               type="button"
               onClick={onConfirm}
@@ -193,7 +198,7 @@ export function RemoveDocumentSheet({
             </button>
           </div>
 
-          <p className="text-center text-[12.5px] leading-[1.45] text-muted">
+          <p className="shrink-0 text-center text-[12.5px] leading-[1.45] text-muted">
             There is no undo. Earlier encrypted copies stay in storage, sealed with a key only your
             passkey can make.
           </p>

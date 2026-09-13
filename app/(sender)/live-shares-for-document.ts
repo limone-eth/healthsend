@@ -18,16 +18,52 @@ import { fetchAccessLog } from "./shares/access-log-client"
 
 export type LiveSharesForDocument = { shares: LiveShareView[]; indexUnknown: boolean }
 
+/**
+ * The sender's live (not ended, not naturally lapsed) share entity keys —
+ * one `listMySends` call, reused by every caller in this file. F8
+ * (docs/stories/H-74.md) needs this once for the whole archive list rather
+ * than once per row; the remove sheet needs it once per open.
+ */
+export async function loadLiveEntityKeys(senderAddress: string): Promise<Set<string>> {
+  const grants = await listMySends()
+  const known = reconcileKnownShares(senderAddress, grants)
+  return new Set(
+    known.filter((entry) => !entry.endedByYou && entry.naturallyGoneAt === null).map((entry) => entry.entityKey),
+  )
+}
+
+/**
+ * Some live shares have no share-index entry — see the file-level comment on
+ * `indexUnknown` below. Pure and synchronous so the archive list can call it
+ * once per page render rather than once per row.
+ */
+export function isShareIndexUnknown(
+  shareIndex: ShareIndexEntry[] | undefined,
+  liveEntityKeys: ReadonlySet<string>,
+): boolean {
+  const indexed = new Set((shareIndex ?? []).map((entry) => entry.entityKey))
+  return [...liveEntityKeys].some((entityKey) => !indexed.has(entityKey))
+}
+
+/**
+ * How many live, indexed shares hold this document — the archive row pill
+ * (F8). Pure: no access-log fetch, so the whole list can be computed from one
+ * `loadLiveEntityKeys` call instead of a fetch per row.
+ */
+export function countLiveSharesForDocument(
+  shareIndex: ShareIndexEntry[] | undefined,
+  liveEntityKeys: ReadonlySet<string>,
+  documentId: string,
+): number {
+  return sharesIncludingDocument(shareIndex, liveEntityKeys, documentId).length
+}
+
 export async function loadLiveSharesForDocument(
   documentId: string,
   shareIndex: ShareIndexEntry[] | undefined,
   senderAddress: string,
 ): Promise<LiveSharesForDocument> {
-  const grants = await listMySends()
-  const known = reconcileKnownShares(senderAddress, grants)
-  const liveEntityKeys = new Set(
-    known.filter((entry) => !entry.endedByYou && entry.naturallyGoneAt === null).map((entry) => entry.entityKey),
-  )
+  const liveEntityKeys = await loadLiveEntityKeys(senderAddress)
 
   const matches = sharesIncludingDocument(shareIndex, liveEntityKeys, documentId)
 
@@ -55,8 +91,5 @@ export async function loadLiveSharesForDocument(
    * a file-picker share costs one extra sentence; under-flagging would be a
    * false "nobody has this".
    */
-  const indexed = new Set((shareIndex ?? []).map((entry) => entry.entityKey))
-  const indexUnknown = [...liveEntityKeys].some((entityKey) => !indexed.has(entityKey))
-
-  return { shares, indexUnknown }
+  return { shares, indexUnknown: isShareIndexUnknown(shareIndex, liveEntityKeys) }
 }

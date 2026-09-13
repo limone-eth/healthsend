@@ -60,6 +60,19 @@ export function endAllCheckboxLabel(count: number): string {
   return `End all ${count} shares now, so nobody can open it again`
 }
 
+/**
+ * F6 (docs/stories/H-74.md): shown after `performRemoveDocument` returns
+ * `removed-partial` — the PDF is out of the archive, but not every share that
+ * held it could be ended. The operator's own wording for the one-share case,
+ * generalised for more than one.
+ */
+export function partialRemoveHeadline(failedCount: number): string {
+  const noun = failedCount === 1 ? "share" : "shares"
+  const verb = failedCount === 1 ? "is" : "are"
+  const pronoun = failedCount === 1 ? "it" : "them"
+  return `Removed from your archive. ${failedCount} ${noun} could not be ended and ${verb} still open — end ${pronoun} from Your shares.`
+}
+
 const openedDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" })
 
 /**

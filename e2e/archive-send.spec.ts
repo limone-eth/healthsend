@@ -175,6 +175,42 @@ test("New share lists archived PDFs with multi-select, no file picker touched", 
   ).toBeVisible()
 })
 
+test.describe("mobile, 400px", () => {
+  test.use({ viewport: { width: 400, height: 800 } })
+
+  /**
+   * F2 (review-6, docs/stories/H-74.md): `app/(sender)/new/page.tsx`'s mobile
+   * step-1 Continue checked only `selectedFiles.length`, so an archived-only
+   * selection could never advance past step 1 on a phone. Fails on the line
+   * named in the finding (`app/(sender)/new/page.tsx:435` before the fix,
+   * which read `disabled={selectedFiles.length === 0}`).
+   */
+  test("selecting an archived PDF enables Continue", async ({ page }) => {
+    const backend: ArchiveBackend = { blobs: new Map() }
+    await fulfillArchiveBackend(page.context(), backend)
+    await addTwoArchivedPdfs(page)
+
+    await page.goto("/new")
+    await expect(page.getByRole("heading", { name: "New share" })).toBeVisible()
+
+    await page.getByRole("button", { name: /Your documents/ }).click()
+    const continueButton = page.getByRole("button", { name: "Continue" })
+    await expect(continueButton).toBeDisabled()
+
+    await visibleText(page, "Blood test, March.pdf").click()
+    // Two matches at mobile — the "Your documents" group's own named-selection
+    // line, and the fixed bottom bar's `summaryLine` echoing the same count.
+    await expect(visibleText(page, /1 of your 2 documents/).first()).toBeVisible()
+
+    await expect(continueButton).toBeEnabled()
+    await continueButton.click()
+    // Step 2 — reaching the settings panel is the point: the sender can now
+    // set a deadline and create the share, which the disabled Continue button
+    // previously made impossible.
+    await expect(page.getByPlaceholder("Who is this for?").and(page.locator(":visible"))).toBeVisible()
+  })
+})
+
 test("an empty archive says so on New share and routes to Add", async ({ page }) => {
   const backend: ArchiveBackend = { blobs: new Map() }
   await fulfillArchiveBackend(page.context(), backend)

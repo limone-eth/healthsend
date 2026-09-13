@@ -1,14 +1,26 @@
 "use client"
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import Link from "next/link"
 import { ArrowDown, Eye, FileText, FileX } from "@phosphor-icons/react"
 import { useSenderIdentity } from "@/components/use-sender-identity"
 import { NotAPdfError, recordsFromPdfFiles } from "@/lib/archive-input"
 import { addRecordsToMyArchive, loadMyArchive } from "@/lib/archive-store"
 import type { Archive, ArchiveRecord, DocumentRecord, ShareIndexEntry } from "@/lib/archive"
 import { RemoveDocumentSheet } from "@/components/remove-document-sheet"
-import { performRemoveDocument, type LiveShareView } from "@/components/remove-document-sheet-logic"
-import { loadLiveSharesForDocument } from "./live-shares-for-document"
+import {
+  endsLabel,
+  partialRemoveHeadline,
+  performRemoveDocument,
+  shareLabel,
+  type LiveShareView,
+} from "@/components/remove-document-sheet-logic"
+import {
+  countLiveSharesForDocument,
+  isShareIndexUnknown,
+  loadLiveEntityKeys,
+  loadLiveSharesForDocument,
+} from "./live-shares-for-document"
 
 /**
  * 2.1 "Your archive" — pen ids `M2g5J2` (desktop) / `W1yi5` (mobile), read via
@@ -75,6 +87,20 @@ type RemoveSheetState =
       removing: boolean
       error: string | null
     }
+  /**
+   * F6 (docs/stories/H-74.md): `performRemoveDocument` returned
+   * `removed-partial` — the document is already out of the archive, but one
+   * or more of the shares the sender asked to end could not be. Shown in
+   * place of the open sheet rather than closing silently, so the sender is
+   * never left thinking every share ended when one is still open.
+   */
+  | { status: "partial"; document: DocumentRecord; failedShares: LiveShareView[] }
+
+/** Live share entity keys for the whole archive, fetched once — see F8, `countLiveSharesForDocument`. */
+type LiveEntityKeysState =
+  | { status: "loading" }
+  | { status: "ready"; entityKeys: Set<string> }
+  | { status: "error" }
 
 /**
  * Adding PDFs straight from this screen: the click opens the file picker, with no
@@ -84,6 +110,7 @@ type AddState = { status: "idle" } | { status: "adding"; count: number } | { sta
 
 function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
   const [archive, setArchive] = useState<ArchiveLoadState>({ status: "loading" })
+  const [liveEntityKeys, setLiveEntityKeys] = useState<LiveEntityKeysState>({ status: "loading" })
   const [removeSheet, setRemoveSheet] = useState<RemoveSheetState>({ status: "closed" })
   const [removeSheetNow, setRemoveSheetNow] = useState(() => Math.floor(Date.now() / 1000))
   const pdfInput = useRef<HTMLInputElement>(null)
@@ -160,15 +187,42 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
     void refreshArchive()
   }, [])
 
+  // F8 (docs/stories/H-74.md): one fetch for the whole list's "In N shares"
+  // pills, not one per row — the archive's own load and this one run in
+  // parallel rather than one waiting on the other.
+  useEffect(() => {
+    let cancelled = false
+    loadLiveEntityKeys(senderAddress)
+      .then((entityKeys) => {
+        if (!cancelled) setLiveEntityKeys({ status: "ready", entityKeys })
+      })
+      .catch(() => {
+        if (!cancelled) setLiveEntityKeys({ status: "error" })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [senderAddress])
+
   const documents =
     archive.status === "ready"
       ? archive.records.filter((record): record is DocumentRecord => record.kind === "document")
       : []
 
+  const shareIndex = archive.status === "ready" ? archive.shareIndex : undefined
+  // Undefined means "don't know yet, or can't say" — the row must render no
+  // pill rather than guess. Known only once the live fetch succeeded and the
+  // index accounts for every live share (see `isShareIndexUnknown`).
+  const indexUnknown = liveEntityKeys.status === "ready" ? isShareIndexUnknown(shareIndex, liveEntityKeys.entityKeys) : true
+  function shareCountFor(documentId: string): number | undefined {
+    if (liveEntityKeys.status !== "ready" || indexUnknown) return undefined
+    const count = countLiveSharesForDocument(shareIndex, liveEntityKeys.entityKeys, documentId)
+    return count > 0 ? count : undefined
+  }
+
   async function openRemoveSheet(document: DocumentRecord) {
     setRemoveSheetNow(Math.floor(Date.now() / 1000))
     setRemoveSheet({ status: "checking-shares", document })
-    const shareIndex = archive.status === "ready" ? archive.shareIndex : undefined
     try {
       const { shares, indexUnknown } = await loadLiveSharesForDocument(document.id, shareIndex, senderAddress)
       setRemoveSheet({
@@ -206,8 +260,20 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
       setRemoveSheet({ ...removeSheet, removing: false, error: outcome.message })
       return
     }
-    closeRemoveSheet()
+    // The PDF is out of the archive either way — reflect that in the list
+    // immediately, whether or not every share it was in also ended.
     applyArchive(outcome.archive)
+    if (outcome.outcome === "removed-partial") {
+      // F6: a partial failure must not close as if everything ended. Swap to
+      // a distinct panel naming which shares are still open, rather than
+      // reusing `closeRemoveSheet` here.
+      const failedShares = shares.filter((share) =>
+        outcome.failedShares.some((failed) => failed.entityKey === share.entityKey),
+      )
+      setRemoveSheet({ status: "partial", document, failedShares })
+      return
+    }
+    closeRemoveSheet()
   }
 
   return (
@@ -251,8 +317,14 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
             <div className="h-px w-full bg-hairline" />
           </div>
 
-          <BloodTestListMobile documents={documents} onRemove={openRemoveSheet} />
-          <BloodTestListDesktop documents={documents} onRemove={openRemoveSheet} onAdd={pickPdfs} adding={isAdding} />
+          <BloodTestListMobile documents={documents} onRemove={openRemoveSheet} shareCountFor={shareCountFor} />
+          <BloodTestListDesktop
+            documents={documents}
+            onRemove={openRemoveSheet}
+            onAdd={pickPdfs}
+            adding={isAdding}
+            shareCountFor={shareCountFor}
+          />
 
           <SharedAsIssuedNote />
         </>
@@ -288,6 +360,45 @@ function ArchiveScreen({ senderAddress }: { senderAddress: string }) {
           onCancel={closeRemoveSheet}
           onConfirm={confirmRemove}
         />
+      )}
+
+      {removeSheet.status === "partial" && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 md:items-center md:p-5">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-partial-title"
+            className="flex w-full flex-col gap-[18px] rounded-sheet bg-surface px-[26px] pb-[26px] pt-8 shadow-card md:max-w-[560px] md:rounded-card"
+          >
+            <h2 id="remove-partial-title" className="text-[22px] font-bold leading-[1.2] tracking-[-0.5px] text-ink">
+              Removed from your archive
+            </h2>
+            <p className="text-[14px] leading-[1.5] text-ink">
+              {partialRemoveHeadline(removeSheet.failedShares.length)}
+            </p>
+            <div className="flex flex-col gap-2">
+              {removeSheet.failedShares.map((share) => (
+                <div
+                  key={share.entityKey}
+                  className="flex min-h-12 w-full items-center justify-between gap-2.5 rounded-control bg-grouped px-[13px] py-2.5"
+                >
+                  <span className="truncate text-[13.5px] font-medium text-ink">{shareLabel(share.documentIds)}</span>
+                  <span className="shrink-0 text-[12.5px] text-muted">{endsLabel(share.expiresAt, removeSheetNow)}</span>
+                </div>
+              ))}
+            </div>
+            <Link href="/shares" className="text-[13.5px] font-semibold text-navy">
+              Go to Your shares
+            </Link>
+            <button
+              type="button"
+              onClick={closeRemoveSheet}
+              className="flex h-[52px] w-full items-center justify-center rounded-control bg-ink text-[17px] font-semibold tracking-[-0.25px] text-surface"
+            >
+              Done
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -383,21 +494,42 @@ function EmptyArchive({ onAdd, adding }: { onAdd: () => void; adding: boolean })
 // the header instead. Read via the pencil MCP tool against `healthsend.pen`.
 // ---------------------------------------------------------------------------
 
+/**
+ * "In N shares" — F8 (docs/stories/H-74.md). Only rendered when the caller
+ * already resolved a known, positive count; the row itself never guesses.
+ * Style follows the header's own counting pill (`ScopeRowHeader`'s
+ * `countLabel` in `app/(sender)/new/page.tsx`) rather than inventing a new one.
+ */
+function SharePill({ count }: { count: number }) {
+  return (
+    <span className="shrink-0 whitespace-nowrap rounded-capsule bg-haze px-2.5 py-1 text-[12px] font-medium text-navy">
+      In {count} {count === 1 ? "share" : "shares"}
+    </span>
+  )
+}
+
 function BloodTestListDesktop({
   documents,
   onRemove,
   onAdd,
   adding,
+  shareCountFor,
 }: {
   documents: DocumentRecord[]
   onRemove: (document: DocumentRecord) => void
   onAdd: () => void
   adding: boolean
+  shareCountFor: (documentId: string) => number | undefined
 }) {
   return (
     <div className="hidden w-full flex-col overflow-hidden rounded-card border border-black/[0.05] bg-surface md:flex">
       {documents.map((document) => (
-        <DocumentRow key={document.id} document={document} onRemove={() => onRemove(document)} />
+        <DocumentRow
+          key={document.id}
+          document={document}
+          onRemove={() => onRemove(document)}
+          shareCount={shareCountFor(document.id)}
+        />
       ))}
       <button
         type="button"
@@ -412,7 +544,15 @@ function BloodTestListDesktop({
   )
 }
 
-function DocumentRow({ document, onRemove }: { document: DocumentRecord; onRemove: () => void }) {
+function DocumentRow({
+  document,
+  onRemove,
+  shareCount,
+}: {
+  document: DocumentRecord
+  onRemove: () => void
+  shareCount?: number
+}) {
   const added = formatFullDate(document.provenance.importedAt.slice(0, 10))
   return (
     <div className="flex items-center gap-3.5 border-b border-hairline px-5 py-4">
@@ -425,6 +565,7 @@ function DocumentRow({ document, onRemove }: { document: DocumentRecord; onRemov
           PDF · {formatBytes(document.size)} · added {added}
         </span>
       </div>
+      {shareCount !== undefined && <SharePill count={shareCount} />}
       <button
         type="button"
         onClick={onRemove}
@@ -440,20 +581,35 @@ function DocumentRow({ document, onRemove }: { document: DocumentRecord; onRemov
 function BloodTestListMobile({
   documents,
   onRemove,
+  shareCountFor,
 }: {
   documents: DocumentRecord[]
   onRemove: (document: DocumentRecord) => void
+  shareCountFor: (documentId: string) => number | undefined
 }) {
   return (
     <div className="flex flex-col gap-[9px] md:hidden">
       {documents.map((document) => (
-        <DocumentRowMobile key={document.id} document={document} onRemove={() => onRemove(document)} />
+        <DocumentRowMobile
+          key={document.id}
+          document={document}
+          onRemove={() => onRemove(document)}
+          shareCount={shareCountFor(document.id)}
+        />
       ))}
     </div>
   )
 }
 
-function DocumentRowMobile({ document, onRemove }: { document: DocumentRecord; onRemove: () => void }) {
+function DocumentRowMobile({
+  document,
+  onRemove,
+  shareCount,
+}: {
+  document: DocumentRecord
+  onRemove: () => void
+  shareCount?: number
+}) {
   const added = formatShortDate(document.provenance.importedAt.slice(0, 10))
   return (
     <div className="flex h-[62px] w-full items-center gap-[11px] rounded-control border border-black/[0.05] bg-surface px-3.5">
@@ -466,6 +622,7 @@ function DocumentRowMobile({ document, onRemove }: { document: DocumentRecord; o
           {formatBytes(document.size)} · added {added}
         </span>
       </div>
+      {shareCount !== undefined && <SharePill count={shareCount} />}
       <button
         type="button"
         onClick={onRemove}
